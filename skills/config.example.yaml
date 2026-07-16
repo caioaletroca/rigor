@@ -1,0 +1,116 @@
+# .rigor/config.yaml -- Rigor configuration
+# Copy this file to .rigor/config.yaml in your project root.
+#
+# All values shown below are defaults. Uncomment and modify as needed.
+# If .rigor/config.yaml does not exist, all defaults apply automatically.
+
+commit:
+  # GPG signing (default: false)
+  # When true, every commit uses -S and Step 7 verifies signatures.
+  # When false, no -S flag is added and signature verification is skipped.
+  gpg_sign: false
+
+  # Trailers appended to every commit (default: none)
+  # Each entry becomes a --trailer "Key: Value" argument on git commit.
+  # Trailers are verified in Step 7 -- if configured, every commit must have them.
+  # Trailers are NEVER placed inside the -m quotes -- always as separate --trailer flags.
+  trailers: []
+  #  - key: "Signed-off-by"
+  #    value: "Your Name <your.email@example.com>"
+  #  - key: "X-Custom-Ref"
+  #    value: "abc123"
+  #  - key: "Change-Id"
+  #    value: "I0123456789abcdef"
+
+  # Conventional commit types allowed (default: all standard types)
+  # If your repo's PR validation workflow also restricts types, the
+  # intersection of both constraints applies.
+  types:
+    - feat
+    - fix
+    - chore
+    - docs
+    - refactor
+    - test
+    - style
+    - perf
+    - ci
+    - build
+
+  # Require scope in every commit message (default: true)
+  # When true: scope is mandatory and must come from the repo's allowlist.
+  # When false: scope is optional but still validated against the allowlist if provided.
+  require_scope: true
+
+ship:
+  # Branch naming pattern (default: "<type>/<description>")
+  # The <type> and <description> placeholders are replaced at runtime.
+  # Description is always kebab-case.
+  branch_pattern: "<type>/<description>"
+
+  # Force push policy (default: "never")
+  #   "never"  -- refuse --force and --force-with-lease unconditionally
+  #   "ask"    -- if user requests force push, confirm with a warning first
+  #   "allow"  -- honor force push when explicitly requested by the user
+  # Even with "allow", force push is never initiated automatically.
+  force_push: "never"
+
+gates:
+  # Gate 0: Implementation (per task)
+  # These settings control the deterministic exit criteria for implementation.
+  gate_0:
+    # Minimum test coverage percentage required to pass (default: 85)
+    coverage_threshold: 85
+
+    # Lint command to run (default: "" -- no lint check)
+    # Examples:
+    #   Go:         "golangci-lint run ./..."
+    #   TypeScript: "eslint ."
+    #   Python:     "ruff check ."
+    #   Rust:       "cargo clippy -- -D warnings"
+    lint_command: ""
+
+    # Test command to run (default: "" -- no test check)
+    # The command must support coverage output that can be parsed.
+    # Examples:
+    #   Go:         "go test -coverprofile=coverage.out ./..."
+    #   TypeScript: "npx jest --coverage"
+    #   Python:     "pytest --cov=src --cov-report=term"
+    #   Rust:       "cargo tarpaulin --out Json"
+    test_command: ""
+
+    # Require that new source files have corresponding test files (default: true)
+    require_test_files: true
+
+  # Gate 8: Review (per epic)
+  # These settings control the AI-powered code review phase.
+  gate_8:
+    # Reviewer agents to dispatch (default: all four)
+    # Each reviewer analyzes the epic diff and returns structured findings.
+    reviewers:
+      - code-quality
+      - security
+      - logic
+      - test-quality
+
+    # Reviewers that MUST submit findings for the gate to pass (default: security, logic)
+    # Other reviewers are informational -- their absence does not block the gate.
+    required_reviewers:
+      - security
+      - logic
+
+    # Maximum allowed critical-severity findings (default: 0)
+    # If any critical finding remains unresolved, the gate fails.
+    max_critical_findings: 0
+
+    # Maximum allowed high-severity findings (default: 0)
+    # If any high finding remains unresolved, the gate fails.
+    max_high_findings: 0
+
+  # Gate 9: Acceptance (per epic)
+  # These settings control the user acceptance phase.
+  gate_9:
+    # Require explicit user approval to pass (default: true)
+    # When true, the gate blocks until the user explicitly approves.
+    # When false, the gate passes automatically if all criteria have evidence.
+    require_user_approval: true
