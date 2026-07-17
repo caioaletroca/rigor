@@ -11,7 +11,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config/index.js";
 import { StateManager } from "./state/index.js";
-import { registerCycleTools } from "./tools/index.js";
+import { registerCycleTools, registerGateTools } from "./tools/index.js";
 import type { RigorConfig } from "./config/index.js";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ export function createServer(projectRoot: string): ServerContext {
   );
 
   registerCycleTools(server, stateManager, config, projectRoot);
+  registerGateTools(server, stateManager, config, projectRoot);
 
   return { server, stateManager, config };
 }
