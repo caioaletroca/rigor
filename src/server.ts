@@ -11,7 +11,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config/index.js";
 import { StateManager } from "./state/index.js";
-import { registerCycleTools, registerGateTools } from "./tools/index.js";
+import { EvidenceManager } from "./evidence/index.js";
+import {
+  registerCycleTools,
+  registerGateTools,
+  registerReviewTools,
+} from "./tools/index.js";
 import type { RigorConfig } from "./config/index.js";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +26,7 @@ import type { RigorConfig } from "./config/index.js";
 export interface ServerContext {
   server: McpServer;
   stateManager: StateManager;
+  evidenceManager: EvidenceManager;
   config: RigorConfig;
 }
 
@@ -33,6 +39,7 @@ export interface ServerContext {
 export function createServer(projectRoot: string): ServerContext {
   const config = loadConfig(projectRoot);
   const stateManager = new StateManager(projectRoot);
+  const evidenceManager = new EvidenceManager(projectRoot);
 
   const server = new McpServer(
     { name: "rigor-gate-server", version: "0.1.0" },
@@ -40,8 +47,9 @@ export function createServer(projectRoot: string): ServerContext {
 
   registerCycleTools(server, stateManager, config, projectRoot);
   registerGateTools(server, stateManager, config, projectRoot);
+  registerReviewTools(server, stateManager, evidenceManager, config);
 
-  return { server, stateManager, config };
+  return { server, stateManager, evidenceManager, config };
 }
 
 // ---------------------------------------------------------------------------
