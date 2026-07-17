@@ -54,6 +54,120 @@ A gate has three parts:
 
 ---
 
+### Gate 2: Accessibility (per task, conditional)
+
+**Entry criteria (deterministic):**
+- Gate 0 passed for this task
+- Project is a frontend project (next.config.* or .tsx/.jsx files detected)
+
+**Work (deterministic):**
+- Run accessibility audit command (default: `npx axe-core-cli`)
+- Parse violation count from output
+
+**Exit criteria (deterministic):**
+- Violation count <= max_violations (default: 0)
+- Command exits with code 0
+
+**Configuration:**
+```yaml
+gates:
+  gate_2:
+    enabled: true        # Enable/disable the gate
+    required: false      # When false, failures are warnings; when true, failures block
+    a11y_command: "npx axe-core-cli"
+    max_violations: 0
+```
+
+**Behavior:** Opt-in by default. Runs and reports but does not block task
+completion unless `required: true` is set. Skipped entirely for non-frontend
+projects.
+
+---
+
+### Gate 3: Visual Regression (per task, conditional)
+
+**Entry criteria (deterministic):**
+- Gate 0 passed for this task
+- Visual/snapshot test files exist (*.visual.{ts,tsx} or *.snapshot.{ts,tsx})
+
+**Work (deterministic):**
+- Run visual regression test command (default: `npx vitest run --project visual`)
+
+**Exit criteria (deterministic):**
+- Command exits with code 0
+
+**Configuration:**
+```yaml
+gates:
+  gate_3:
+    enabled: true
+    required: false
+    visual_test_command: "npx vitest run --project visual"
+```
+
+**Behavior:** Opt-in by default. Only runs when visual/snapshot test files are
+detected. Failures are warnings unless `required: true`.
+
+---
+
+### Gate 4: E2E (per task, conditional)
+
+**Entry criteria (deterministic):**
+- Gate 0 passed for this task
+- E2E test files exist (e2e/**/*.{ts,tsx} or *.e2e.{ts,tsx})
+
+**Work (deterministic):**
+- Run end-to-end test command (default: `npx playwright test`)
+
+**Exit criteria (deterministic):**
+- Command exits with code 0
+
+**Configuration:**
+```yaml
+gates:
+  gate_4:
+    enabled: true
+    required: false
+    e2e_command: "npx playwright test"
+```
+
+**Behavior:** Opt-in by default. Only runs when e2e test files are detected.
+Failures are warnings unless `required: true`.
+
+---
+
+### Gate 5: Performance (per task, conditional)
+
+**Entry criteria (deterministic):**
+- Gate 0 passed for this task
+- Next.js config file exists (next.config.*)
+
+**Work (deterministic):**
+- Run performance command (default: `npx lighthouse-ci`)
+- Parse performance score from output if available
+- Compare score against min_score threshold
+
+**Exit criteria (deterministic):**
+- Command exits with code 0
+- Performance score >= min_score (default: 90)
+
+**Configuration:**
+```yaml
+gates:
+  gate_5:
+    enabled: true
+    required: false
+    perf_command: "npx lighthouse-ci"
+    min_score: 90
+    budget_file: ""       # Optional path to budget.json
+```
+
+**Behavior:** Opt-in by default. Only runs for Next.js projects. When
+`budget_file` is set, it is passed as `--budget-path` to the performance
+command. Failures are warnings unless `required: true`.
+
+---
+
 ### Gate 8: Review (per epic)
 
 **Entry criteria (deterministic):**
