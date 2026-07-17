@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, symlinkSync, readlinkSync, unlinkSync } from "fs";
-import { resolve, join, dirname } from "path";
+import {
+  existsSync,
+  mkdirSync,
+  symlinkSync,
+  readlinkSync,
+  unlinkSync,
+  readdirSync,
+  statSync,
+} from "fs";
+import { resolve, join, dirname, relative } from "path";
 import { createInterface } from "readline";
 import { platform, homedir } from "os";
 import { fileURLToPath } from "url";
@@ -13,20 +21,49 @@ const HOME = homedir();
 const ASSISTANTS = [
   {
     name: "Claude Code",
-    skillsDir: join(HOME, ".claude", "skills", "rigor"),
+    skillsRoot: join(HOME, ".claude", "skills"),
     detectDir: join(HOME, ".claude"),
   },
   {
     name: "Cursor",
-    skillsDir: join(HOME, ".cursor", "skills", "rigor"),
+    skillsRoot: join(HOME, ".cursor", "skills"),
     detectDir: join(HOME, ".cursor"),
   },
   {
     name: "OpenCode",
-    skillsDir: join(HOME, ".opencode", "skills", "rigor"),
+    skillsRoot: join(HOME, ".opencode", "skills"),
     detectDir: join(HOME, ".opencode"),
   },
 ];
+
+// --- Skill Discovery ---
+
+function discoverSkills() {
+  const skills = [];
+
+  for (const entry of readdirSync(SKILLS_SOURCE)) {
+    const entryPath = join(SKILLS_SOURCE, entry);
+    if (!statSync(entryPath).isDirectory()) continue;
+
+    // Direct skill: skills/<name>/SKILL.md
+    if (existsSync(join(entryPath, "SKILL.md"))) {
+      skills.push({ name: entry, sourcePath: entryPath });
+      continue;
+    }
+
+    // Nested skills: skills/<namespace>/<name>/SKILL.md (e.g., lang/go)
+    for (const sub of readdirSync(entryPath)) {
+      const subPath = join(entryPath, sub);
+      if (statSync(subPath).isDirectory() && existsSync(join(subPath, "SKILL.md"))) {
+        skills.push({ name: `${entry}-${sub}`, sourcePath: subPath });
+      }
+    }
+  }
+
+  return skills;
+}
+
+// --- Symlink Helpers ---
 
 function ask(question) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -57,22 +94,39 @@ function createSymlink(target, linkPath) {
     try {
       const existing = readlinkSync(linkPath);
       if (resolve(existing) === resolve(target)) {
-        log(`Already linked: ${linkPath}`);
         return "exists";
       }
     } catch {
       // Not a symlink
     }
-    log(`Removing existing: ${linkPath}`);
     unlinkSync(linkPath);
   }
 
-  // On Windows, use 'junction' for directories (no admin required)
   const type = platform() === "win32" ? "junction" : "dir";
   symlinkSync(target, linkPath, type);
-  log(`Linked: ${linkPath} -> ${target}`);
   return "created";
 }
+
+function isRigorSymlink(linkPath) {
+  try {
+    const target = resolve(readlinkSync(linkPath));
+    return target.startsWith(resolve(SKILLS_SOURCE));
+  } catch {
+    return false;
+  }
+}
+
+function removeLegacySymlink(skillsRoot) {
+  const legacyPath = join(skillsRoot, "rigor");
+  if (existsSync(legacyPath) && isRigorSymlink(legacyPath)) {
+    unlinkSync(legacyPath);
+    log(`Removed legacy symlink: ${legacyPath}`);
+    return true;
+  }
+  return false;
+}
+
+// --- Assistant Selection ---
 
 function detectAssistants() {
   return ASSISTANTS.filter((a) => existsSync(a.detectDir));
@@ -101,10 +155,14 @@ async function selectAssistants(detected) {
     .map((i) => ASSISTANTS[i]);
 }
 
+// --- Commands ---
+
 async function install() {
-  logHeader(`Rigor Installer`);
+  logHeader("Rigor Installer");
   log(`Skills source: ${SKILLS_SOURCE}`);
-  log(`Home directory: ${HOME}`);
+
+  const skills = discoverSkills();
+  log(`Skills found: ${skills.length} (${skills.map((s) => s.name).join(", ")})`);
 
   const detected = detectAssistants();
   const targets = await selectAssistants(detected);
@@ -115,13 +173,26 @@ async function install() {
   }
 
   logHeader("Creating symlinks");
+
   for (const assistant of targets) {
-    createSymlink(SKILLS_SOURCE, assistant.skillsDir);
+    log(`\n  ${assistant.name}:`);
+    removeLegacySymlink(assistant.skillsRoot);
+
+    let created = 0;
+    let existing = 0;
+
+    for (const skill of skills) {
+      const linkPath = join(assistant.skillsRoot, skill.name);
+      const result = createSymlink(skill.sourcePath, linkPath);
+      if (result === "created") created++;
+      else existing++;
+    }
+
+    log(`  ${created} created, ${existing} already linked`);
   }
 
   logHeader("Done");
-  log("Rigor skills installed globally for your user.");
-  log("All projects will have access to rigor: skills.");
+  log("Rigor skills installed as per-skill symlinks.");
   log("Run 'git pull' in the rigor repo to update skills.\n");
 }
 
@@ -129,15 +200,20 @@ async function uninstall() {
   logHeader("Uninstalling Rigor skills");
 
   let removed = 0;
+
   for (const assistant of ASSISTANTS) {
-    if (existsSync(assistant.skillsDir)) {
-      try {
-        readlinkSync(assistant.skillsDir);
-        unlinkSync(assistant.skillsDir);
-        log(`Removed: ${assistant.skillsDir}`);
+    if (!existsSync(assistant.skillsRoot)) continue;
+
+    // Remove legacy single symlink
+    if (removeLegacySymlink(assistant.skillsRoot)) removed++;
+
+    // Remove per-skill symlinks
+    for (const entry of readdirSync(assistant.skillsRoot)) {
+      const entryPath = join(assistant.skillsRoot, entry);
+      if (isRigorSymlink(entryPath)) {
+        unlinkSync(entryPath);
+        log(`Removed: ${entryPath}`);
         removed++;
-      } catch {
-        log(`Skipped (not a symlink): ${assistant.skillsDir}`);
       }
     }
   }
@@ -145,7 +221,7 @@ async function uninstall() {
   if (removed === 0) {
     log("No Rigor symlinks found.");
   } else {
-    log(`Removed ${removed} symlink(s).`);
+    log(`\nRemoved ${removed} symlink(s).`);
   }
   console.log();
 }
@@ -153,24 +229,42 @@ async function uninstall() {
 function status() {
   logHeader("Rigor Installation Status");
   log(`Skills source: ${SKILLS_SOURCE}`);
-  console.log();
+
+  const skills = discoverSkills();
+  log(`Skills available: ${skills.length}`);
 
   for (const assistant of ASSISTANTS) {
-    const exists = existsSync(assistant.skillsDir);
-    let state = "not installed";
+    console.log(`\n  ${assistant.name}:`);
 
-    if (exists) {
-      try {
-        const target = readlinkSync(assistant.skillsDir);
-        state = resolve(target) === resolve(SKILLS_SOURCE)
-          ? "installed (current)"
-          : `linked to: ${target}`;
-      } catch {
-        state = "exists (not a symlink)";
+    if (!existsSync(assistant.detectDir)) {
+      log("  not detected");
+      continue;
+    }
+
+    // Check for legacy symlink
+    const legacyPath = join(assistant.skillsRoot, "rigor");
+    if (existsSync(legacyPath) && isRigorSymlink(legacyPath)) {
+      log("  WARNING: legacy single symlink detected (run install to fix)");
+    }
+
+    let installed = 0;
+    let missing = 0;
+
+    for (const skill of skills) {
+      const linkPath = join(assistant.skillsRoot, skill.name);
+      if (existsSync(linkPath) && isRigorSymlink(linkPath)) {
+        installed++;
+      } else {
+        missing++;
+        log(`  missing: ${skill.name}`);
       }
     }
 
-    log(`${assistant.name}: ${state}`);
+    if (missing === 0) {
+      log(`  all ${installed} skills installed`);
+    } else {
+      log(`  ${installed} installed, ${missing} missing`);
+    }
   }
   console.log();
 }
@@ -196,15 +290,15 @@ Rigor Installer
 Usage: node install.mjs [command]
 
 Commands:
-  install     Symlink rigor skills to your home directory (default)
-  uninstall   Remove rigor symlinks
-  status      Show installation status for each assistant
+  install     Symlink rigor skills to your coding assistants (default)
+  uninstall   Remove all rigor symlinks
+  status      Show installation status per skill per assistant
   help        Show this message
 
-Installs to:
-  Claude Code   ~/.claude/skills/rigor/
-  Cursor        ~/.cursor/skills/rigor/
-  OpenCode      ~/.opencode/skills/rigor/
+Installs per-skill symlinks to:
+  Claude Code   ~/.claude/skills/<skill-name>/
+  Cursor        ~/.cursor/skills/<skill-name>/
+  OpenCode      ~/.opencode/skills/<skill-name>/
 
 Examples:
   node install.mjs              # Install for detected assistants
@@ -213,6 +307,8 @@ Examples:
 `);
     break;
   default:
-    console.error(`Unknown command: ${command}. Run 'node install.mjs help' for usage.`);
+    console.error(
+      `Unknown command: ${command}. Run 'node install.mjs help' for usage.`
+    );
     process.exit(1);
 }
