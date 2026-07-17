@@ -261,10 +261,70 @@
 ### Epic 4.1: Custom gates and Gate 1
 
 **Goal:** Support user-defined custom gates from config and the conditional infrastructure gate (Gate 1)
-**Scope:** `src/gates/`, `src/config/`
+**Scope:** `src/gates/`, `src/config/`, `src/tools/`
 **Dependencies:** Phase 2 (Gate 0 pattern to extend)
 **Done when:** custom gates with arbitrary shell commands run at configured positions in the cycle, Gate 1 triggers conditionally when new dependencies are introduced
 **Status:** Pending
+
+#### Task 4.1.1: Add custom gate config schema and runner
+
+- [ ] Done
+
+**Context:** Gates are currently hardcoded (gate0, gate8, gate9). Users need to define custom shell-command gates that run at specific positions: `pre_task` (before task_start), `post_task` (after task_complete), `pre_review` (before review_start), `post_accept` (after accept_submit). Each custom gate specifies a name, a shell command, and the position. The executor (`src/executor/runner.ts`) already runs arbitrary commands — the custom gate runner just wraps it with evidence.
+
+**Implementation vision:** Extend `GatesConfig` in `src/config/schema.ts` with `custom_gates: CustomGateConfig[]` where `CustomGateConfig` is `{ name: string, command: string, position: "pre_task" | "post_task" | "pre_review" | "post_accept", timeout_ms?: number }`. Default: empty array. Create `src/gates/custom.ts` with `runCustomGates(position, entityId, config, projectRoot): CustomGateResult` that filters custom gates by position, runs each command via `runCommand`, collects results, and returns `{ passed: boolean, results: CheckResult[] }`. A single failing command fails the whole custom gate set for that position. Persist evidence as `custom-${position}-${entityId}.json`.
+
+**Files:**
+- Modify: `src/config/schema.ts` (add CustomGateConfig, extend GatesConfig)
+- Modify: `src/config/loader.ts` (add custom_gates default)
+- Create: `src/gates/custom.ts` (runCustomGates function)
+- Create: `src/gates/__tests__/custom.test.ts`
+
+**Verification:** `npm test -- --reporter=verbose` — tests pass for: no custom gates = pass-through, single passing gate, single failing gate, multiple gates where one fails, correct position filtering, evidence saved.
+
+**Done when:** Custom gates run at configured positions, commands execute via the existing executor, results produce evidence, failures block progression.
+
+---
+
+#### Task 4.1.2: Wire custom gates into tool handlers
+
+- [ ] Done
+
+**Context:** Task 4.1.1 creates the custom gate runner; this task integrates it into the existing tool handlers. `pre_task` gates run inside `task_start` after entry validation but before transitioning to "doing". `post_task` gates run inside `task_complete` after Gate 0 passes. `pre_review` gates run inside `review_start` after entry validation. `post_accept` gates run inside `accept_submit` after Gate 9 passes.
+
+**Implementation vision:** Modify `src/tools/gate.ts`: in `handleTaskStart`, after entry validation, call `runCustomGates("pre_task", taskId, config, projectRoot)` — if it fails, return error without transitioning. In `handleTaskComplete`, after Gate 0 passes, call `runCustomGates("post_task", taskId, config, projectRoot)` — if it fails, transition to failed. Modify `src/tools/review.ts`: in `handleReviewStart`, after validation, call `runCustomGates("pre_review", epicId, config, projectRoot)`. In `handleAcceptSubmit`, after Gate 9, call `runCustomGates("post_accept", epicId, config, projectRoot)`. Save all custom gate evidence via evidenceManager.
+
+**Files:**
+- Modify: `src/tools/gate.ts` (add pre_task/post_task hooks)
+- Modify: `src/tools/review.ts` (add pre_review/post_accept hooks)
+- Modify: `src/tools/__tests__/gate.test.ts` (add custom gate integration tests)
+- Modify: `src/tools/__tests__/review.test.ts` (add custom gate integration tests)
+
+**Verification:** `npm test -- --reporter=verbose` — tests verify custom gates block progression on failure, pass through when no custom gates configured, evidence is saved for custom gate runs.
+
+**Done when:** All four hook positions are wired, custom gate failures block the host operation, existing tests still pass.
+
+---
+
+#### Task 4.1.3: Implement Gate 1 infrastructure check
+
+- [ ] Done
+
+**Context:** Gate 1 is a conditional gate that runs when new dependencies are introduced (new entries in package.json, go.mod, etc.). It validates that infrastructure is sound: lock file in sync, no known vulnerabilities (`npm audit`, `go vet`), build still passes. It should only trigger when dependencies actually changed — not on every task. Detection: compare current dependency files against a baseline snapshot stored in `.rigor/baselines/`.
+
+**Implementation vision:** Create `src/gates/gate1.ts` with: `detectDependencyChanges(projectRoot): boolean` — hashes current package.json/go.mod/go.sum and compares to `.rigor/baselines/deps.json` (if no baseline, first run creates it and returns false — no changes to gate). `checkGate1Exit(config, projectRoot): Gate1Result` — runs `npm audit --audit-level=moderate` or `go vet ./...` depending on detected ecosystem, validates lock file exists and is recent, returns checks array. `saveBaseline(projectRoot)` — snapshots current dep files. The gate1 config extends `GatesConfig`: `gate_1: { enabled: boolean, audit_command?: string }` with defaults `{ enabled: true }`. Wire into `task_start` — after pre_task custom gates, if dependency changes detected, run Gate 1. Save evidence as `gate_1-${taskId}.json`.
+
+**Files:**
+- Create: `src/gates/gate1.ts` (detection + check + baseline functions)
+- Modify: `src/config/schema.ts` (add Gate1Config)
+- Modify: `src/tools/gate.ts` (wire Gate 1 into task_start)
+- Create: `src/gates/__tests__/gate1.test.ts`
+
+**Verification:** `npm test -- --reporter=verbose` — tests verify: no baseline = creates one and passes, unchanged deps = skipped, changed deps = runs audit, audit failure blocks task_start, evidence saved.
+
+**Done when:** Gate 1 conditionally detects dependency changes, runs infrastructure validation, and blocks task_start when validation fails.
+
+---
 
 ### Epic 4.2: Error recovery and state repair
 
@@ -274,6 +334,69 @@
 **Done when:** server detects corrupted state on startup and offers repair, `cycle_reset` tool allows restarting a failed gate without losing the whole cycle, interrupted tasks can be retried
 **Status:** Pending
 
+#### Task 4.2.1: State validation and corruption detection
+
+- [ ] Done
+
+**Context:** Currently `StateManager.load()` reads state.json and returns it with no validation beyond JSON parsing. If the file has invalid structure (missing fields, impossible status values, orphaned entities), it's silently accepted. On startup, the server should validate state integrity and report problems.
+
+**Implementation vision:** Create `src/state/validator.ts` with `validateState(state: CycleState): ValidationResult` where `ValidationResult` is `{ valid: boolean, errors: string[], warnings: string[] }`. Checks: (1) all status values are valid enum members, (2) no entity is "doing" without a prior "pending" (structural impossibility after crash), (3) phase/epic/task ids follow expected format, (4) current_phase exists in phases array, (5) evidence paths in gate results point to files that exist on disk, (6) no two entities share the same id. Also add `detectStuckEntities(state): string[]` — returns entity ids that are in "doing" status (likely from a crash mid-operation). Integrate into `StateManager.load()`: after reading, validate. If errors found, return the state but include a `_validation` property with the errors (don't throw — let the caller decide).
+
+**Files:**
+- Create: `src/state/validator.ts` (validateState, detectStuckEntities)
+- Modify: `src/state/manager.ts` (call validator on load)
+- Modify: `src/state/index.ts` (export validator)
+- Create: `src/state/__tests__/validator.test.ts`
+
+**Verification:** `npm test -- --reporter=verbose` — tests for: valid state passes, invalid status value detected, stuck "doing" entity detected, missing evidence file warned, duplicate id detected.
+
+**Done when:** State validation runs on every load, problems are reported without crashing, stuck entities are detected.
+
+---
+
+#### Task 4.2.2: Implement cycle_reset and task_retry tools
+
+- [ ] Done
+
+**Context:** Agents need recovery tools when things go wrong: a failed gate should be retryable without restarting the whole cycle, and a corrupted/stuck cycle should be resettable. Currently `failed -> doing` transitions are valid, but there's no tool to orchestrate the retry (re-run entry checks, clear old evidence). Also no tool to fully reset a cycle.
+
+**Implementation vision:** Add two new MCP tools in `src/tools/recovery.ts`:
+
+`cycle_reset` — parameters: `{ confirm: boolean }`. If confirm is false, return a preview of what would be lost (cycle_id, progress summary, evidence count). If confirm is true: delete state.json, delete all evidence files in `.rigor/evidence/`, return confirmation. Does NOT delete config.
+
+`task_retry` — parameters: `{ task_id: string }`. Validates task is in "failed" status. Clears the task's gate_0 evidence (delete file, reset gate_0 field in state). Transitions task back to "pending" (not "doing" — the agent must call task_start again to re-enter). Returns confirmation with the previous failure reason from evidence.
+
+Register both tools in `src/server.ts` via a `registerRecoveryTools` function.
+
+**Files:**
+- Create: `src/tools/recovery.ts` (cycle_reset, task_retry handlers + registration)
+- Modify: `src/server.ts` (register recovery tools)
+- Create: `src/tools/__tests__/recovery.test.ts`
+
+**Verification:** `npm test -- --reporter=verbose` — tests for: cycle_reset preview mode, cycle_reset confirm clears state and evidence, task_retry on non-failed task rejected, task_retry clears evidence and resets to pending, task_retry returns previous failure reason.
+
+**Done when:** Both recovery tools work, cycle_reset has a safety confirmation gate, task_retry clears stale evidence and resets cleanly.
+
+---
+
+#### Task 4.2.3: Implement cycle_diagnose tool
+
+- [ ] Done
+
+**Context:** When a cycle is in a bad state, agents need a diagnostic tool that explains what's wrong and suggests next steps. This combines the validator from 4.2.1 with evidence auditing to give a complete health report.
+
+**Implementation vision:** Add `cycle_diagnose` MCP tool in `src/tools/recovery.ts`. It: (1) loads state, (2) runs `validateState`, (3) runs `detectStuckEntities`, (4) audits evidence completeness — for every "done" task, check gate_0 evidence exists; for every "done" epic, check gate_8 and gate_9 evidence, (5) produces a human-readable diagnostic report: cycle health (healthy/degraded/corrupt), list of issues with severity (error/warning), list of stuck entities with suggested action ("run task_retry" or "run task_complete"), progress summary. No parameters needed.
+
+**Files:**
+- Modify: `src/tools/recovery.ts` (add cycle_diagnose)
+- Modify: `src/tools/__tests__/recovery.test.ts` (add diagnose tests)
+
+**Verification:** `npm test -- --reporter=verbose` — tests for: healthy cycle, stuck task detected with suggestion, missing evidence warned, corrupt state errors listed.
+
+**Done when:** Diagnostic report accurately reflects cycle health, suggests concrete recovery actions.
+
+---
+
 ### Epic 4.3: rigor:cycle skill and assistant integration
 
 **Goal:** A workflow skill (`skills/cycle/SKILL.md`) that teaches AI agents how to use the MCP tools to drive a development cycle
@@ -281,6 +404,28 @@
 **Dependencies:** Phase 3 (full cycle must work for the skill to reference)
 **Done when:** the skill documents the full cycle workflow (init -> task_start -> task_complete -> review -> accept -> advance), includes anti-patterns for bypassing gates, and is pressure-tested with rigor:test-skill
 **Status:** Pending
+
+#### Task 4.3.1: Write the rigor:cycle skill
+
+- [ ] Done
+
+**Context:** The skill is a Markdown document that Claude Code loads as a system prompt when the agent is driving a development cycle. It must teach the agent the exact tool call sequence, what to do when gates fail, and what behaviors are prohibited. The skill follows the same format as existing skills in `skills/` (SKILL.md with frontmatter).
+
+**Implementation vision:** Create `skills/cycle/SKILL.md` with:
+
+1. **Frontmatter**: name, description, triggers (when user says "start dev cycle", "run the cycle", etc.)
+2. **Workflow sequence**: `cycle_init(plan_path)` → for each task in phase: `task_start(task_id)` → implement → `task_complete(task_id)` → for each epic: `review_start(epic_id)` → `review_submit(epic_id, ...)` → `accept_start(epic_id)` → `accept_submit(epic_id, ...)` → `phase_advance()`
+3. **Gate failure protocol**: When task_complete fails, read the evidence, fix the issue, call `task_retry` then restart. Never skip a failing gate.
+4. **Anti-patterns** (explicit prohibitions): Do not edit `.rigor/state.json` directly. Do not call `task_complete` without running the actual implementation. Do not fabricate review submissions. Do not call `phase_advance` until all epics pass Gate 9.
+5. **Recovery protocol**: If stuck, call `cycle_diagnose` first. Use `task_retry` for failed tasks. Use `cycle_reset` only as last resort (requires user confirmation).
+6. **Status reporting**: After each gate, report results to the user. After each epic, show cumulative progress.
+
+**Files:**
+- Create: `skills/cycle/SKILL.md`
+
+**Verification:** Manual review — skill covers the full lifecycle, anti-patterns are specific and actionable, recovery flows reference the correct tool names.
+
+**Done when:** Skill document is complete, covers happy path, failure recovery, and prohibited behaviors.
 
 ---
 

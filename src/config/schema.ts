@@ -39,10 +39,26 @@ export interface Gate9Config {
   require_user_approval: boolean;
 }
 
+export interface Gate1Config {
+  enabled: boolean;
+  audit_command: string;
+}
+
+export type CustomGatePosition = "pre_task" | "post_task" | "pre_review" | "post_accept";
+
+export interface CustomGateConfig {
+  name: string;
+  command: string;
+  position: CustomGatePosition;
+  timeout_ms?: number;
+}
+
 export interface GatesConfig {
   gate_0: Gate0Config;
+  gate_1: Gate1Config;
   gate_8: Gate8Config;
   gate_9: Gate9Config;
+  custom_gates: CustomGateConfig[];
 }
 
 export interface RigorConfig {
@@ -84,6 +100,10 @@ export const DEFAULTS: RigorConfig = {
       test_command: "",
       require_test_files: true,
     },
+    gate_1: {
+      enabled: true,
+      audit_command: "",
+    },
     gate_8: {
       reviewers: ["code-quality", "security", "logic", "test-quality"],
       required_reviewers: ["security", "logic"],
@@ -93,5 +113,6 @@ export const DEFAULTS: RigorConfig = {
     gate_9: {
       require_user_approval: true,
     },
+    custom_gates: [],
   },
 };

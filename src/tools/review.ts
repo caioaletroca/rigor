@@ -16,10 +16,8 @@ import type { StateManager } from "../state/index.js";
 import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import type { EvidenceManager, GateEvidence } from "../evidence/index.js";
-import { checkGate8Exit } from "../gates/index.js";
-import { checkGate9Exit } from "../gates/index.js";
-import type { ReviewFindings } from "../gates/index.js";
-import type { AcceptanceCriterion } from "../gates/index.js";
+import { checkGate8Exit, checkGate9Exit, runCustomGates } from "../gates/index.js";
+import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -44,6 +42,7 @@ export function handleReviewStart(
   params: ReviewStartParams,
   stateManager: StateManager,
   config: RigorConfig,
+  projectRoot: string,
 ): CallToolResult {
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
@@ -84,6 +83,19 @@ export function handleReviewStart(
   // 4. Transition epic to "doing" if still pending
   if (epic.status === "pending") {
     stateManager.transition(params.epic_id, "doing");
+  }
+
+  // 4b. Run pre_review custom gates
+  const customResult = runCustomGates("pre_review", params.epic_id, config, projectRoot);
+  if (!customResult.passed) {
+    const lines: string[] = [];
+    lines.push(`Epic ${params.epic_id} blocked by custom pre_review gate.`);
+    lines.push("");
+    for (const check of customResult.checks) {
+      const icon = check.passed ? "PASS" : "FAIL";
+      lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
+    }
+    return textResult(lines.join("\n"), true);
   }
 
   // 5. Return summary
@@ -264,6 +276,7 @@ export function handleAcceptSubmit(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   config: RigorConfig,
+  projectRoot: string,
 ): CallToolResult {
   // 1. Load state
   const state = stateManager.load();
@@ -325,6 +338,33 @@ export function handleAcceptSubmit(
       }
     }
     stateManager.save(freshState);
+  }
+
+  // 6b. Run post_accept custom gates (only if Gate 9 passed)
+  if (gate9Result.passed) {
+    const customResult = runCustomGates("post_accept", params.epic_id, config, projectRoot);
+    if (!customResult.passed) {
+      // Save custom gate evidence
+      const customEvidence: GateEvidence = {
+        gate: "custom_post_accept",
+        entity_id: params.epic_id,
+        passed: false,
+        timestamp: new Date().toISOString(),
+        checks: customResult.checks,
+      };
+      evidenceManager.save(customEvidence);
+
+      const lines: string[] = [];
+      lines.push(`Epic ${params.epic_id} passed Gate 9 but failed post_accept custom gate.`);
+      lines.push("");
+      for (const check of customResult.checks) {
+        const icon = check.passed ? "PASS" : "FAIL";
+        lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
+      }
+      lines.push("");
+      lines.push(`Evidence: ${evidencePath}`);
+      return textResult(lines.join("\n"), true);
+    }
   }
 
   // 7. If passed, transition epic to "done"
@@ -469,13 +509,14 @@ export function registerReviewTools(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   config: RigorConfig,
+  projectRoot: string,
 ): void {
   server.tool(
     "review_start",
     "Start code review for an epic — verifies all tasks are done and passed Gate 0",
     { epic_id: z.string().describe("Epic id (e.g. 1.1)") },
     async (params) => {
-      return handleReviewStart(params, stateManager, config);
+      return handleReviewStart(params, stateManager, config, projectRoot);
     },
   );
 
@@ -516,7 +557,7 @@ export function registerReviewTools(
         .describe("Whether the user has approved the epic"),
     },
     async (params) => {
-      return handleAcceptSubmit(params, stateManager, evidenceManager, config);
+      return handleAcceptSubmit(params, stateManager, evidenceManager, config, projectRoot);
     },
   );
 

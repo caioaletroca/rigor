@@ -20,6 +20,8 @@ import type { PhaseState } from "../../state/index.js";
 
 vi.mock("../../gates/index.js", () => ({
   checkGate0Exit: vi.fn(),
+  checkGate1Exit: vi.fn().mockReturnValue({ passed: true, checks: [], skipped: true }),
+  runCustomGates: vi.fn().mockReturnValue({ passed: true, checks: [] }),
 }));
 
 vi.mock("../../executor/index.js", () => ({
@@ -33,8 +35,10 @@ vi.mock("../../executor/index.js", () => ({
   }),
 }));
 
-const { checkGate0Exit } = await import("../../gates/index.js") as {
+const { checkGate0Exit, checkGate1Exit, runCustomGates } = await import("../../gates/index.js") as {
   checkGate0Exit: ReturnType<typeof vi.fn>;
+  checkGate1Exit: ReturnType<typeof vi.fn>;
+  runCustomGates: ReturnType<typeof vi.fn>;
 };
 
 const { handleTaskStart, handleTaskComplete } = await import("../gate.js");
@@ -122,6 +126,7 @@ describe("gate tools", () => {
       const result = handleTaskStart(
         { task_id: "1.1.2" },
         stateManager,
+        config,
         tempDir,
       );
 
@@ -142,6 +147,7 @@ describe("gate tools", () => {
       const result = handleTaskStart(
         { task_id: "1.1.2" },
         stateManager,
+        config,
         tempDir,
       );
 
@@ -160,6 +166,7 @@ describe("gate tools", () => {
       const result = handleTaskStart(
         { task_id: "1.1.1" },
         emptyManager,
+        config,
         emptyDir,
       );
 
@@ -175,6 +182,7 @@ describe("gate tools", () => {
       const result = handleTaskStart(
         { task_id: "1.1.3" },
         stateManager,
+        config,
         tempDir,
       );
 
@@ -192,6 +200,7 @@ describe("gate tools", () => {
       const result = handleTaskStart(
         { task_id: "1.1.2" },
         stateManager,
+        config,
         tempDir,
       );
 
@@ -208,11 +217,127 @@ describe("gate tools", () => {
       const result = handleTaskStart(
         { task_id: "9.9.9" },
         stateManager,
+        config,
         tempDir,
       );
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("not found");
+    });
+
+    // 7. Blocks when pre_task custom gate fails
+    it("blocks when pre_task custom gate fails", () => {
+      runCustomGates.mockReturnValueOnce({
+        passed: false,
+        checks: [
+          {
+            name: "custom:no-wip",
+            passed: false,
+            detail: 'Custom gate "no-wip" failed (exit code 1)',
+          },
+        ],
+      });
+
+      const result = handleTaskStart(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain("blocked by custom pre_task gate");
+      expect(text).toContain("[FAIL] custom:no-wip");
+
+      // Task should still be pending (not transitioned)
+      const task = stateManager.getTask("1.1.2");
+      expect(task.status).toBe("pending");
+    });
+
+    // 8. Proceeds when pre_task custom gate passes
+    it("proceeds when pre_task custom gate passes", () => {
+      runCustomGates.mockReturnValueOnce({
+        passed: true,
+        checks: [
+          {
+            name: "custom:no-wip",
+            passed: true,
+            detail: 'Custom gate "no-wip" passed',
+          },
+        ],
+      });
+
+      const result = handleTaskStart(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      const text = extractText(result);
+      expect(text).toContain("Task 1.1.2 started");
+      expect(text).toContain("Status: doing");
+
+      const task = stateManager.getTask("1.1.2");
+      expect(task.status).toBe("doing");
+    });
+
+    // 9. Task starts normally when Gate 1 is triggered and passes
+    it("starts task when Gate 1 is triggered and passes", () => {
+      checkGate1Exit.mockReturnValueOnce({
+        passed: true,
+        checks: [
+          { name: "dependency_changes", passed: true, detail: "Changed files: package.json" },
+          { name: "audit", passed: true, detail: "Infrastructure audit passed" },
+        ],
+        skipped: false,
+      });
+
+      const result = handleTaskStart(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      const text = extractText(result);
+      expect(text).toContain("Task 1.1.2 started");
+      expect(text).toContain("Status: doing");
+
+      const task = stateManager.getTask("1.1.2");
+      expect(task.status).toBe("doing");
+    });
+
+    // 10. Task blocked when Gate 1 is triggered and fails
+    it("blocks task when Gate 1 is triggered and fails", () => {
+      checkGate1Exit.mockReturnValueOnce({
+        passed: false,
+        checks: [
+          { name: "dependency_changes", passed: true, detail: "Changed files: package.json" },
+          { name: "audit", passed: false, detail: "Infrastructure audit failed (exit code 1)" },
+        ],
+        skipped: false,
+      });
+
+      const result = handleTaskStart(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain("blocked by Gate 1");
+      expect(text).toContain("[PASS] dependency_changes");
+      expect(text).toContain("[FAIL] audit");
+
+      // Task should still be pending (not transitioned)
+      const task = stateManager.getTask("1.1.2");
+      expect(task.status).toBe("pending");
     });
   });
 
@@ -334,6 +459,81 @@ describe("gate tools", () => {
       expect(extractText(result)).toContain("No active cycle");
 
       rmSync(emptyDir, { recursive: true, force: true });
+    });
+
+    // 8. Transitions to failed when post_task custom gate fails
+    it("transitions to failed when post_task custom gate fails", async () => {
+      checkGate0Exit.mockResolvedValue({
+        passed: true,
+        checks: [
+          { name: "tests", passed: true, detail: "All tests passed" },
+        ],
+        coverage: 90,
+      });
+
+      runCustomGates.mockReturnValueOnce({
+        passed: false,
+        checks: [
+          {
+            name: "custom:security-scan",
+            passed: false,
+            detail: 'Custom gate "security-scan" failed (exit code 1)',
+          },
+        ],
+      });
+
+      const result = await handleTaskComplete(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain("passed Gate 0 but failed post_task custom gate");
+      expect(text).toContain("[PASS] tests");
+      expect(text).toContain("[FAIL] custom:security-scan");
+
+      // Task should be "failed"
+      const task = stateManager.getTask("1.1.2");
+      expect(task.status).toBe("failed");
+    });
+
+    // 9. Proceeds when post_task custom gate passes
+    it("proceeds when post_task custom gate passes", async () => {
+      checkGate0Exit.mockResolvedValue({
+        passed: true,
+        checks: [
+          { name: "tests", passed: true, detail: "All tests passed" },
+        ],
+        coverage: 90,
+      });
+
+      runCustomGates.mockReturnValueOnce({
+        passed: true,
+        checks: [
+          {
+            name: "custom:security-scan",
+            passed: true,
+            detail: 'Custom gate "security-scan" passed',
+          },
+        ],
+      });
+
+      const result = await handleTaskComplete(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      const text = extractText(result);
+      expect(text).toContain("completed successfully");
+
+      const task = stateManager.getTask("1.1.2");
+      expect(task.status).toBe("done");
     });
   });
 });

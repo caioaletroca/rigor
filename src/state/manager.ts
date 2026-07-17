@@ -15,6 +15,8 @@ import {
 import { join, basename } from "node:path";
 import { isValidTransition } from "./schema.js";
 import { EntityNotFoundError, InvalidTransitionError } from "./errors.js";
+import { validateState } from "./validator.js";
+import type { ValidationResult } from "./validator.js";
 import type {
   CycleState,
   EpicState,
@@ -63,6 +65,22 @@ export class StateManager {
 
     const raw = readFileSync(this.statePath, "utf-8");
     return JSON.parse(raw) as CycleState;
+  }
+
+  /**
+   * Load state and validate its integrity.
+   * Returns both the state and validation results, or null when no
+   * state file exists.
+   */
+  loadAndValidate(): {
+    state: CycleState;
+    validation: ValidationResult;
+  } | null {
+    const state = this.load();
+    if (state === null) return null;
+
+    const validation = validateState(state, this.projectRoot);
+    return { state, validation };
   }
 
   /**

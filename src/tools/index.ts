@@ -24,3 +24,14 @@ export {
   handleAcceptSubmit,
   handlePhaseAdvance,
 } from "./review.js";
+
+export { registerRecoveryTools } from "./recovery.js";
+export type {
+  CycleResetParams,
+  TaskRetryParams,
+} from "./recovery.js";
+export {
+  handleCycleReset,
+  handleTaskRetry,
+  handleCycleDiagnose,
+} from "./recovery.js";

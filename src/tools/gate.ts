@@ -14,7 +14,7 @@ import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import type { GateEvidence } from "../evidence/index.js";
-import { checkGate0Exit } from "../gates/index.js";
+import { checkGate0Exit, checkGate1Exit, runCustomGates } from "../gates/index.js";
 import { runCommand } from "../executor/index.js";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ export interface TaskStartParams {
 export function handleTaskStart(
   params: TaskStartParams,
   stateManager: StateManager,
+  config: RigorConfig,
   projectRoot: string,
 ): CallToolResult {
   // 1. Load state, verify cycle exists
@@ -94,6 +95,45 @@ export function handleTaskStart(
     warnings.push(
       "Warning: working tree has uncommitted changes.",
     );
+  }
+
+  // 5b. Run pre_task custom gates
+  const customResult = runCustomGates("pre_task", params.task_id, config, projectRoot);
+  if (!customResult.passed) {
+    const lines: string[] = [];
+    lines.push(`Task ${params.task_id} blocked by custom pre_task gate.`);
+    lines.push("");
+    for (const check of customResult.checks) {
+      const icon = check.passed ? "PASS" : "FAIL";
+      lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
+    }
+    return textResult(lines.join("\n"), true);
+  }
+
+  // 5c. Run Gate 1 infrastructure check (conditional)
+  const gate1Result = checkGate1Exit(config, projectRoot);
+  if (!gate1Result.skipped) {
+    // Save Gate 1 evidence
+    const evidenceManager = new EvidenceManager(projectRoot);
+    const gate1Evidence: GateEvidence = {
+      gate: "gate_1",
+      entity_id: params.task_id,
+      passed: gate1Result.passed,
+      timestamp: new Date().toISOString(),
+      checks: gate1Result.checks,
+    };
+    evidenceManager.save(gate1Evidence);
+
+    if (!gate1Result.passed) {
+      const lines: string[] = [];
+      lines.push(`Task ${params.task_id} blocked by Gate 1 (infrastructure check).`);
+      lines.push("");
+      for (const check of gate1Result.checks) {
+        const icon = check.passed ? "PASS" : "FAIL";
+        lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
+      }
+      return textResult(lines.join("\n"), true);
+    }
   }
 
   // 6. Transition to "doing"
@@ -189,6 +229,41 @@ export async function handleTaskComplete(
     stateManager.save(freshState);
   }
 
+  // 5b. Run post_task custom gates (only if Gate 0 passed)
+  if (gate0Result.passed) {
+    const customResult = runCustomGates("post_task", params.task_id, config, projectRoot);
+    if (!customResult.passed) {
+      // Save custom gate evidence
+      const customEvidence: GateEvidence = {
+        gate: "custom_post_task",
+        entity_id: params.task_id,
+        passed: false,
+        timestamp: new Date().toISOString(),
+        checks: customResult.checks,
+      };
+      evidenceManager.save(customEvidence);
+
+      // Gate 0 passed but post_task custom gate failed → task fails
+      stateManager.transition(params.task_id, "failed");
+
+      const lines: string[] = [];
+      lines.push(`Task ${params.task_id} passed Gate 0 but failed post_task custom gate.`);
+      lines.push("");
+      lines.push("Gate 0 checks:");
+      for (const check of gate0Result.checks) {
+        const icon = check.passed ? "PASS" : "FAIL";
+        lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
+      }
+      lines.push("");
+      lines.push("Custom gate checks:");
+      for (const check of customResult.checks) {
+        const icon = check.passed ? "PASS" : "FAIL";
+        lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
+      }
+      return textResult(lines.join("\n"), true);
+    }
+  }
+
   // 6. Transition based on result
   if (gate0Result.passed) {
     stateManager.transition(params.task_id, "done");
@@ -233,7 +308,7 @@ export function registerGateTools(
     "Begin work on a task — validates entry criteria, transitions to doing",
     { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
     async (params) => {
-      return handleTaskStart(params, stateManager, projectRoot);
+      return handleTaskStart(params, stateManager, config, projectRoot);
     },
   );
 
