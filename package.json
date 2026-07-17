@@ -1,0 +1,29 @@
+{
+  "name": "@rigor/gate-server",
+  "version": "0.1.0",
+  "description": "Deterministic quality gate enforcement via MCP protocol",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "rigor-server": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.4.1",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "typescript": "^5.7.3",
+    "vitest": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
