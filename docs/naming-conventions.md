@@ -39,9 +39,15 @@ All skills use the `rigor:` prefix. Language-specific skills use a `rigor:lang:`
 | `rigor:plan` | `skills/plan/` | Write implementation plan (rolling-wave phases) | Done |
 | `rigor:cycle` | `skills/cycle/` | Run the dev-cycle (gate orchestration) | Planned |
 | `rigor:lang:go` | `skills/lang/go/` | Go language pack: implementation + review tooling and patterns | Done |
-| `rigor:lang:ts` | `skills/lang/ts/` | TypeScript-specific lint, test, coverage config | Planned |
-| `rigor:lang:py` | `skills/lang/py/` | Python-specific lint, test, coverage config | Planned |
-| `rigor:lang:rust` | `skills/lang/rust/` | Rust-specific lint, test, coverage config | Planned |
+| `rigor:lang:ts` | `skills/lang/ts/` | TypeScript-specific lint, test, coverage config | Done |
+| `rigor:lang:csharp` | `skills/lang/csharp/` | C# language pack: implementation + review tooling and patterns | Done |
+| `rigor:lang:py` | `skills/lang/py/` | Python-specific lint, test, coverage config | Done |
+| `rigor:lang:react` | `skills/lang/react/` | React/Next.js language pack: implementation + review tooling and patterns | Done |
+| `rigor:brainstorm` | `skills/brainstorm/` | Socratic design exploration with phase locks and approval gates | Done |
+| `rigor:receive-review` | `skills/receive-review/` | Process review feedback with verification before implementation | Done |
+| `rigor:test-guard` | `skills/test-guard/` | Test quality guard: 3 iron laws, 5 anti-pattern catalog | Done |
+| `rigor:debug` | `skills/debug/` | Systematic 4-phase debugging with root cause tracing | Done |
+| `rigor:lint` | `skills/lint/` | Run lang pack lint command, fix issues, verify clean | Done |
 
 ---
 
@@ -58,3 +64,8 @@ Ring uses verbose gerund-based names. Rigor uses short imperatives.
 | `ring:writing-plans` | `rigor:plan` | Shorter |
 | `ring:running-dev-cycle` | `rigor:cycle` | Single word |
 | `ring:backend-go` (hardcoded) | `rigor:lang:go` (modular) | Language as plugin, not embedded |
+| `ring:brainstorming` | `rigor:brainstorm` | No gerund |
+| `ring:receiving-code-review` | `rigor:receive-review` | Shorter, no gerund |
+| `ring:testing-anti-patterns` | `rigor:test-guard` | Action noun, not description |
+| `ring:systematic-debugging` | `rigor:debug` | Single word |
+| `ring:linting-codebase` | `rigor:lint` | Single word, no gerund |
