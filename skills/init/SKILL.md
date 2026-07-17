@@ -43,6 +43,7 @@ Scan the project root for these signals. Check in order, stop at first match per
 | `tsconfig.json` | TypeScript | high |
 | `package.json` with `typescript` in deps | TypeScript | high |
 | `package.json` without `typescript` | JavaScript | medium |
+| `*.csproj` or `*.sln` | C# | high |
 | `pyproject.toml` or `requirements.txt` | Python | high |
 | `Cargo.toml` | Rust | high |
 
@@ -53,6 +54,8 @@ Scan the project root for these signals. Check in order, stop at first match per
 | `vitest` in package.json deps | Vitest |
 | `jest` in package.json deps | Jest |
 | `go test` (any Go project) | Go test |
+| `xunit` or `nunit` in `*.csproj` deps | xUnit / NUnit |
+| `MSTest` in `*.csproj` deps | MSTest |
 | `pytest` in requirements | Pytest |
 | `cargo test` (any Rust project) | Cargo test |
 
@@ -64,6 +67,7 @@ Scan the project root for these signals. Check in order, stop at first match per
 | `eslint` in package.json deps | ESLint |
 | `@biomejs/biome` in package.json deps | Biome |
 | `biome.json` or `biome.jsonc` | Biome |
+| `.editorconfig` with C# project | dotnet format |
 | `ruff` in pyproject.toml | Ruff |
 
 ### Package Manager
@@ -75,6 +79,7 @@ Scan the project root for these signals. Check in order, stop at first match per
 | `bun.lockb` | bun |
 | `package-lock.json` | npm |
 | `go.sum` | go modules |
+| `*.csproj` (NuGet) | dotnet restore |
 
 ### Output
 
@@ -285,6 +290,7 @@ After init, load the appropriate lang pack for Gate 8 review patterns:
 |----------|-----------|--------|
 | Go | `rigor:lang:go` | available |
 | TypeScript | `rigor:lang:ts` | available |
+| C# | `rigor:lang:csharp` | available |
 | Python | -- | not yet available |
 | Rust | -- | not yet available |
 

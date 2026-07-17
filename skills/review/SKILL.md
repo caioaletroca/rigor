@@ -53,6 +53,7 @@ Inspect the diff's file extensions to detect languages. For each detected langua
 |-----------|----------|-----------|
 | `.go` | Go | `rigor:lang:go` |
 | `.ts`, `.tsx`, `.js`, `.jsx` | TypeScript | `rigor:lang:ts` |
+| `.cs` | C# | `rigor:lang:csharp` |
 | `.py` | Python | `rigor:lang:py` |
 | `.rs` | Rust | `rigor:lang:rust` |
 
