@@ -35,10 +35,10 @@ All skills use the `rigor:` prefix. Language-specific skills use a `rigor:lang:`
 | `rigor:pr` | `skills/pr/` | Open a GitHub PR with template filling and base verification | Done |
 | `rigor:ship` | `skills/ship/` | End-to-end: branch, commit, push, PR | Done |
 | `rigor:test-skill` | `skills/test-skill/` | Pressure-test a skill with/without scenarios | Done |
-| `rigor:review` | `skills/review/` | Dispatch parallel code reviewers | Planned |
-| `rigor:plan` | `skills/plan/` | Write implementation plan (rolling-wave phases) | Planned |
+| `rigor:review` | `skills/review/` | Hybrid code review: deterministic tools + parallel AI reviewers | Done |
+| `rigor:plan` | `skills/plan/` | Write implementation plan (rolling-wave phases) | Done |
 | `rigor:cycle` | `skills/cycle/` | Run the dev-cycle (gate orchestration) | Planned |
-| `rigor:lang:go` | `skills/lang/go/` | Go-specific lint, test, coverage config | Planned |
+| `rigor:lang:go` | `skills/lang/go/` | Go language pack: implementation + review tooling and patterns | Done |
 | `rigor:lang:ts` | `skills/lang/ts/` | TypeScript-specific lint, test, coverage config | Planned |
 | `rigor:lang:py` | `skills/lang/py/` | Python-specific lint, test, coverage config | Planned |
 | `rigor:lang:rust` | `skills/lang/rust/` | Rust-specific lint, test, coverage config | Planned |
