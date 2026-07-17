@@ -105,7 +105,17 @@ export const DEFAULTS: RigorConfig = {
       audit_command: "",
     },
     gate_8: {
-      reviewers: ["code-quality", "security", "logic", "test-quality"],
+      reviewers: [
+        "code-quality",
+        "security",
+        "logic",
+        "test-quality",
+        "nil-safety",
+        "consequences",
+        "dead-code",
+        "performance",
+        "requirements",
+      ],
       required_reviewers: ["security", "logic"],
       max_critical_findings: 0,
       max_high_findings: 0,

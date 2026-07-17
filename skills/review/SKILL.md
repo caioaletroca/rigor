@@ -155,8 +155,29 @@ Output:
 | `security` | Vulnerabilities, injection, secrets, access | OWASP risks, injection vectors, authentication, authorization, crypto usage |
 | `logic` | Correctness, edge cases, error handling | Business logic, nil safety, concurrency, error paths, type safety |
 | `test-quality` | Coverage, assertions, isolation | Test completeness, assertion quality, test independence, edge case coverage |
+| `nil-safety` | Null/nil pointer safety | Traces nil/null/undefined dereference risks through call chains, missing guards, unsafe type assertions, optional chaining that hides bugs, API response fields that could be null |
+| `consequences` | Ripple effects beyond changed files | Traces how changes propagate through caller chains, consumer contracts, shared state, implicit dependencies — finds breakage invisible in isolated file review |
+| `dead-code` | Orphaned and unreachable code | Identifies code that became unused as a consequence of changes: orphaned functions, unreachable branches, unused imports, stale type definitions, abandoned test helpers |
+| `performance` | Code-level and runtime hotspots | Allocations in hot paths, unbounded goroutines/promises, N+1 queries, event loop blocking, synchronous I/O in async handlers, missing caching opportunities |
+| `requirements` | Plan compliance and acceptance criteria | Cross-references the implementation against the plan's "Done when" criteria, verifies each criterion has concrete evidence (test, code, behavior), flags criteria without proof |
 
 Only the reviewers listed in `gates.gate_8.reviewers` are dispatched. The table above defines what each reviewer does -- it is not a hardcoded dispatch list.
+
+### Reviewer Categories
+
+Reviewers are split into two categories:
+
+**Core reviewers** run on every review by default:
+- `code-quality`, `security`, `logic`, `test-quality`
+
+**Extended reviewers** add specialized analysis:
+- `nil-safety` — most impactful for Go and TypeScript where nil/null/undefined dereferences are common runtime errors
+- `consequences` — most impactful for large diffs or refactors where changes ripple beyond the changed files
+- `dead-code` — most impactful after refactors, removals, or feature replacements
+- `performance` — most impactful for hot-path changes, API handlers, database queries, or loop-heavy code
+- `requirements` — most impactful at Gate 8 during a `rigor:cycle`, where a plan defines explicit acceptance criteria
+
+All reviewers follow the same dispatch, schema, and aggregation rules. The distinction is purely organizational — users choose which to enable in `gates.gate_8.reviewers`.
 
 ### HARD STOP -- Parallel Dispatch Rules
 
@@ -203,6 +224,31 @@ OUTPUT: Return a JSON object following the findings schema below. Report
 every issue you find. If no issues: return the schema with an empty
 findings array.
 ```
+
+### Requirements Reviewer: Additional Context
+
+The `requirements` reviewer receives extra context beyond the diff:
+
+```
+PLAN CONTEXT:
+{plan's epic/task "Done when" criteria for the entities under review}
+
+EVIDENCE MAPPING INSTRUCTIONS:
+For each acceptance criterion, determine whether the diff provides concrete
+evidence that the criterion is met. Evidence includes:
+- A test that directly validates the criterion
+- Code that implements the required behavior
+- Configuration that enables the required feature
+
+For each criterion, report:
+- MET: criterion has concrete evidence (cite file:line)
+- UNMET: no evidence found in the diff
+- PARTIAL: some evidence but incomplete
+
+If no plan context is available, skip this reviewer silently.
+```
+
+The `requirements` reviewer's findings use the same schema as other reviewers. Unmet criteria are reported as `high` severity. Partial criteria are reported as `medium`. A finding's `title` is the criterion text and `description` explains what evidence is missing.
 
 ### Findings Schema
 
@@ -306,6 +352,11 @@ Produce a structured markdown report in the current session. Do NOT save to disk
 | security | PASS/ISSUES_FOUND | N | yes |
 | logic | PASS/ISSUES_FOUND | N | yes |
 | test-quality | PASS/ISSUES_FOUND | N | no |
+| nil-safety | PASS/ISSUES_FOUND | N | no |
+| consequences | PASS/ISSUES_FOUND | N | no |
+| dead-code | PASS/ISSUES_FOUND | N | no |
+| performance | PASS/ISSUES_FOUND | N | no |
+| requirements | PASS/ISSUES_FOUND | N | no |
 
 ## Report Boundary
 No files were changed. No remediation was performed. No artifacts

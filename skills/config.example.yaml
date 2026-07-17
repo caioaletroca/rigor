@@ -85,16 +85,27 @@ gates:
   # Gate 8: Review (per epic)
   # These settings control the AI-powered code review phase.
   gate_8:
-    # Reviewer agents to dispatch (default: all four)
+    # Reviewer agents to dispatch (default: all nine)
     # Each reviewer analyzes the epic diff and returns structured findings.
+    #
+    # Core reviewers (general-purpose):
+    #   code-quality, security, logic, test-quality
+    # Extended reviewers (specialized):
+    #   nil-safety, consequences, dead-code, performance, requirements
     reviewers:
       - code-quality
       - security
       - logic
       - test-quality
+      - nil-safety
+      - consequences
+      - dead-code
+      - performance
+      - requirements
 
     # Reviewers that MUST submit findings for the gate to pass (default: security, logic)
     # Other reviewers are informational -- their absence does not block the gate.
+    # Extended reviewers (nil-safety, consequences, etc.) are not required by default.
     required_reviewers:
       - security
       - logic

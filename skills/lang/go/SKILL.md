@@ -210,6 +210,80 @@ These patterns are injected into AI reviewer prompts alongside the diff and tool
 - Context not propagated to spawned goroutines: cancellation does not reach child work
 - `sync.Pool` misuse: pooling tiny objects or objects with complex lifecycle
 
+### Patterns: nil-safety
+
+**Nil pointer dereference:**
+- Unchecked error return: `result, err := fn(); result.Field` without checking `err != nil` first
+- Nil map access: reading from a `map` that may not be initialized -- returns zero value silently
+- Nil map write: `m[key] = value` where `m` was declared with `var m map[K]V` but never `make`'d -- panics
+- Interface nil check: `if x != nil { x.Method() }` -- an interface can be non-nil but hold a nil concrete value
+- Type assertion without ok: `v := x.(Type)` panics when `x` is nil or wrong type -- use `v, ok := x.(Type)`
+
+**Nil in return values:**
+- Returning `nil, nil` (no value, no error) -- caller has no signal that nothing was found
+- Pointer receiver on nil: calling a method on `*T` where `T` may be nil -- panics unless the method explicitly handles nil receiver
+- Returning uninitialized struct pointer: `var p *Config; return p` -- downstream dereference panics
+
+**Nil in collections:**
+- Nil slice vs empty slice: `var s []T` marshals to `null` in JSON; `[]T{}` marshals to `[]` -- API consumers may break
+- Nil channel: sending to or receiving from a nil channel blocks forever
+- Nil function field: callback fields like `OnComplete func()` called without nil check
+
+**Context and interfaces:**
+- `context.Value()` returns `interface{}` -- caller must handle nil return before type assertion
+- `errors.As()` target must be non-nil pointer -- passing `var err *MyError` (nil pointer) panics
+- `io.Reader` / `io.Writer` may be nil in struct fields -- calling `Read`/`Write` panics
+
+### Patterns: consequences
+
+**Caller chain impact:**
+- Changed function signature: all callers must be updated -- check with `grep -rn "functionName("` across the repo
+- Modified return type: callers that destructure returns may silently get wrong values
+- Changed error wrapping: callers using `errors.Is`/`errors.As` may stop matching if the wrap chain changes
+- Removed or renamed exported symbol: breaks external consumers and other packages in the module
+
+**Interface contract changes:**
+- Added method to interface: all implementations must be updated -- compiler catches this but only if all implementations are in the same build
+- Changed method semantics (same signature, different behavior): callers rely on the old behavior -- no compiler warning
+- Modified embedded interface: all types embedding it gain/lose methods
+
+**Shared state impact:**
+- Modified struct field: all readers/writers of that field must be audited
+- Changed mutex scope: concurrent access patterns may become unsafe
+- Modified global variable or `init()`: all packages importing this package are affected
+- Changed channel buffer size: senders/receivers may block differently
+
+**Configuration and environment:**
+- Renamed config key or environment variable: deployment configs, CI pipelines, and docs must update
+- Changed default value: existing deployments using implicit defaults now behave differently
+- Removed feature flag: code paths that checked the flag need cleanup
+
+### Patterns: dead-code
+
+**Orphaned functions and methods:**
+- Exported function with zero callers after the change -- was it the only caller that was removed?
+- Method on a type that is no longer instantiated anywhere
+- Interface implementation where the interface itself was removed or changed
+- Helper function that only served the deleted code path
+
+**Unreachable branches:**
+- `switch` case that can never match after a type change
+- `if` condition that is always true/false after constant or type changes
+- Error handling for an error that is no longer returned by the modified function
+- `select` case on a channel that is no longer written to
+
+**Stale artifacts:**
+- Test file for a function that no longer exists
+- Mock or stub for an interface that changed or was removed
+- Type definition only used by deleted code
+- Constants or variables only referenced by removed code
+- Build tags or feature flags for removed features
+- Generated code (protobuf, mocks) that is no longer regenerated after proto/interface changes
+
+**Import bloat:**
+- Package imported but only used by deleted code
+- Blank import (`_ "pkg"`) for side effects of a removed feature
+
 ---
 
 ## Dependencies

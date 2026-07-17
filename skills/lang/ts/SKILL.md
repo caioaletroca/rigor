@@ -204,6 +204,88 @@ These patterns are injected into AI reviewer prompts alongside the diff and tool
 - Re-renders in React: missing `useMemo`/`useCallback` for expensive computations passed as props
 - Creating new `Date` objects or running `Intl` formatters inside tight loops
 
+### Patterns: nil-safety
+
+**Null/undefined dereference:**
+- Optional chaining overuse: `obj?.deeply?.nested?.value` -- silently returns `undefined` when the chain should never be null (masks bugs instead of catching them)
+- Non-null assertion (`!`): `user!.name` -- tells TypeScript to trust you, but crashes at runtime if `user` is actually null
+- Missing nullish check after `Map.get()` / `Array.find()` / `Object.entries()` -- all return `undefined` on miss
+- Destructuring with default on nullable: `const { x = 0 } = obj` -- default only applies for `undefined`, not `null`
+- `JSON.parse()` returns `any` -- accessing nested fields without validation is an implicit null risk
+
+**Type narrowing gaps:**
+- `typeof x === "object"` is true for `null` -- must also check `x !== null`
+- `if (x)` falsy check filters out `0`, `""`, `false`, `NaN` -- not just `null`/`undefined`
+- Type guard functions that don't cover all union cases -- unhandled variant causes runtime `undefined`
+- `as` type assertion bypasses null checks: `(x as User).name` skips the nullability that `x: User | null` should enforce
+- `Partial<T>` makes all fields optional -- accessing `partial.field` without check is unsafe
+
+**Promise and async null:**
+- `await` on a function that returns `T | undefined` -- the result needs a null check even after await
+- Promise rejection caught with `.catch(() => {})` -- swallows errors, downstream code gets `undefined`
+- Async function returns `undefined` implicitly when no explicit return -- callers get `Promise<undefined>`
+
+**API boundaries:**
+- External API response typed as `T` but actual response may have null fields -- always validate at boundaries
+- GraphQL nullable fields: schema allows null but TypeScript type doesn't reflect it
+- `localStorage.getItem()` returns `string | null` -- often used without null check
+- `document.querySelector()` returns `Element | null` -- chained method calls crash on null
+- `process.env.VAR` is `string | undefined` -- used in config without fallback
+
+### Patterns: consequences
+
+**Caller chain impact:**
+- Changed function signature or return type: all callers and their callers must handle the new shape
+- Modified Promise rejection type: `.catch()` handlers may not handle the new error shape
+- Changed event payload shape: all event listeners must be updated
+- Exported type change: consumers in other packages/apps importing this type break silently if not rebuilt
+
+**Module boundary changes:**
+- Modified barrel export (`index.ts`): consumers importing from the barrel may get different symbols
+- Changed default export to named (or vice versa): all import statements must update
+- Moved file: relative imports in consumers break -- and path aliases may mask the break until runtime
+
+**Shared state impact:**
+- Modified Redux/Zustand/context state shape: all selectors and consumers must be audited
+- Changed React prop type: all component callsites must pass the new shape
+- Modified shared utility return type: all callers need to handle the new return
+- Changed environment variable name or format: deployment configs, CI, Docker must update
+
+**Runtime contract changes:**
+- Changed API response shape: frontend consumers expecting the old shape break
+- Modified middleware order in Express/Fastify: downstream handlers see different request state
+- Changed database schema: all queries and ORM models referencing changed columns must update
+- Modified validation rules: previously valid input may now be rejected (or vice versa)
+
+### Patterns: dead-code
+
+**Orphaned exports and functions:**
+- Exported function with zero import sites after the change -- was the removed code the only consumer?
+- React component that is no longer rendered in any route or parent component
+- Utility function that only served the deleted feature
+- Type definition only used by removed code -- especially in `types.ts` or `models.ts` barrel files
+- Event handler for an event that is no longer emitted
+
+**Unreachable branches:**
+- `switch` case for a discriminated union variant that was removed from the union type
+- `if` branch checking a condition that can never be true after type narrowing changes
+- Error handling for an API call that was removed or replaced
+- Feature flag branch for a flag that is always true/false now
+- `catch` block for an error type that the modified code no longer throws
+
+**Stale artifacts:**
+- Test file (`*.test.ts`) for a function/component that no longer exists
+- Mock file for a module that was refactored or removed
+- Storybook story for a deleted component
+- CSS module (`.module.css`) for a removed component
+- Generated types (GraphQL codegen, API client types) for removed endpoints
+- Snapshot file (`.snap`) for a deleted test
+
+**Import bloat:**
+- Package imported but only used by deleted code -- still in `package.json` and `node_modules`
+- Side-effect import (`import "./polyfill"`) for a feature that was removed
+- Unused CSS/SCSS import in a component file
+
 ---
 
 ## Dependencies
