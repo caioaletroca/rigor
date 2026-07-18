@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCoverage } from "../coverage.js";
+import { parseCoverage, parseMetric } from "../coverage.js";
 
 describe("parseCoverage", () => {
   // -----------------------------------------------------------------------
@@ -98,5 +98,39 @@ describe("parseCoverage", () => {
     it("handles integer percentages", () => {
       expect(parseCoverage("Coverage: 100%")).toBe(100);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseMetric
+// ---------------------------------------------------------------------------
+
+describe("parseMetric", () => {
+  it("extracts a float from a capture group", () => {
+    const output = "Quality Score: 92.5 / 100";
+    expect(parseMetric(output, "Score:\\s+(\\d+\\.?\\d*)")).toBe(92.5);
+  });
+
+  it("extracts an integer value", () => {
+    const output = "Complexity: 42";
+    expect(parseMetric(output, "Complexity:\\s+(\\d+)")).toBe(42);
+  });
+
+  it("returns null when pattern does not match", () => {
+    expect(parseMetric("no match here", "Score:\\s+(\\d+)")).toBeNull();
+  });
+
+  it("returns null for an invalid regex pattern", () => {
+    expect(parseMetric("test", "[invalid(")).toBeNull();
+  });
+
+  it("returns null when capture group is missing", () => {
+    // Regex matches but has no capture group
+    expect(parseMetric("Score: 90", "Score: \\d+")).toBeNull();
+  });
+
+  it("uses multiline mode to match across lines", () => {
+    const output = "Line 1\nResult: 88.3\nLine 3";
+    expect(parseMetric(output, "Result:\\s+(\\d+\\.?\\d*)")).toBe(88.3);
   });
 });

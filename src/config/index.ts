@@ -10,5 +10,7 @@ export type {
   GatesConfig,
   CustomGatePosition,
   CustomGateConfig,
+  Check,
+  Metric,
 } from "./schema.js";
 export { loadConfig } from "./loader.js";

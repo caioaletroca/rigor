@@ -65,6 +65,33 @@ function parseGeneric(output: string): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// Generic metric parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an arbitrary metric from command output using a user-supplied regex.
+ *
+ * The pattern must contain exactly one capture group that matches a numeric
+ * value. Returns the first match as a float, or `null` when no match is found.
+ *
+ * @param output  Raw command stdout/stderr.
+ * @param pattern Regex string with one capture group (e.g. `"Score:\\s+(\\d+\\.?\\d*)"`).
+ * @returns The parsed numeric value, or `null`.
+ */
+export function parseMetric(output: string, pattern: string): number | null {
+  try {
+    const re = new RegExp(pattern, "m");
+    const match = output.match(re);
+    if (!match || match[1] === undefined) return null;
+    const value = Number(match[1]);
+    return Number.isNaN(value) ? null : value;
+  } catch {
+    // Invalid regex from user config — treat as no match.
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

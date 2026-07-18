@@ -21,11 +21,36 @@ export interface ShipConfig {
   force_push: "never" | "ask" | "allow";
 }
 
+/** A metric parsed from command output and compared against a threshold. */
+export interface Metric {
+  /** Regex pattern with a capture group for the numeric value. */
+  parse: string;
+  /** Minimum value to pass. */
+  threshold: number;
+  /** Human-readable label (e.g. "coverage", "score"). */
+  label: string;
+}
+
+/** A single check to run during Gate 0. */
+export interface Check {
+  /** Short name for the check (e.g. "tests", "lint", "typecheck"). */
+  name: string;
+  /** Shell command to execute. */
+  command: string;
+  /** Optional metric extraction from command output. */
+  metric?: Metric;
+}
+
 export interface Gate0Config {
+  /** @deprecated Use `checks` instead. Kept for backward compatibility. */
   coverage_threshold: number;
+  /** @deprecated Use `checks` instead. Kept for backward compatibility. */
   lint_command: string;
+  /** @deprecated Use `checks` instead. Kept for backward compatibility. */
   test_command: string;
   require_test_files: boolean;
+  /** Generic checks array. When non-empty, replaces test_command/lint_command. */
+  checks: Check[];
 }
 
 export interface Gate8Config {
@@ -130,6 +155,7 @@ export const DEFAULTS: RigorConfig = {
       lint_command: "",
       test_command: "",
       require_test_files: true,
+      checks: [],
     },
     gate_1: {
       enabled: true,

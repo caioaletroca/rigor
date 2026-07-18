@@ -82,6 +82,23 @@ gates:
     # Require that new source files have corresponding test files (default: true)
     require_test_files: true
 
+    # Generic checks array (new format, replaces test_command/lint_command).
+    # When checks[] is non-empty, the legacy fields above are ignored.
+    # Each check runs a command and optionally parses a metric from its output.
+    #
+    # checks:
+    #   - name: tests
+    #     command: "npx vitest run --coverage"
+    #     metric:
+    #       parse: "auto"            # regex or "auto" for built-in coverage parsers
+    #       threshold: 85            # minimum value to pass
+    #       label: coverage          # human-readable label
+    #   - name: lint
+    #     command: "eslint ."
+    #   - name: typecheck
+    #     command: "npx tsc --noEmit"
+    checks: []
+
   # Gate 8: Review (per epic)
   # These settings control the AI-powered code review phase.
   gate_8:

@@ -1,12 +1,17 @@
 /**
  * Gate 0 exit-criteria enforcement.
  *
- * Runs per-task checks (tests, coverage, lint, test-file presence) and
- * returns a structured result that callers can persist as evidence.
+ * Runs per-task checks (generic command checks with optional metrics,
+ * plus test-file presence) and returns a structured result that callers
+ * can persist as evidence.
+ *
+ * Supports both the new generic `checks[]` format and the legacy
+ * `test_command` / `lint_command` / `coverage_threshold` fields via
+ * automatic migration in the config loader.
  */
 
 import { runCommand } from "../executor/index.js";
-import { parseCoverage } from "../executor/index.js";
+import { parseCoverage, parseMetric } from "../executor/index.js";
 import type { RigorConfig } from "../config/index.js";
 import type { CheckResult } from "../evidence/index.js";
 
@@ -27,11 +32,12 @@ export interface Gate0Result {
 /**
  * Evaluate Gate 0 exit criteria for a task.
  *
- * Checks are run in order: tests, coverage, lint, test_files.
- * The overall result passes only when every individual check passes.
+ * Iterates over `config.gates.gate_0.checks`, running each command and
+ * optionally parsing a metric from its output. The overall result passes
+ * only when every individual check passes.
  *
- * When no commands are configured (both test_command and lint_command are
- * empty strings), the gate passes trivially with an informational note.
+ * When no checks are configured, the gate passes trivially with an
+ * informational note.
  */
 export async function checkGate0Exit(
   _taskId: string,
@@ -41,13 +47,11 @@ export async function checkGate0Exit(
   const checks: CheckResult[] = [];
   let parsedCoverage: number | undefined;
 
-  const testCommand = config.gates.gate_0.test_command;
-  const lintCommand = config.gates.gate_0.lint_command;
-  const coverageThreshold = config.gates.gate_0.coverage_threshold;
-  const requireTestFiles = config.gates.gate_0.require_test_files;
+  const g0 = config.gates.gate_0;
+  const requireTestFiles = g0.require_test_files;
 
   // If nothing is configured, pass trivially.
-  if (testCommand === "" && lintCommand === "") {
+  if (g0.checks.length === 0) {
     checks.push({
       name: "tests",
       passed: true,
@@ -58,75 +62,65 @@ export async function checkGate0Exit(
   }
 
   // -----------------------------------------------------------------------
-  // 1. Tests
+  // Iterate generic checks
   // -----------------------------------------------------------------------
 
-  let testsPassed = false;
-
-  if (testCommand !== "") {
-    const result = runCommand(testCommand, { cwd: projectRoot });
-    testsPassed = result.exit_code === 0;
+  for (const check of g0.checks) {
+    const result = runCommand(check.command, { cwd: projectRoot });
+    const commandPassed = result.exit_code === 0;
 
     checks.push({
-      name: "tests",
-      passed: testsPassed,
-      detail: testsPassed
-        ? "All tests passed"
-        : `Tests failed (exit code ${result.exit_code})`,
-      command: testCommand,
+      name: check.name,
+      passed: commandPassed,
+      detail: commandPassed
+        ? `${capitalize(check.name)} passed`
+        : `${capitalize(check.name)} failed (exit code ${result.exit_code})`,
+      command: check.command,
       exit_code: result.exit_code,
       duration_ms: result.duration_ms,
     });
 
-    // -------------------------------------------------------------------
-    // 2. Coverage (only if tests passed)
-    // -------------------------------------------------------------------
+    // -----------------------------------------------------------------
+    // Metric extraction (only if command passed)
+    // -----------------------------------------------------------------
 
-    if (testsPassed) {
+    if (commandPassed && check.metric) {
       const combined = result.stdout + result.stderr;
-      const coverage = parseCoverage(combined, "auto");
+      const label = check.metric.label;
+      let value: number | null;
 
-      if (coverage !== null) {
-        parsedCoverage = coverage;
-        const meets = coverage >= coverageThreshold;
+      // Special "auto" parse mode uses the built-in coverage parsers.
+      if (check.metric.parse === "auto") {
+        value = parseCoverage(combined, "auto");
+      } else {
+        value = parseMetric(combined, check.metric.parse);
+      }
+
+      if (value !== null) {
+        const meets = value >= check.metric.threshold;
 
         checks.push({
-          name: "coverage",
+          name: label,
           passed: meets,
-          detail: `Coverage ${coverage}% (threshold: ${coverageThreshold}%)`,
+          detail: `${capitalize(label)} ${value}% (threshold: ${check.metric.threshold}%)`,
         });
+
+        // Backward compat: populate the top-level coverage field.
+        if (label === "coverage") {
+          parsedCoverage = value;
+        }
       } else {
         checks.push({
-          name: "coverage",
+          name: label,
           passed: true,
-          detail: "Coverage parsing not available",
+          detail: `${capitalize(label)} parsing not available`,
         });
       }
     }
   }
 
   // -----------------------------------------------------------------------
-  // 3. Lint
-  // -----------------------------------------------------------------------
-
-  if (lintCommand !== "") {
-    const result = runCommand(lintCommand, { cwd: projectRoot });
-    const lintPassed = result.exit_code === 0;
-
-    checks.push({
-      name: "lint",
-      passed: lintPassed,
-      detail: lintPassed
-        ? "Lint passed"
-        : `Lint failed (exit code ${result.exit_code})`,
-      command: lintCommand,
-      exit_code: result.exit_code,
-      duration_ms: result.duration_ms,
-    });
-  }
-
-  // -----------------------------------------------------------------------
-  // 4. Test files (informational)
+  // Test files (informational)
   // -----------------------------------------------------------------------
 
   if (requireTestFiles) {
@@ -144,4 +138,13 @@ export async function checkGate0Exit(
   const passed = checks.every((c) => c.passed);
 
   return { passed, checks, coverage: parsedCoverage };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function capitalize(s: string): string {
+  if (s.length === 0) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }

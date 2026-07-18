@@ -6,7 +6,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { DEFAULTS } from "./schema.js";
-import type { RigorConfig } from "./schema.js";
+import type { RigorConfig, Check } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // Deep merge helper
@@ -41,6 +41,46 @@ function deepMerge(
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 0 backward-compat migration
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert legacy `test_command` / `lint_command` / `coverage_threshold` fields
+ * into the generic `checks[]` array when `checks` is empty.
+ *
+ * This allows old-format configs to work transparently with the new
+ * generic check runner.
+ */
+export function migrateGate0Config(config: RigorConfig): void {
+  const g0 = config.gates.gate_0;
+
+  // If checks are already populated, the user is using the new format.
+  if (g0.checks.length > 0) return;
+
+  const checks: Check[] = [];
+
+  if (g0.test_command !== "") {
+    const check: Check = { name: "tests", command: g0.test_command };
+
+    if (g0.coverage_threshold > 0) {
+      check.metric = {
+        parse: "auto",
+        threshold: g0.coverage_threshold,
+        label: "coverage",
+      };
+    }
+
+    checks.push(check);
+  }
+
+  if (g0.lint_command !== "") {
+    checks.push({ name: "lint", command: g0.lint_command });
+  }
+
+  g0.checks = checks;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,5 +136,10 @@ export function loadConfig(projectRoot: string): RigorConfig {
     structuredClone(DEFAULTS) as unknown as Record<string, unknown>,
     parsed,
   );
-  return merged as unknown as RigorConfig;
+  const config = merged as unknown as RigorConfig;
+
+  // Migrate legacy Gate 0 fields to checks[] for backward compat.
+  migrateGate0Config(config);
+
+  return config;
 }

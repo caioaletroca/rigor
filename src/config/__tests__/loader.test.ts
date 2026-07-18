@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig } from "../loader.js";
+import { loadConfig, migrateGate0Config } from "../loader.js";
 import { DEFAULTS } from "../schema.js";
+import type { RigorConfig } from "../schema.js";
 
 describe("loadConfig", () => {
   let tmpDir: string;
@@ -170,6 +171,145 @@ gates:
   it("returns DEFAULTS for a comment-only config file", () => {
     writeConfigFile(tmpDir, "# just a comment\n");
     expect(loadConfig(tmpDir)).toEqual(DEFAULTS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// migrateGate0Config
+// ---------------------------------------------------------------------------
+
+describe("migrateGate0Config", () => {
+  function cloneDefaults(): RigorConfig {
+    return structuredClone(DEFAULTS);
+  }
+
+  it("converts test_command to a tests check with coverage metric", () => {
+    const config = cloneDefaults();
+    config.gates.gate_0.test_command = "npm test";
+    config.gates.gate_0.coverage_threshold = 85;
+
+    migrateGate0Config(config);
+
+    expect(config.gates.gate_0.checks).toHaveLength(1);
+    expect(config.gates.gate_0.checks[0]).toEqual({
+      name: "tests",
+      command: "npm test",
+      metric: {
+        parse: "auto",
+        threshold: 85,
+        label: "coverage",
+      },
+    });
+  });
+
+  it("converts lint_command to a lint check", () => {
+    const config = cloneDefaults();
+    config.gates.gate_0.lint_command = "eslint .";
+
+    migrateGate0Config(config);
+
+    expect(config.gates.gate_0.checks).toHaveLength(1);
+    expect(config.gates.gate_0.checks[0]).toEqual({
+      name: "lint",
+      command: "eslint .",
+    });
+  });
+
+  it("converts both test and lint commands", () => {
+    const config = cloneDefaults();
+    config.gates.gate_0.test_command = "vitest run";
+    config.gates.gate_0.lint_command = "eslint .";
+    config.gates.gate_0.coverage_threshold = 90;
+
+    migrateGate0Config(config);
+
+    expect(config.gates.gate_0.checks).toHaveLength(2);
+    expect(config.gates.gate_0.checks[0].name).toBe("tests");
+    expect(config.gates.gate_0.checks[1].name).toBe("lint");
+  });
+
+  it("does not migrate when checks array is already populated", () => {
+    const config = cloneDefaults();
+    config.gates.gate_0.test_command = "npm test";
+    config.gates.gate_0.checks = [
+      { name: "custom", command: "custom-cmd" },
+    ];
+
+    migrateGate0Config(config);
+
+    // Should not have added a tests check
+    expect(config.gates.gate_0.checks).toHaveLength(1);
+    expect(config.gates.gate_0.checks[0].name).toBe("custom");
+  });
+
+  it("produces empty checks when no commands are configured", () => {
+    const config = cloneDefaults();
+    // defaults have empty test_command and lint_command
+
+    migrateGate0Config(config);
+
+    expect(config.gates.gate_0.checks).toHaveLength(0);
+  });
+
+  it("omits coverage metric when coverage_threshold is 0", () => {
+    const config = cloneDefaults();
+    config.gates.gate_0.test_command = "npm test";
+    config.gates.gate_0.coverage_threshold = 0;
+
+    migrateGate0Config(config);
+
+    expect(config.gates.gate_0.checks).toHaveLength(1);
+    expect(config.gates.gate_0.checks[0].metric).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadConfig with migration
+// ---------------------------------------------------------------------------
+
+describe("loadConfig migration", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "rigor-migrate-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("migrates old-format config to checks[] during loadConfig", () => {
+    const yaml = `
+gates:
+  gate_0:
+    test_command: "vitest run"
+    lint_command: "eslint ."
+    coverage_threshold: 85
+`;
+    writeConfigFile(tmpDir, yaml);
+
+    const config = loadConfig(tmpDir);
+
+    expect(config.gates.gate_0.checks).toHaveLength(2);
+    expect(config.gates.gate_0.checks[0].name).toBe("tests");
+    expect(config.gates.gate_0.checks[0].metric?.threshold).toBe(85);
+    expect(config.gates.gate_0.checks[1].name).toBe("lint");
+  });
+
+  it("preserves new-format checks[] without migration", () => {
+    const yaml = `
+gates:
+  gate_0:
+    checks:
+      - name: typecheck
+        command: "npx tsc --noEmit"
+`;
+    writeConfigFile(tmpDir, yaml);
+
+    const config = loadConfig(tmpDir);
+
+    expect(config.gates.gate_0.checks).toHaveLength(1);
+    expect(config.gates.gate_0.checks[0].name).toBe("typecheck");
   });
 });
 
