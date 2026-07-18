@@ -29,9 +29,15 @@ export { registerRecoveryTools } from "./recovery.js";
 export type {
   CycleResetParams,
   TaskRetryParams,
+  TaskManageParams,
+  EpicManageParams,
+  PhaseManageParams,
 } from "./recovery.js";
 export {
   handleCycleReset,
   handleTaskRetry,
+  handleTaskManage,
+  handleEpicManage,
+  handlePhaseManage,
   handleCycleDiagnose,
 } from "./recovery.js";

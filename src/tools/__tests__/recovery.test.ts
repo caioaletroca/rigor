@@ -21,6 +21,9 @@ import type { GateEvidence } from "../../evidence/index.js";
 import {
   handleCycleReset,
   handleTaskRetry,
+  handleTaskManage,
+  handleEpicManage,
+  handlePhaseManage,
   handleCycleDiagnose,
 } from "../recovery.js";
 import type { CycleState } from "../../state/index.js";
@@ -467,6 +470,987 @@ describe("recovery tools", () => {
       expect(text).toContain("Evidence audit: 2 missing");
       expect(text).toContain("Epic 1.1: missing gate_8 evidence");
       expect(text).toContain("Epic 1.1: missing gate_9 evidence");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // task_manage
+  // -----------------------------------------------------------------------
+
+  describe("task_manage", () => {
+    it("returns error when no active cycle exists", () => {
+      const result = handleTaskManage(
+        { task_id: "1.1.1", action: "skip", confirm: false },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("No active cycle");
+    });
+
+    it("returns error when task is not found", () => {
+      writeState(tempDir, makeCycleState());
+
+      const result = handleTaskManage(
+        { task_id: "9.9.9", action: "skip", confirm: false },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("not found");
+    });
+
+    // ----- force_status -----
+
+    describe("force_status", () => {
+      it("requires target_status parameter", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "force_status", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("target_status");
+      });
+
+      it("rejects invalid target_status", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          {
+            task_id: "1.1.1",
+            action: "force_status",
+            target_status: "invalid",
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("Invalid target_status");
+      });
+
+      it("returns preview without mutating state", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          {
+            task_id: "1.1.1",
+            action: "force_status",
+            target_status: "done",
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("force_status preview");
+        expect(text).toContain("1.1.1");
+        expect(text).toContain("pending");
+        expect(text).toContain("done");
+        expect(text).toContain("confirm: true");
+
+        // State unchanged
+        expect(stateManager.getTask("1.1.1").status).toBe("pending");
+      });
+
+      it("applies force_status on confirm", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          {
+            task_id: "1.1.1",
+            action: "force_status",
+            target_status: "done",
+            confirm: true,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        expect(extractText(result)).toContain('forced from "pending" to "done"');
+        expect(stateManager.getTask("1.1.1").status).toBe("done");
+      });
+
+      it("clears evidence on backward transition (done -> pending)", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "done";
+        state.phases[0].epics[0].tasks[0].gate_0 = { passed: true };
+        writeState(tempDir, state);
+
+        // Create evidence
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: true,
+          timestamp: new Date().toISOString(),
+          checks: [],
+        });
+
+        // Preview should mention evidence cleanup
+        const preview = handleTaskManage(
+          {
+            task_id: "1.1.1",
+            action: "force_status",
+            target_status: "pending",
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+        expect(extractText(preview)).toContain("will be deleted");
+
+        // Confirm
+        const result = handleTaskManage(
+          {
+            task_id: "1.1.1",
+            action: "force_status",
+            target_status: "pending",
+            confirm: true,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(extractText(result)).toContain("Evidence cleared");
+        expect(stateManager.getTask("1.1.1").status).toBe("pending");
+        expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
+      });
+
+      it("preserves evidence on forward transition", () => {
+        writeState(tempDir, makeCycleState());
+
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: true,
+          timestamp: new Date().toISOString(),
+          checks: [],
+        });
+
+        // Preview should mention evidence preserved
+        const preview = handleTaskManage(
+          {
+            task_id: "1.1.1",
+            action: "force_status",
+            target_status: "done",
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+        expect(extractText(preview)).toContain("will be preserved");
+
+        handleTaskManage(
+          {
+            task_id: "1.1.1",
+            action: "force_status",
+            target_status: "done",
+            confirm: true,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        // Evidence still exists
+        expect(evidenceManager.load("gate_0", "1.1.1")).not.toBeNull();
+      });
+    });
+
+    // ----- skip -----
+
+    describe("skip", () => {
+      it("returns preview without mutating state", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "skip", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("skip preview");
+        expect(text).toContain("skipped");
+        expect(stateManager.getTask("1.1.1").status).toBe("pending");
+      });
+
+      it("transitions task to skipped on confirm", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "skip", confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        expect(extractText(result)).toContain("skipped");
+        expect(stateManager.getTask("1.1.1").status).toBe("skipped");
+      });
+
+      it("rejects skip from already-skipped status", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "skipped";
+        writeState(tempDir, state);
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "skip", confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("not allowed");
+      });
+    });
+
+    // ----- retry -----
+
+    describe("retry", () => {
+      it("returns error preview for non-failed tasks", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "retry", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("pending");
+        expect(extractText(result)).toContain("Only \"failed\"");
+      });
+
+      it("returns preview for failed tasks with evidence info", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "failed";
+        writeState(tempDir, state);
+
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: false,
+          timestamp: new Date().toISOString(),
+          checks: [
+            { name: "tests", passed: false, detail: "3 failures" },
+          ],
+        });
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "retry", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("retry preview");
+        expect(text).toContain("tests: 3 failures");
+        expect(text).toContain("confirm: true");
+      });
+
+      it("delegates to handleTaskRetry on confirm", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "failed";
+        writeState(tempDir, state);
+
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: false,
+          timestamp: new Date().toISOString(),
+          checks: [
+            { name: "tests", passed: false, detail: "2 failures" },
+          ],
+        });
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "retry", confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        expect(extractText(result)).toContain("ready for retry");
+        expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
+      });
+    });
+
+    // ----- reset_evidence -----
+
+    describe("reset_evidence", () => {
+      it("returns preview showing what evidence exists", () => {
+        writeState(tempDir, makeCycleState());
+
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: true,
+          timestamp: new Date().toISOString(),
+          checks: [],
+        });
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "reset_evidence", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("reset_evidence preview");
+        expect(text).toContain("gate_0");
+        expect(text).toContain("will NOT change");
+      });
+
+      it("returns preview showing no evidence when none exists", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "reset_evidence", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        const text = extractText(result);
+        expect(text).toContain("none");
+      });
+
+      it("deletes all evidence without changing status on confirm", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "done";
+        writeState(tempDir, state);
+
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: true,
+          timestamp: new Date().toISOString(),
+          checks: [],
+        });
+
+        const result = handleTaskManage(
+          { task_id: "1.1.1", action: "reset_evidence", confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("1 file(s) deleted");
+        expect(text).toContain("Status unchanged (done)");
+        expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
+        expect(stateManager.getTask("1.1.1").status).toBe("done");
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // epic_manage
+  // -----------------------------------------------------------------------
+
+  describe("epic_manage", () => {
+    it("returns error when no active cycle exists", () => {
+      const result = handleEpicManage(
+        { epic_id: "1.1", action: "skip", cascade: false, confirm: false },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("No active cycle");
+    });
+
+    it("returns error when epic is not found", () => {
+      writeState(tempDir, makeCycleState());
+
+      const result = handleEpicManage(
+        { epic_id: "9.9", action: "skip", cascade: false, confirm: false },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("not found");
+    });
+
+    // ----- force_status -----
+
+    describe("force_status", () => {
+      it("requires target_status", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "force_status", cascade: false, confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("target_status");
+      });
+
+      it("rejects invalid target_status", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          {
+            epic_id: "1.1",
+            action: "force_status",
+            target_status: "bogus",
+            cascade: false,
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("Invalid target_status");
+      });
+
+      it("returns preview without mutating state", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          {
+            epic_id: "1.1",
+            action: "force_status",
+            target_status: "done",
+            cascade: false,
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("force_status preview");
+        expect(text).toContain("1.1");
+        expect(text).toContain("Cascade to tasks: false");
+        expect(stateManager.getEpic("1.1").status).toBe("pending");
+      });
+
+      it("applies force_status on confirm", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          {
+            epic_id: "1.1",
+            action: "force_status",
+            target_status: "done",
+            cascade: false,
+            confirm: true,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        expect(extractText(result)).toContain('forced to "done"');
+        expect(stateManager.getEpic("1.1").status).toBe("done");
+        // Tasks should NOT be changed
+        expect(stateManager.getTask("1.1.1").status).toBe("pending");
+      });
+
+      it("cascades force_status to all child tasks", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          {
+            epic_id: "1.1",
+            action: "force_status",
+            target_status: "done",
+            cascade: true,
+            confirm: true,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain('forced to "done"');
+        expect(text).toContain("2 task(s) also updated");
+        expect(stateManager.getEpic("1.1").status).toBe("done");
+        expect(stateManager.getTask("1.1.1").status).toBe("done");
+        expect(stateManager.getTask("1.1.2").status).toBe("done");
+      });
+
+      it("cascade preview lists each task transition", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          {
+            epic_id: "1.1",
+            action: "force_status",
+            target_status: "done",
+            cascade: true,
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        const text = extractText(result);
+        expect(text).toContain("Tasks affected: 2");
+        expect(text).toContain("1.1.1");
+        expect(text).toContain("1.1.2");
+      });
+
+      it("cleans task evidence on backward cascade", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "done";
+        state.phases[0].epics[0].tasks[1].status = "done";
+        writeState(tempDir, state);
+
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: true,
+          timestamp: new Date().toISOString(),
+          checks: [],
+        });
+
+        handleEpicManage(
+          {
+            epic_id: "1.1",
+            action: "force_status",
+            target_status: "pending",
+            cascade: true,
+            confirm: true,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
+        expect(stateManager.getTask("1.1.1").status).toBe("pending");
+      });
+    });
+
+    // ----- reset_tasks -----
+
+    describe("reset_tasks", () => {
+      it("returns preview listing all tasks", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "done";
+        state.phases[0].epics[0].tasks[1].status = "failed";
+        writeState(tempDir, state);
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("reset_tasks preview");
+        expect(text).toContain("Tasks to reset: 2");
+        expect(text).toContain("done -> pending");
+        expect(text).toContain("failed -> pending");
+      });
+
+      it("resets all tasks to pending and clears evidence on confirm", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "done";
+        state.phases[0].epics[0].tasks[1].status = "failed";
+        writeState(tempDir, state);
+
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.1",
+          passed: true,
+          timestamp: new Date().toISOString(),
+          checks: [],
+        });
+        evidenceManager.save({
+          gate: "gate_0",
+          entity_id: "1.1.2",
+          passed: false,
+          timestamp: new Date().toISOString(),
+          checks: [],
+        });
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain('reset to "pending"');
+        expect(text).toContain("2 evidence file(s) deleted");
+        expect(stateManager.getTask("1.1.1").status).toBe("pending");
+        expect(stateManager.getTask("1.1.2").status).toBe("pending");
+        expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
+        expect(evidenceManager.load("gate_0", "1.1.2")).toBeNull();
+      });
+    });
+
+    // ----- skip -----
+
+    describe("skip", () => {
+      it("returns preview without mutating state", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "skip", cascade: false, confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("skip preview");
+        expect(text).toContain("skipped");
+        expect(stateManager.getEpic("1.1").status).toBe("pending");
+      });
+
+      it("transitions epic to skipped on confirm", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "skip", cascade: false, confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        expect(extractText(result)).toContain("skipped");
+        expect(stateManager.getEpic("1.1").status).toBe("skipped");
+        // Tasks should NOT be changed without cascade
+        expect(stateManager.getTask("1.1.1").status).toBe("pending");
+      });
+
+      it("cascades skip to all child tasks", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "skip", cascade: true, confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("skipped");
+        expect(text).toContain("2 task(s) also skipped");
+        expect(stateManager.getEpic("1.1").status).toBe("skipped");
+        expect(stateManager.getTask("1.1.1").status).toBe("skipped");
+        expect(stateManager.getTask("1.1.2").status).toBe("skipped");
+      });
+
+      it("cascade skip preview shows task details", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "skip", cascade: true, confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        const text = extractText(result);
+        expect(text).toContain("Tasks affected: 2");
+        expect(text).toContain("1.1.1");
+        expect(text).toContain("1.1.2");
+      });
+
+      it("rejects skip from already-skipped epic", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].status = "skipped";
+        writeState(tempDir, state);
+
+        const result = handleEpicManage(
+          { epic_id: "1.1", action: "skip", cascade: false, confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("not allowed");
+      });
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // phase_manage
+  // -----------------------------------------------------------------------
+
+  describe("phase_manage", () => {
+    it("returns error when no active cycle exists", () => {
+      const result = handlePhaseManage(
+        { phase_id: "1", action: "skip", confirm: false },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("No active cycle");
+    });
+
+    it("returns error for invalid (non-numeric) phase_id", () => {
+      writeState(tempDir, makeCycleState());
+
+      const result = handlePhaseManage(
+        { phase_id: "abc", action: "skip", confirm: false },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Invalid phase_id");
+    });
+
+    it("returns error when phase is not found", () => {
+      writeState(tempDir, makeCycleState());
+
+      const result = handlePhaseManage(
+        { phase_id: "99", action: "skip", confirm: false },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("not found");
+    });
+
+    // ----- force_status -----
+
+    describe("force_status", () => {
+      it("requires target_status", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handlePhaseManage(
+          { phase_id: "1", action: "force_status", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("target_status");
+      });
+
+      it("rejects invalid target_status", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handlePhaseManage(
+          {
+            phase_id: "1",
+            action: "force_status",
+            target_status: "nope",
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("Invalid target_status");
+      });
+
+      it("returns preview without mutating state", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handlePhaseManage(
+          {
+            phase_id: "1",
+            action: "force_status",
+            target_status: "done",
+            confirm: false,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("force_status preview");
+        expect(text).toContain("Phase: 1");
+        expect(text).toContain("doing");
+        expect(text).toContain("done");
+        expect(stateManager.getPhase(1).status).toBe("doing");
+      });
+
+      it("applies force_status on confirm", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handlePhaseManage(
+          {
+            phase_id: "1",
+            action: "force_status",
+            target_status: "done",
+            confirm: true,
+          },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        expect(extractText(result)).toContain('forced from "doing" to "done"');
+        expect(stateManager.getPhase(1).status).toBe("done");
+      });
+    });
+
+    // ----- skip -----
+
+    describe("skip", () => {
+      it("returns preview with full cascade details", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handlePhaseManage(
+          { phase_id: "1", action: "skip", confirm: false },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("skip preview");
+        expect(text).toContain("1 epic(s), 2 task(s) will also be skipped");
+        expect(text).toContain("Epic 1.1");
+        expect(text).toContain("Task 1.1.1");
+        expect(text).toContain("Task 1.1.2");
+        expect(text).toContain("confirm: true");
+        // State unchanged
+        expect(stateManager.getPhase(1).status).toBe("doing");
+      });
+
+      it("skips phase and all children on confirm", () => {
+        writeState(tempDir, makeCycleState());
+
+        const result = handlePhaseManage(
+          { phase_id: "1", action: "skip", confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("1 epic(s), 2 task(s)");
+        expect(text).toContain("skipped");
+
+        expect(stateManager.getPhase(1).status).toBe("skipped");
+        expect(stateManager.getEpic("1.1").status).toBe("skipped");
+        expect(stateManager.getTask("1.1.1").status).toBe("skipped");
+        expect(stateManager.getTask("1.1.2").status).toBe("skipped");
+      });
+
+      it("skips multi-epic phase correctly", () => {
+        const state = makeCycleState();
+        // Add a second epic with a task
+        state.phases[0].epics.push({
+          id: "1.2",
+          name: "Second epic",
+          status: "doing",
+          tasks: [
+            {
+              id: "1.2.1",
+              name: "Another task",
+              status: "doing",
+              gate_0: { passed: false },
+            },
+          ],
+          gate_8: { passed: false },
+          gate_9: { passed: false },
+        });
+        writeState(tempDir, state);
+
+        const result = handlePhaseManage(
+          { phase_id: "1", action: "skip", confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        const text = extractText(result);
+        expect(text).toContain("2 epic(s), 3 task(s)");
+
+        expect(stateManager.getPhase(1).status).toBe("skipped");
+        expect(stateManager.getEpic("1.1").status).toBe("skipped");
+        expect(stateManager.getEpic("1.2").status).toBe("skipped");
+        expect(stateManager.getTask("1.1.1").status).toBe("skipped");
+        expect(stateManager.getTask("1.1.2").status).toBe("skipped");
+        expect(stateManager.getTask("1.2.1").status).toBe("skipped");
+      });
+
+      it("does not re-skip already-skipped children", () => {
+        const state = makeCycleState();
+        // Pre-skip one task
+        state.phases[0].epics[0].tasks[0].status = "skipped";
+        writeState(tempDir, state);
+
+        const result = handlePhaseManage(
+          { phase_id: "1", action: "skip", confirm: true },
+          stateManager,
+          evidenceManager,
+          tempDir,
+        );
+
+        expect(result.isError).toBeUndefined();
+        expect(stateManager.getPhase(1).status).toBe("skipped");
+        expect(stateManager.getTask("1.1.1").status).toBe("skipped");
+        expect(stateManager.getTask("1.1.2").status).toBe("skipped");
+      });
     });
   });
 });
