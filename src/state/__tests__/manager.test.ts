@@ -381,6 +381,100 @@ describe("StateManager", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Transitions to skipped
+  // -----------------------------------------------------------------------
+  it("transitions pending -> skipped", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    const state = mgr.transition("1.1.1", "skipped");
+    expect(state.phases[0].epics[0].tasks[0].status).toBe("skipped");
+  });
+
+  it("transitions doing -> skipped", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    mgr.transition("1.1.1", "doing");
+    const state = mgr.transition("1.1.1", "skipped");
+    expect(state.phases[0].epics[0].tasks[0].status).toBe("skipped");
+  });
+
+  it("transitions failed -> skipped", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    mgr.transition("1.1.1", "doing");
+    mgr.transition("1.1.1", "failed");
+    const state = mgr.transition("1.1.1", "skipped");
+    expect(state.phases[0].epics[0].tasks[0].status).toBe("skipped");
+  });
+
+  it("transitions done -> skipped", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    mgr.transition("1.1.1", "doing");
+    mgr.transition("1.1.1", "done");
+    const state = mgr.transition("1.1.1", "skipped");
+    expect(state.phases[0].epics[0].tasks[0].status).toBe("skipped");
+  });
+
+  it("throws InvalidTransitionError for skipped -> doing (no outgoing edges)", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    mgr.transition("1.1.1", "skipped");
+    expect(() => mgr.transition("1.1.1", "doing")).toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  it("throws InvalidTransitionError for skipped -> pending", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    mgr.transition("1.1.1", "skipped");
+    expect(() => mgr.transition("1.1.1", "pending")).toThrow(
+      InvalidTransitionError,
+    );
+  });
+
+  // -----------------------------------------------------------------------
+  // forceTransition
+  // -----------------------------------------------------------------------
+  it("forceTransition moves entity to any valid status", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    // pending -> done is normally invalid, but force allows it
+    const state = mgr.forceTransition("1.1.1", "done");
+    expect(state.phases[0].epics[0].tasks[0].status).toBe("done");
+  });
+
+  it("forceTransition can un-skip an entity", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    mgr.transition("1.1.1", "skipped");
+    const state = mgr.forceTransition("1.1.1", "pending");
+    expect(state.phases[0].epics[0].tasks[0].status).toBe("pending");
+  });
+
+  it("forceTransition works from any status", () => {
+    mgr.init("plan.md", makeSamplePhases());
+
+    // pending -> done (normally invalid)
+    mgr.forceTransition("1.1.1", "done");
+    expect(mgr.getTask("1.1.1").status).toBe("done");
+
+    // done -> pending (normally invalid)
+    mgr.forceTransition("1.1.1", "pending");
+    expect(mgr.getTask("1.1.1").status).toBe("pending");
+
+    // pending -> failed (normally invalid)
+    mgr.forceTransition("1.1.1", "failed");
+    expect(mgr.getTask("1.1.1").status).toBe("failed");
+  });
+
+  it("forceTransition throws EntityNotFoundError for unknown entity", () => {
+    mgr.init("plan.md", makeSamplePhases());
+    expect(() => mgr.forceTransition("9.9.9", "doing")).toThrow(
+      EntityNotFoundError,
+    );
+  });
+
+  it("forceTransition throws EntityNotFoundError when no state exists", () => {
+    expect(() => mgr.forceTransition("1.1.1", "doing")).toThrow(
+      EntityNotFoundError,
+    );
+  });
+
+  // -----------------------------------------------------------------------
   // Constructor creates .rigor directory
   // -----------------------------------------------------------------------
   it("constructor creates .rigor directory if missing", () => {
@@ -441,5 +535,42 @@ describe("isValidTransition", () => {
 
   it("rejects same-status transition doing -> doing", () => {
     expect(isValidTransition("doing", "doing")).toBe(false);
+  });
+
+  // skipped transitions
+  it("allows pending -> skipped", () => {
+    expect(isValidTransition("pending", "skipped")).toBe(true);
+  });
+
+  it("allows doing -> skipped", () => {
+    expect(isValidTransition("doing", "skipped")).toBe(true);
+  });
+
+  it("allows failed -> skipped", () => {
+    expect(isValidTransition("failed", "skipped")).toBe(true);
+  });
+
+  it("allows done -> skipped", () => {
+    expect(isValidTransition("done", "skipped")).toBe(true);
+  });
+
+  it("rejects skipped -> doing (no outgoing edges)", () => {
+    expect(isValidTransition("skipped", "doing")).toBe(false);
+  });
+
+  it("rejects skipped -> pending", () => {
+    expect(isValidTransition("skipped", "pending")).toBe(false);
+  });
+
+  it("rejects skipped -> done", () => {
+    expect(isValidTransition("skipped", "done")).toBe(false);
+  });
+
+  it("rejects skipped -> failed", () => {
+    expect(isValidTransition("skipped", "failed")).toBe(false);
+  });
+
+  it("rejects skipped -> skipped", () => {
+    expect(isValidTransition("skipped", "skipped")).toBe(false);
   });
 });

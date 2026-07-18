@@ -17,6 +17,7 @@ const VALID_STATUSES: ReadonlySet<string> = new Set([
   "doing",
   "done",
   "failed",
+  "skipped",
 ]);
 
 // ---------------------------------------------------------------------------

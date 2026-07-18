@@ -378,6 +378,49 @@ describe("validateState", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Skipped status handling
+  // -----------------------------------------------------------------------
+  it("accepts skipped as a valid status for phases, epics, and tasks", () => {
+    const state = makeValidState();
+    state.phases[0].status = "skipped";
+    state.phases[0].epics[0].status = "skipped";
+    state.phases[0].epics[0].tasks[0].status = "skipped";
+    const result = validateState(state);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("does NOT warn about gate_0 for skipped tasks", () => {
+    const state = makeValidState();
+    state.phases[0].epics[0].tasks[0].status = "skipped";
+    state.phases[0].epics[0].tasks[0].gate_0.passed = false;
+    const result = validateState(state);
+
+    // No warning about gate_0 not passed for skipped tasks
+    expect(
+      result.warnings.some(
+        (w) => w.includes("1.1.1") && w.includes("gate_0 not passed"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does NOT warn about gates for skipped epics", () => {
+    const state = makeValidState();
+    state.phases[0].epics[0].status = "skipped";
+    state.phases[0].epics[0].gate_8.passed = false;
+    state.phases[0].epics[0].gate_9.passed = false;
+    const result = validateState(state);
+
+    expect(
+      result.warnings.some((w) => w.includes("gate_8 not passed")),
+    ).toBe(false);
+    expect(
+      result.warnings.some((w) => w.includes("gate_9 not passed")),
+    ).toBe(false);
+  });
+
+  // -----------------------------------------------------------------------
   // Early return when phases is not an array
   // -----------------------------------------------------------------------
   it("returns early with errors when phases is not an array", () => {
@@ -604,6 +647,42 @@ describe("detectStuckEntities", () => {
     expect(phaseStuck).toHaveLength(1);
     expect(phaseStuck[0].id).toBe("1");
     expect(phaseStuck[0].name).toBe("Phase 1");
+  });
+
+  it("does NOT flag skipped entities as stuck", () => {
+    const state: CycleState = {
+      cycle_id: "test",
+      plan_path: "plan.md",
+      current_phase: 1,
+      created_at: "2026-07-17T00:00:00.000Z",
+      updated_at: "2026-07-17T00:00:00.000Z",
+      phases: [
+        {
+          id: 1,
+          status: "pending",
+          epics: [
+            {
+              id: "1.1",
+              name: "Setup",
+              status: "skipped",
+              tasks: [
+                {
+                  id: "1.1.1",
+                  name: "Init",
+                  status: "skipped",
+                  gate_0: { passed: false },
+                },
+              ],
+              gate_8: { passed: false },
+              gate_9: { passed: false },
+            },
+          ],
+        },
+      ],
+    };
+
+    const stuck = detectStuckEntities(state);
+    expect(stuck).toHaveLength(0);
   });
 
   it("detects multiple stuck entities across the tree", () => {

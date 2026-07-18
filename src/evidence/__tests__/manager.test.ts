@@ -104,4 +104,79 @@ describe("EvidenceManager", () => {
 
     expect(path).toContain("gate_0-task-2.3.4.json");
   });
+
+  // -----------------------------------------------------------------------
+  // 6. delete removes a specific evidence file
+  // -----------------------------------------------------------------------
+  it("delete returns true and removes the file when it exists", () => {
+    const evidence = sampleEvidence();
+    const path = manager.save(evidence);
+
+    expect(existsSync(path)).toBe(true);
+    const result = manager.delete("gate_0", "1.1.1");
+    expect(result).toBe(true);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("delete returns false when the file does not exist", () => {
+    const result = manager.delete("gate_0", "9.9.9");
+    expect(result).toBe(false);
+  });
+
+  it("delete does not affect other evidence files", () => {
+    manager.save(sampleEvidence({ entity_id: "1.1.1" }));
+    const otherPath = manager.save(sampleEvidence({ entity_id: "1.1.2" }));
+
+    manager.delete("gate_0", "1.1.1");
+    expect(existsSync(otherPath)).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
+  // 7. deleteAll removes evidence for all gates of an entity
+  // -----------------------------------------------------------------------
+  it("deleteAll removes gate_0, gate_8, and gate_9 evidence", () => {
+    manager.save(sampleEvidence({ gate: "gate_0", entity_id: "1.1" }));
+    manager.save(sampleEvidence({ gate: "gate_8", entity_id: "1.1" }));
+    manager.save(sampleEvidence({ gate: "gate_9", entity_id: "1.1" }));
+
+    const count = manager.deleteAll("1.1");
+    expect(count).toBe(3);
+
+    expect(manager.load("gate_0", "1.1")).toBeNull();
+    expect(manager.load("gate_8", "1.1")).toBeNull();
+    expect(manager.load("gate_9", "1.1")).toBeNull();
+  });
+
+  it("deleteAll returns 0 when no evidence exists for the entity", () => {
+    const count = manager.deleteAll("9.9.9");
+    expect(count).toBe(0);
+  });
+
+  it("deleteAll counts only existing files", () => {
+    manager.save(sampleEvidence({ gate: "gate_0", entity_id: "1.1" }));
+    // gate_8 and gate_9 not saved
+    const count = manager.deleteAll("1.1");
+    expect(count).toBe(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // 8. clearAll removes all files in the evidence directory
+  // -----------------------------------------------------------------------
+  it("clearAll removes all evidence files and returns count", () => {
+    manager.save(sampleEvidence({ entity_id: "1.1.1" }));
+    manager.save(sampleEvidence({ entity_id: "1.1.2" }));
+    manager.save(sampleEvidence({ gate: "gate_8", entity_id: "1.1" }));
+
+    const count = manager.clearAll();
+    expect(count).toBe(3);
+
+    expect(manager.load("gate_0", "1.1.1")).toBeNull();
+    expect(manager.load("gate_0", "1.1.2")).toBeNull();
+    expect(manager.load("gate_8", "1.1")).toBeNull();
+  });
+
+  it("clearAll returns 0 when evidence directory is empty", () => {
+    const count = manager.clearAll();
+    expect(count).toBe(0);
+  });
 });

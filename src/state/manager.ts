@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, basename } from "node:path";
-import { isValidTransition } from "./schema.js";
+import { isValidTransition, ALL_STATUSES } from "./schema.js";
 import { EntityNotFoundError, InvalidTransitionError } from "./errors.js";
 import { validateState } from "./validator.js";
 import type { ValidationResult } from "./validator.js";
@@ -147,6 +147,35 @@ export class StateManager {
 
     if (!isValidTransition(entity.status, toStatus)) {
       throw new InvalidTransitionError(entityId, entity.status, toStatus);
+    }
+
+    entity.status = toStatus;
+    this.save(state);
+    return state;
+  }
+
+  /**
+   * Force-transition an entity to any valid status, bypassing the
+   * normal transition rules.
+   *
+   * Useful for un-skipping entities or administrative corrections.
+   * Validates that `toStatus` is a member of the {@link Status} union.
+   *
+   * Returns the full updated cycle state after saving.
+   */
+  forceTransition(entityId: string, toStatus: Status): CycleState {
+    if (!ALL_STATUSES.has(toStatus)) {
+      throw new InvalidTransitionError(entityId, "unknown", toStatus);
+    }
+
+    const state = this.load();
+    if (state === null) {
+      throw new EntityNotFoundError("cycle", entityId);
+    }
+
+    const entity = this.findEntity(state, entityId);
+    if (!entity) {
+      throw new EntityNotFoundError("entity", entityId);
     }
 
     entity.status = toStatus;

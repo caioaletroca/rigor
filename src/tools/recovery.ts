@@ -37,6 +37,7 @@ export interface CycleResetParams {
 export function handleCycleReset(
   params: CycleResetParams,
   stateManager: StateManager,
+  evidenceManager: EvidenceManager,
   projectRoot: string,
 ): CallToolResult {
   const state = stateManager.load();
@@ -93,13 +94,8 @@ export function handleCycleReset(
     unlinkSync(statePath);
   }
 
-  // Delete all files in evidence directory (keep the directory)
-  if (existsSync(evidenceDir)) {
-    const files = readdirSync(evidenceDir);
-    for (const file of files) {
-      unlinkSync(join(evidenceDir, file));
-    }
-  }
+  // Delete all evidence files (keep the directory)
+  evidenceManager.clearAll();
 
   return textResult(
     `Cycle "${state.cycle_id}" has been reset. State and ${evidenceFileCount} evidence file(s) deleted.`,
@@ -161,9 +157,7 @@ export function handleTaskRetry(
   }
 
   // 5. Delete the gate_0 evidence file on disk if it exists
-  if (task.gate_0.evidence_path && existsSync(task.gate_0.evidence_path)) {
-    unlinkSync(task.gate_0.evidence_path);
-  }
+  evidenceManager.delete("gate_0", params.task_id);
 
   // 6. Reset the task's gate_0 field in state
   const freshState = stateManager.load();
@@ -339,7 +333,7 @@ export function registerRecoveryTools(
     "Preview or reset the current cycle — deletes state and evidence files",
     { confirm: z.boolean().describe("Set to true to actually delete; false for preview") },
     async (params) => {
-      return handleCycleReset(params, stateManager, projectRoot);
+      return handleCycleReset(params, stateManager, evidenceManager, projectRoot);
     },
   );
 

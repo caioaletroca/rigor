@@ -129,6 +129,7 @@ describe("recovery tools", () => {
       const result = handleCycleReset(
         { confirm: false },
         stateManager,
+        evidenceManager,
         tempDir,
       );
 
@@ -160,6 +161,7 @@ describe("recovery tools", () => {
       const result = handleCycleReset(
         { confirm: false },
         stateManager,
+        evidenceManager,
         tempDir,
       );
 
@@ -199,6 +201,7 @@ describe("recovery tools", () => {
       const result = handleCycleReset(
         { confirm: true },
         stateManager,
+        evidenceManager,
         tempDir,
       );
 

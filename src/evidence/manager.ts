@@ -9,7 +9,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -92,5 +94,56 @@ export class EvidenceManager {
 
     const raw = readFileSync(filePath, "utf-8");
     return JSON.parse(raw) as GateEvidence;
+  }
+
+  /**
+   * Delete evidence for a specific gate + entity pair.
+   *
+   * @returns `true` if the file existed and was deleted, `false` otherwise.
+   */
+  delete(gate: string, entityId: string): boolean {
+    const filename = `${gate}-task-${entityId}.json`;
+    const filePath = join(this.evidenceDir, filename);
+
+    if (!existsSync(filePath)) {
+      return false;
+    }
+
+    unlinkSync(filePath);
+    return true;
+  }
+
+  /**
+   * Delete evidence for all known gates (gate_0, gate_8, gate_9) for a
+   * given entity.
+   *
+   * @returns The number of files deleted.
+   */
+  deleteAll(entityId: string): number {
+    const gates = ["gate_0", "gate_8", "gate_9"];
+    let count = 0;
+    for (const gate of gates) {
+      if (this.delete(gate, entityId)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Delete all files in the evidence directory.
+   *
+   * @returns The number of files deleted.
+   */
+  clearAll(): number {
+    if (!existsSync(this.evidenceDir)) {
+      return 0;
+    }
+
+    const files = readdirSync(this.evidenceDir);
+    for (const file of files) {
+      unlinkSync(join(this.evidenceDir, file));
+    }
+    return files.length;
   }
 }
