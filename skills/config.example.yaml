@@ -125,3 +125,73 @@ gates:
     # When true, the gate blocks until the user explicitly approves.
     # When false, the gate passes automatically if all criteria have evidence.
     require_user_approval: true
+
+# ---------------------------------------------------------------------------
+# Sync — project management platform integration
+# ---------------------------------------------------------------------------
+# Sync emits lifecycle events (task started, completed, failed, etc.) to
+# configured providers. Events are journaled to .rigor/sync/events.jsonl.
+#
+# Config cascade (highest precedence first):
+#   env vars > project .rigor/config.yaml > global ~/.config/rigor/config.yaml
+#
+# Provider configs merge by name across global and project. This lets you
+# define credentials globally and project-specific settings per repo:
+#
+#   # ~/.config/rigor/config.yaml (global — never committed)
+#   sync:
+#     providers:
+#       my-jira:
+#         type: jira
+#         base_url: https://mycompany.atlassian.net
+#         email: user@company.com
+#         token: ${JIRA_API_TOKEN}
+#
+#   # .rigor/config.yaml (project — committed)
+#   sync:
+#     enabled: true
+#     primary: my-jira
+#     providers:
+#       my-jira:
+#         project_key: RIG
+#         status_map:
+#           doing: "In Progress"
+#           done: "Done"
+#           failed: "Blocked"
+#
+# Env var override: set RIGOR_SYNC_ENABLED=true to force-enable sync.
+sync:
+  # Enable/disable the sync layer (default: false)
+  enabled: false
+
+  # Primary provider — used by MCP tools to reference URLs and status.
+  # primary: my-jira
+
+  # Named map of providers. Key is the provider's logical name.
+  providers: {}
+  #   slack-hook:
+  #     type: webhook
+  #     url: https://hooks.slack.com/services/xxx/yyy/zzz
+  #     headers:
+  #       Authorization: "Bearer ${SLACK_TOKEN}"
+  #     events:                     # optional event filter
+  #       - task_completed
+  #       - epic_completed
+  #
+  #   my-jira:
+  #     type: jira
+  #     base_url: https://mycompany.atlassian.net
+  #     email: user@company.com
+  #     token: ${JIRA_API_TOKEN}
+  #     project_key: RIG
+  #     status_map:
+  #       doing: "In Progress"
+  #       done: "Done"
+  #       failed: "Blocked"
+  #
+  #   gh-projects:
+  #     type: github-projects
+  #     owner: myorg
+  #     repo: myrepo
+  #     project_number: 1
+  #     token: ${GITHUB_TOKEN}

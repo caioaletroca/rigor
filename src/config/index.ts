@@ -10,5 +10,7 @@ export type {
   GatesConfig,
   CustomGatePosition,
   CustomGateConfig,
+  SyncConfig,
+  SyncProviderConfig,
 } from "./schema.js";
 export { loadConfig } from "./loader.js";

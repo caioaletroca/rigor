@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig } from "../loader.js";
+import { loadConfig, getGlobalConfigPath } from "../loader.js";
 import { DEFAULTS } from "../schema.js";
 
 describe("loadConfig", () => {
@@ -170,6 +170,95 @@ gates:
   it("returns DEFAULTS for a comment-only config file", () => {
     writeConfigFile(tmpDir, "# just a comment\n");
     expect(loadConfig(tmpDir)).toEqual(DEFAULTS);
+  });
+
+  // -----------------------------------------------------------------------
+  // Sync config defaults
+  // -----------------------------------------------------------------------
+  it("includes sync defaults when no config file exists", () => {
+    const config = loadConfig(tmpDir);
+    expect(config.sync).toBeDefined();
+    expect(config.sync.enabled).toBe(false);
+    expect(config.sync.providers).toEqual({});
+  });
+
+  it("loads sync config from project config", () => {
+    const yaml = `
+sync:
+  enabled: true
+  primary: my-webhook
+  providers:
+    my-webhook:
+      type: webhook
+      url: https://hooks.example.com/test
+`;
+    writeConfigFile(tmpDir, yaml);
+
+    const config = loadConfig(tmpDir);
+    expect(config.sync.enabled).toBe(true);
+    expect(config.sync.primary).toBe("my-webhook");
+    expect(config.sync.providers["my-webhook"]).toBeDefined();
+    expect(config.sync.providers["my-webhook"].type).toBe("webhook");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Config cascade (global + project)
+// ---------------------------------------------------------------------------
+
+describe("config cascade", () => {
+  let tmpDir: string;
+  let globalDir: string;
+  let originalGetGlobal: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "rigor-cascade-test-"));
+    globalDir = mkdtempSync(join(tmpdir(), "rigor-global-test-"));
+
+    // Override APPDATA (Windows) or HOME to control global config location
+    originalGetGlobal = process.env.RIGOR_TEST_GLOBAL_CONFIG;
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(globalDir, { recursive: true, force: true });
+    delete process.env.RIGOR_SYNC_ENABLED;
+  });
+
+  // -----------------------------------------------------------------------
+  // Env var overrides
+  // -----------------------------------------------------------------------
+
+  it("RIGOR_SYNC_ENABLED=true enables sync", () => {
+    process.env.RIGOR_SYNC_ENABLED = "true";
+    const config = loadConfig(tmpDir);
+    expect(config.sync.enabled).toBe(true);
+  });
+
+  it("RIGOR_SYNC_ENABLED=1 enables sync", () => {
+    process.env.RIGOR_SYNC_ENABLED = "1";
+    const config = loadConfig(tmpDir);
+    expect(config.sync.enabled).toBe(true);
+  });
+
+  it("RIGOR_SYNC_ENABLED=false disables sync", () => {
+    // First enable sync via config
+    writeConfigFile(tmpDir, "sync:\n  enabled: true\n");
+    process.env.RIGOR_SYNC_ENABLED = "false";
+    const config = loadConfig(tmpDir);
+    expect(config.sync.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getGlobalConfigPath
+// ---------------------------------------------------------------------------
+
+describe("getGlobalConfigPath", () => {
+  it("returns a string path", () => {
+    const path = getGlobalConfigPath();
+    expect(typeof path).toBe("string");
+    expect(path).toContain("config.yaml");
   });
 });
 
