@@ -195,15 +195,35 @@ When something goes wrong, follow this order:
 cycle_diagnose()
 ```
 
-Returns cycle health (healthy/degraded/corrupt), stuck entities, validation errors, and evidence audit. Read the report before taking action.
+Returns cycle health (healthy/degraded/corrupt), stuck entities, failed tasks, validation errors, evidence audit, and actionable suggestions referencing the exact management tool and params to use. Read the report before taking action.
 
-### 2. Retry failed tasks
+### 2. Use management tools
+
+Three granular tools for targeted fixes. All use the preview/confirm pattern (set `confirm: false` to preview, `confirm: true` to apply).
+
+**task_manage** -- force_status, skip, retry, or reset_evidence for a single task:
 
 ```
-task_retry({ task_id: "1.1.1" })
+task_manage({ task_id: "1.1.1", action: "retry", confirm: true })
+task_manage({ task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true })
+task_manage({ task_id: "1.1.1", action: "skip", confirm: true })
+task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })
 ```
 
-Clears the previous gate_0 evidence so the task can be restarted. The task stays in "failed" status -- call `task_start` to begin again.
+**epic_manage** -- force_status, reset_tasks, or skip for an epic (with optional cascade to child tasks):
+
+```
+epic_manage({ epic_id: "1.1", action: "force_status", target_status: "pending", cascade: true, confirm: true })
+epic_manage({ epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: true })
+epic_manage({ epic_id: "1.1", action: "skip", cascade: true, confirm: true })
+```
+
+**phase_manage** -- force_status or skip for a phase (skip always cascades to all child epics and tasks):
+
+```
+phase_manage({ phase_id: "1", action: "skip", confirm: true })
+phase_manage({ phase_id: "1", action: "force_status", target_status: "done", confirm: true })
+```
 
 ### 3. Reset as last resort
 

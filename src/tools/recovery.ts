@@ -1,11 +1,14 @@
 /**
  * Recovery MCP tools: cycle_reset, task_manage, epic_manage, phase_manage, cycle_diagnose.
  *
- * cycle_reset    — previews or destroys the current cycle state + evidence.
- * task_manage    — force_status, skip, retry, reset_evidence for a task.
- * epic_manage    — force_status, reset_tasks, skip for an epic (optional cascade).
- * phase_manage   — force_status, skip for a phase (cascades to children).
- * cycle_diagnose — runs validation, detects stuck entities, audits evidence.
+ * cycle_reset    -- previews or destroys the current cycle state + evidence.
+ * task_manage    -- force_status, skip, retry, reset_evidence for a task.
+ *                   (replaces the original task_retry tool)
+ * epic_manage    -- force_status, reset_tasks, skip for an epic (optional cascade).
+ * phase_manage   -- force_status, skip for a phase (cascades to children).
+ * cycle_diagnose -- runs validation, detects stuck entities, audits evidence,
+ *                   and returns structured fix suggestions referencing
+ *                   task_manage / epic_manage / phase_manage.
  */
 
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
@@ -112,7 +115,8 @@ export function handleCycleReset(
 }
 
 // ---------------------------------------------------------------------------
-// task_retry handler
+// task_retry handler (kept for backward-compat; retry action in task_manage
+// delegates here)
 // ---------------------------------------------------------------------------
 
 export interface TaskRetryParams {
@@ -710,7 +714,7 @@ export function handleCycleDiagnose(
   const stuck = detectStuckEntities(state);
 
   // 4. Audit evidence completeness
-  const missingEvidence: string[] = [];
+  const missingEvidence: { message: string; entityType: "task" | "epic"; entityId: string; gate: string }[] = [];
 
   for (const phase of state.phases) {
     for (const epic of phase.epics) {
@@ -719,7 +723,12 @@ export function handleCycleDiagnose(
         if (task.status === "done") {
           const evidence = evidenceManager.load("gate_0", task.id);
           if (evidence === null) {
-            missingEvidence.push(`Task ${task.id}: missing gate_0 evidence`);
+            missingEvidence.push({
+              message: `Task ${task.id}: missing gate_0 evidence`,
+              entityType: "task",
+              entityId: task.id,
+              gate: "gate_0",
+            });
           }
         }
       }
@@ -728,58 +737,85 @@ export function handleCycleDiagnose(
       if (epic.status === "done") {
         const gate8 = evidenceManager.load("gate_8", epic.id);
         if (gate8 === null) {
-          missingEvidence.push(`Epic ${epic.id}: missing gate_8 evidence`);
+          missingEvidence.push({
+            message: `Epic ${epic.id}: missing gate_8 evidence`,
+            entityType: "epic",
+            entityId: epic.id,
+            gate: "gate_8",
+          });
         }
         const gate9 = evidenceManager.load("gate_9", epic.id);
         if (gate9 === null) {
-          missingEvidence.push(`Epic ${epic.id}: missing gate_9 evidence`);
+          missingEvidence.push({
+            message: `Epic ${epic.id}: missing gate_9 evidence`,
+            entityType: "epic",
+            entityId: epic.id,
+            gate: "gate_9",
+          });
         }
       }
     }
   }
 
-  // 5. Determine health status
+  // 5. Collect failed tasks
+  const failedTasks: { id: string; name: string }[] = [];
+  for (const phase of state.phases) {
+    for (const epic of phase.epics) {
+      for (const task of epic.tasks) {
+        if (task.status === "failed") {
+          failedTasks.push({ id: task.id, name: task.name });
+        }
+      }
+    }
+  }
+
+  // 6. Determine health status
   let health: "healthy" | "degraded" | "corrupt";
   if (validation.errors.length > 0) {
     health = "corrupt";
   } else if (
     validation.warnings.length > 0 ||
     stuck.length > 0 ||
-    missingEvidence.length > 0
+    missingEvidence.length > 0 ||
+    failedTasks.length > 0
   ) {
     health = "degraded";
   } else {
     health = "healthy";
   }
 
-  // 6. Compute progress
+  // 7. Compute progress (exclude skipped entities from totals)
   let tasksDone = 0;
-  let tasksTotal = 0;
+  let tasksActive = 0;
   let epicsDone = 0;
-  let epicsTotal = 0;
+  let epicsActive = 0;
 
   for (const phase of state.phases) {
     for (const epic of phase.epics) {
-      epicsTotal++;
-      if (epic.status === "done") {
-        epicsDone++;
+      if (epic.status !== "skipped") {
+        epicsActive++;
+        if (epic.status === "done") {
+          epicsDone++;
+        }
       }
       for (const task of epic.tasks) {
-        tasksTotal++;
-        if (task.status === "done") {
-          tasksDone++;
+        if (task.status !== "skipped") {
+          tasksActive++;
+          if (task.status === "done") {
+            tasksDone++;
+          }
         }
       }
     }
   }
 
-  // 7. Build report
+  // 8. Build report
   const lines: string[] = [];
 
   lines.push(`Health: ${health}`);
   lines.push(`Cycle: ${state.cycle_id}`);
   lines.push(`Current phase: ${state.current_phase}`);
-  lines.push(`Progress: ${tasksDone}/${tasksTotal} tasks, ${epicsDone}/${epicsTotal} epics`);
+  lines.push(`Progress: ${tasksDone}/${tasksActive} tasks, ${epicsDone}/${epicsActive} epics`);
 
   // Issues
   if (validation.errors.length > 0 || validation.warnings.length > 0) {
@@ -793,29 +829,42 @@ export function handleCycleDiagnose(
     }
   }
 
-  // Stuck entities
+  // Stuck entities with actionable suggestions
   if (stuck.length > 0) {
     lines.push("");
     lines.push("Stuck entities:");
     for (const s of stuck) {
-      let suggestion: string;
+      lines.push(`  ${s.type} ${s.id} (${s.name}):`);
       if (s.type === "task") {
-        suggestion = "verify if work is ongoing or run task_retry if failed";
+        lines.push(`    Suggestion: task_manage({ task_id: "${s.id}", action: "force_status", target_status: "failed", confirm: true })`);
+        lines.push(`    Suggestion: task_manage({ task_id: "${s.id}", action: "retry", confirm: true })`);
       } else if (s.type === "epic") {
-        suggestion = "verify if review is ongoing";
+        lines.push(`    Suggestion: epic_manage({ epic_id: "${s.id}", action: "force_status", target_status: "pending", cascade: false, confirm: true })`);
       } else {
-        suggestion = "check phase_advance status";
+        lines.push(`    Suggestion: phase_manage({ phase_id: "${s.id}", action: "force_status", target_status: "pending", confirm: true })`);
       }
-      lines.push(`  ${s.type} ${s.id} (${s.name}): ${suggestion}`);
     }
   }
 
-  // Evidence audit
+  // Failed tasks with retry suggestions
+  if (failedTasks.length > 0) {
+    lines.push("");
+    lines.push("Failed tasks:");
+    for (const t of failedTasks) {
+      lines.push(`  task ${t.id} (${t.name}):`);
+      lines.push(`    Suggestion: task_manage({ task_id: "${t.id}", action: "retry", confirm: true })`);
+    }
+  }
+
+  // Evidence audit with actionable suggestions
   if (missingEvidence.length > 0) {
     lines.push("");
     lines.push(`Evidence audit: ${missingEvidence.length} missing`);
     for (const m of missingEvidence) {
-      lines.push(`  ${m}`);
+      lines.push(`  ${m.message}`);
+      if (m.entityType === "task") {
+        lines.push(`    Suggestion: task_manage({ task_id: "${m.entityId}", action: "reset_evidence", confirm: true })`);
+      }
     }
   }
 

@@ -415,9 +415,9 @@ Register both tools in `src/server.ts` via a `registerRecoveryTools` function.
 
 1. **Frontmatter**: name, description, triggers (when user says "start dev cycle", "run the cycle", etc.)
 2. **Workflow sequence**: `cycle_init(plan_path)` → for each task in phase: `task_start(task_id)` → implement → `task_complete(task_id)` → for each epic: `review_start(epic_id)` → `review_submit(epic_id, ...)` → `accept_start(epic_id)` → `accept_submit(epic_id, ...)` → `phase_advance()`
-3. **Gate failure protocol**: When task_complete fails, read the evidence, fix the issue, call `task_retry` then restart. Never skip a failing gate.
+3. **Gate failure protocol**: When task_complete fails, read the evidence, fix the issue, call `task_manage` with `action: "retry"` then restart. Never skip a failing gate.
 4. **Anti-patterns** (explicit prohibitions): Do not edit `.rigor/state.json` directly. Do not call `task_complete` without running the actual implementation. Do not fabricate review submissions. Do not call `phase_advance` until all epics pass Gate 9.
-5. **Recovery protocol**: If stuck, call `cycle_diagnose` first. Use `task_retry` for failed tasks. Use `cycle_reset` only as last resort (requires user confirmation).
+5. **Recovery protocol**: If stuck, call `cycle_diagnose` first. Use `task_manage` for failed tasks. Use `cycle_reset` only as last resort (requires user confirmation).
 6. **Status reporting**: After each gate, report results to the user. After each epic, show cumulative progress.
 
 **Files:**

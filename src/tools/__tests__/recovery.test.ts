@@ -1,5 +1,6 @@
 /**
- * Tests for cycle_reset, task_retry, and cycle_diagnose tool handlers.
+ * Tests for recovery tool handlers: cycle_reset, task_manage, epic_manage,
+ * phase_manage, cycle_diagnose, and the internal handleTaskRetry helper.
  *
  * Each test gets a fresh temp directory so state files don't collide.
  */
@@ -224,10 +225,10 @@ describe("recovery tools", () => {
   });
 
   // -----------------------------------------------------------------------
-  // task_retry
+  // handleTaskRetry (internal helper, also used by task_manage retry action)
   // -----------------------------------------------------------------------
 
-  describe("task_retry", () => {
+  describe("handleTaskRetry", () => {
     it("returns error when no active cycle exists", () => {
       const result = handleTaskRetry(
         { task_id: "1.1.1" },
@@ -470,6 +471,150 @@ describe("recovery tools", () => {
       expect(text).toContain("Evidence audit: 2 missing");
       expect(text).toContain("Epic 1.1: missing gate_8 evidence");
       expect(text).toContain("Epic 1.1: missing gate_9 evidence");
+    });
+
+    it("suggests task_manage for stuck tasks", () => {
+      const state = makeCycleState();
+      state.phases[0].epics[0].tasks[0].status = "doing";
+      writeState(tempDir, state);
+
+      const result = handleCycleDiagnose(
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      const text = extractText(result);
+      expect(text).toContain("Stuck entities:");
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true })');
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+    });
+
+    it("suggests task_manage retry for failed tasks", () => {
+      const state = makeCycleState();
+      state.phases[0].epics[0].tasks[0].status = "failed";
+      writeState(tempDir, state);
+
+      const result = handleCycleDiagnose(
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      const text = extractText(result);
+      expect(text).toContain("Failed tasks:");
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+    });
+
+    it("suggests epic_manage for stuck epics", () => {
+      const state = makeCycleState();
+      state.phases[0].epics[0].status = "doing";
+      writeState(tempDir, state);
+
+      const result = handleCycleDiagnose(
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      const text = extractText(result);
+      expect(text).toContain("Stuck entities:");
+      expect(text).toContain('epic_manage({ epic_id: "1.1", action: "force_status", target_status: "pending", cascade: false, confirm: true })');
+    });
+
+    it("suggests task_manage reset_evidence for missing task evidence", () => {
+      const state = makeCycleState();
+      state.phases[0].epics[0].tasks[0].status = "done";
+      state.phases[0].epics[0].tasks[0].gate_0 = { passed: true };
+      // No evidence file on disk
+      writeState(tempDir, state);
+
+      const result = handleCycleDiagnose(
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      const text = extractText(result);
+      expect(text).toContain("Evidence audit:");
+      expect(text).toContain("Task 1.1.1: missing gate_0 evidence");
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+    });
+
+    it("excludes skipped entities from progress totals", () => {
+      const state = makeCycleState();
+      // 2 tasks total: skip one, leave one pending
+      state.phases[0].epics[0].tasks[0].status = "skipped";
+      writeState(tempDir, state);
+
+      const result = handleCycleDiagnose(
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      const text = extractText(result);
+      // 1 active task (the non-skipped one), 0 done
+      expect(text).toContain("0/1 tasks");
+      // Epic is still active (pending, not skipped)
+      expect(text).toContain("0/1 epics");
+    });
+
+    it("excludes skipped epics from progress totals", () => {
+      const state = makeCycleState();
+      state.phases[0].epics[0].status = "skipped";
+      // Also skip all tasks so we get clean counts
+      state.phases[0].epics[0].tasks[0].status = "skipped";
+      state.phases[0].epics[0].tasks[1].status = "skipped";
+      writeState(tempDir, state);
+
+      const result = handleCycleDiagnose(
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      const text = extractText(result);
+      // All skipped — 0 active
+      expect(text).toContain("0/0 tasks");
+      expect(text).toContain("0/0 epics");
+    });
+
+    it("suggests phase_manage for stuck phases", () => {
+      const state = makeCycleState();
+      // Add a second phase stuck in "doing" (non-current phase)
+      state.phases.push({
+        id: 2,
+        status: "doing",
+        epics: [
+          {
+            id: "2.1",
+            name: "Phase 2 epic",
+            status: "pending",
+            tasks: [
+              {
+                id: "2.1.1",
+                name: "Phase 2 task",
+                status: "pending",
+                gate_0: { passed: false },
+              },
+            ],
+            gate_8: { passed: false },
+            gate_9: { passed: false },
+          },
+        ],
+      });
+      writeState(tempDir, state);
+
+      const result = handleCycleDiagnose(
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      const text = extractText(result);
+      expect(text).toContain("Stuck entities:");
+      expect(text).toContain('phase_manage({ phase_id: "2", action: "force_status", target_status: "pending", confirm: true })');
     });
   });
 
