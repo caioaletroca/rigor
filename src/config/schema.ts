@@ -118,6 +118,8 @@ export interface GatesConfig {
 }
 
 export interface RigorConfig {
+  /** Domain pack to load (e.g. "software"). Undefined means no domain pack. */
+  domain?: string;
   commit: CommitConfig;
   ship: ShipConfig;
   gates: GatesConfig;

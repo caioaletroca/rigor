@@ -13,4 +13,4 @@ export type {
   Check,
   Metric,
 } from "./schema.js";
-export { loadConfig } from "./loader.js";
+export { loadConfig, loadDomainPackDefaults, resolveVariables } from "./loader.js";

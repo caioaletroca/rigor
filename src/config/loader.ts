@@ -1,9 +1,12 @@
 /**
  * Config loader — reads .rigor/config.yaml and deep-merges with DEFAULTS.
+ *
+ * Merge cascade: core DEFAULTS → domain pack defaults → user config.
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { DEFAULTS } from "./schema.js";
 import type { RigorConfig, Check } from "./schema.js";
@@ -84,6 +87,98 @@ export function migrateGate0Config(config: RigorConfig): void {
 }
 
 // ---------------------------------------------------------------------------
+// Domain pack loading
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the path to a domain pack's `defaults.yaml`.
+ *
+ * Searches in order:
+ * 1. `<projectRoot>/skills/domain/<domain>/defaults.yaml`
+ * 2. `<rigorPackageRoot>/skills/domain/<domain>/defaults.yaml`
+ *
+ * Returns the first existing path, or `null` if not found.
+ */
+function resolveDomainPackPath(
+  domain: string,
+  projectRoot: string,
+): string | null {
+  // 1. Project-local domain packs
+  const projectPath = join(projectRoot, "skills", "domain", domain, "defaults.yaml");
+  if (existsSync(projectPath)) return projectPath;
+
+  // 2. Rigor package's built-in domain packs
+  const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const builtinPath = join(packageRoot, "skills", "domain", domain, "defaults.yaml");
+  if (existsSync(builtinPath)) return builtinPath;
+
+  return null;
+}
+
+/**
+ * Load a domain pack's defaults.yaml and return the parsed object.
+ * Returns `null` if the domain pack does not exist or is empty.
+ */
+export function loadDomainPackDefaults(
+  domain: string,
+  projectRoot: string,
+): Record<string, unknown> | null {
+  const packPath = resolveDomainPackPath(domain, projectRoot);
+  if (!packPath) return null;
+
+  const raw = readFileSync(packPath, "utf-8");
+
+  let parsed: unknown;
+  try {
+    parsed = parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (parsed === null || parsed === undefined) return null;
+  if (!isPlainObject(parsed)) return null;
+
+  return parsed;
+}
+
+// ---------------------------------------------------------------------------
+// Variable resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Replace `${key}` placeholders in all string values throughout an object.
+ *
+ * - `variables` is a flat key→value map (e.g. `{ "lang.test_command": "npm test" }`).
+ * - Placeholders referencing missing keys resolve to empty string.
+ * - Non-string values are left untouched.
+ * - Works recursively through nested objects and arrays.
+ */
+export function resolveVariables(
+  obj: unknown,
+  variables: Record<string, string>,
+): unknown {
+  if (typeof obj === "string") {
+    return obj.replace(/\$\{([^}]+)\}/g, (_match, key: string) => {
+      return variables[key] ?? "";
+    });
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => resolveVariables(item, variables));
+  }
+
+  if (isPlainObject(obj)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = resolveVariables(value, variables);
+    }
+    return result;
+  }
+
+  return obj;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -93,9 +188,13 @@ const CONFIG_FILE = "config.yaml";
 /**
  * Load Rigor configuration from `<projectRoot>/.rigor/config.yaml`.
  *
+ * Merge cascade: core DEFAULTS → domain pack defaults → user config.
+ *
  * - If the file does not exist, returns {@link DEFAULTS}.
  * - If the file exists, deep-merges its values over DEFAULTS (arrays replace,
  *   objects merge, primitives override).
+ * - If `domain` is set, loads the domain pack's `defaults.yaml` and inserts
+ *   it between core defaults and user config in the merge cascade.
  * - If YAML parsing fails, throws with a descriptive message.
  */
 export function loadConfig(projectRoot: string): RigorConfig {
@@ -129,13 +228,20 @@ export function loadConfig(projectRoot: string): RigorConfig {
     );
   }
 
-  // Safe assertion: the merge target starts as a full RigorConfig clone
-  // (structuredClone of DEFAULTS). deepMerge only overrides matching keys
-  // from user YAML, so the result retains the complete RigorConfig shape.
-  const merged = deepMerge(
-    structuredClone(DEFAULTS) as unknown as Record<string, unknown>,
-    parsed,
-  );
+  // Build the merge cascade: DEFAULTS → domain pack → user config
+  let base = structuredClone(DEFAULTS) as unknown as Record<string, unknown>;
+
+  // If user config specifies a domain, load the domain pack defaults
+  const domain = parsed["domain"];
+  if (typeof domain === "string" && domain !== "") {
+    const domainDefaults = loadDomainPackDefaults(domain, projectRoot);
+    if (domainDefaults) {
+      base = deepMerge(base, domainDefaults);
+    }
+  }
+
+  // Merge user config on top (user always wins)
+  const merged = deepMerge(base, parsed);
   const config = merged as unknown as RigorConfig;
 
   // Migrate legacy Gate 0 fields to checks[] for backward compat.

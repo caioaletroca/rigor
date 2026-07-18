@@ -1,15 +1,15 @@
 ---
 name: rigor:init
 description: >-
-  Project onboarding — detects the project's tech stack and creates or
-  audits .rigor/config.yaml with the correct gate commands. Sweep mode
-  scans for language markers, test frameworks, and linters. Apply mode
-  writes a working config file. Use when setting up Rigor on a new
+  Project onboarding — detects the project's domain and tech stack, creates or
+  audits .rigor/config.yaml with the correct domain pack and gate commands.
+  Sweep mode scans for language markers, test frameworks, and linters. Apply
+  mode writes a working config file. Use when setting up Rigor on a new
   project or auditing an existing config. Skip when config is already
   validated and working.
 ---
 
-Onboard any project onto Rigor in one pass. Detects the stack, validates or creates configuration, and verifies gate commands work. Operates in two modes: Sweep (read-only audit of existing config) and Apply (writes config).
+Onboard any project onto Rigor in one pass. Detects the domain, detects the stack, validates or creates configuration, and verifies gate commands work. Operates in two modes: Sweep (read-only audit of existing config) and Apply (writes config).
 
 **Announce at start:** "Using rigor:init to onboard this project."
 
@@ -28,6 +28,45 @@ DO:
 - Read the actual files in the project root
 - Stop at the first confident match per category
 - Report what you found before writing anything
+
+---
+
+## Step 0 -- Domain Detection
+
+Before detecting the specific tech stack, identify the project's domain. The domain determines which domain pack provides default checks.
+
+### Detection Rules
+
+Check for the "software" domain by looking for any of these signals:
+
+| Signal | Type | Confidence |
+|--------|------|------------|
+| Code files: `.ts`, `.js`, `.go`, `.py`, `.cs`, `.java`, `.rs` | source code | high |
+| Package managers: `package.json`, `go.mod`, `requirements.txt`, `pyproject.toml`, `*.csproj`, `*.sln`, `Cargo.toml` | dependency manifest | high |
+| CI configs: `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile` | CI/CD | medium |
+| Test directories: `test/`, `tests/`, `__tests__/` | test infrastructure | medium |
+
+Any single high-confidence signal is sufficient. Two or more medium-confidence signals together also qualify.
+
+If no domain is detected, leave the `domain` field unset (core defaults only).
+
+### Output
+
+Report the detected domain before proceeding to stack detection:
+
+```
+Domain Detection:
+  Domain: software (high) -- package.json found
+```
+
+Or, if no domain is detected:
+
+```
+Domain Detection:
+  Domain: none detected -- no code files, package managers, or CI configs found
+```
+
+Present the detected domain to the user. If they want a different domain or no domain, honor their choice.
 
 ---
 
@@ -145,20 +184,49 @@ If `.rigor/config.yaml` does not exist, report: "No config file found -- run App
 
 ## Step 3 -- Apply Mode (Create/Update Config)
 
-Generate `.rigor/config.yaml` from the detected stack. Only write fields that differ from defaults. If a value matches the default, omit it -- this keeps the file minimal and makes upgrades easier.
+Generate `.rigor/config.yaml` from the detected domain and stack. Only write fields that differ from defaults. If a value matches the default, omit it -- this keeps the file minimal and makes upgrades easier.
+
+### Domain Field
+
+If a domain was detected in Step 0, include it at the top of the config:
+
+```yaml
+domain: software
+```
+
+When `domain: software` is set, the software domain pack provides default Gate 0 checks (tests with coverage, lint) using `${lang.*}` variable placeholders. These are resolved by the active lang pack at runtime. You do NOT need to write explicit `test_command`, `lint_command`, or `checks` in the user config when a domain pack handles them -- the domain pack defaults apply automatically.
+
+Only write explicit gate_0 commands if:
+- No domain was detected (no domain pack to provide defaults)
+- The user explicitly wants to override the domain pack defaults
 
 ### Defaults (from config.example.yaml)
 
 | Field | Default |
 |-------|---------|
+| `domain` | (unset) |
 | `coverage_threshold` | 85 |
 | `lint_command` | `""` |
 | `test_command` | `""` |
 | `require_test_files` | true |
 
-Since `lint_command` and `test_command` default to empty, you always need to write them when a linter or test framework is detected. Since `coverage_threshold` defaults to 85, omit it unless the project needs a different value. Since `require_test_files` defaults to true, omit it.
+Since `lint_command` and `test_command` default to empty, you always need to write them when a linter or test framework is detected AND no domain pack is active. Since `coverage_threshold` defaults to 85, omit it unless the project needs a different value. Since `require_test_files` defaults to true, omit it.
 
 ### Templates by Stack
+
+#### With domain pack (preferred)
+
+When `domain: software` is set, the domain pack provides test/lint checks via lang pack variables. The config is minimal:
+
+```yaml
+domain: software
+```
+
+The lang pack (loaded separately) provides the actual commands. No gate_0 overrides needed.
+
+#### Without domain pack (fallback)
+
+If no domain is detected, write explicit commands:
 
 **Go:**
 
@@ -279,6 +347,8 @@ Verification:
 | Write config fields that match defaults | Bloats the file; makes upgrades harder |
 | Add comments or examples to the config | That is what config.example.yaml is for |
 | Overwrite existing correct gate_8/gate_9 settings | Init only owns gate_0; preserve everything else |
+| Write explicit gate_0 commands when domain pack handles them | Duplicates config; domain pack + lang pack provide the commands |
+| Skip domain detection | The domain pack provides sensible defaults; skipping it means manual config |
 
 ---
 

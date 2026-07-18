@@ -489,4 +489,70 @@ describe("checkGate0Exit", () => {
     expect(metricCheck?.detail).toContain("90%");
     expect(metricCheck?.detail).toContain("Performance");
   });
+
+  // -----------------------------------------------------------------------
+  // 16. Skips checks with empty commands (unresolved variables)
+  // -----------------------------------------------------------------------
+  it("skips checks with empty command strings", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      require_test_files: false,
+      checks: [
+        { name: "tests", command: "" },
+        { name: "lint", command: "eslint ." },
+      ],
+    });
+
+    runCommand.mockReturnValue(okResult());
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(true);
+    // Only lint should have run, tests was skipped
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(runCommand).toHaveBeenCalledWith("eslint .", { cwd: "/project" });
+
+    const lintCheck = result.checks.find((c) => c.name === "lint");
+    expect(lintCheck?.passed).toBe(true);
+
+    // The empty tests check should not appear in results
+    const testsCheck = result.checks.find((c) => c.name === "tests");
+    expect(testsCheck).toBeUndefined();
+  });
+
+  it("skips checks with whitespace-only command strings", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      require_test_files: false,
+      checks: [
+        { name: "tests", command: "   " },
+      ],
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    // Should pass trivially since the only check was skipped
+    // and no checks produced results, but the checks array is empty
+    expect(result.passed).toBe(true);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("passes when all checks have empty commands", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      require_test_files: false,
+      checks: [
+        { name: "tests", command: "" },
+        { name: "lint", command: "" },
+      ],
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(true);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
 });

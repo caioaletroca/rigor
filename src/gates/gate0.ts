@@ -66,6 +66,11 @@ export async function checkGate0Exit(
   // -----------------------------------------------------------------------
 
   for (const check of g0.checks) {
+    // Skip checks with empty/unresolved commands (e.g. unresolved ${lang.*} variables).
+    if (!check.command || check.command.trim() === "") {
+      continue;
+    }
+
     const result = runCommand(check.command, { cwd: projectRoot });
     const commandPassed = result.exit_code === 0;
 

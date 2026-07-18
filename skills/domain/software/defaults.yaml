@@ -1,0 +1,12 @@
+gates:
+  gate_0:
+    checks:
+      - name: "tests"
+        command: "${lang.test_command}"
+        metric:
+          parse: "${lang.coverage_pattern}"
+          threshold: 85
+          label: "coverage"
+      - name: "lint"
+        command: "${lang.lint_command}"
+    require_test_files: true
