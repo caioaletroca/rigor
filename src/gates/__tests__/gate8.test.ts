@@ -204,4 +204,82 @@ describe("checkGate8Exit", () => {
     expect(result.passed).toBe(true);
     expect(result.missing_reviewers).toHaveLength(0);
   });
+
+  // -----------------------------------------------------------------------
+  // 6. Design-quality reviewer submits and findings are counted
+  // -----------------------------------------------------------------------
+  it("counts design-quality reviewer findings in severity totals", () => {
+    const config = makeConfig({
+      reviewers: ["security", "design-quality"],
+      required_reviewers: ["security"],
+      max_critical_findings: 0,
+      max_high_findings: 0,
+    });
+
+    const submissions: ReviewFindings[] = [
+      makeSubmission("security"),
+      makeSubmission("design-quality", "ISSUES_FOUND", [
+        {
+          severity: "high",
+          file: "src/Button.tsx:12",
+          title: "Hardcoded color bypasses design tokens",
+          description: "Uses #7C3AED instead of var(--color-primary) from DESIGN.md",
+          suggestion: "Replace with the design token: bg-brand-primary or var(--color-primary)",
+          source: "tool:impeccable",
+        },
+        {
+          severity: "medium",
+          file: "src/Layout.tsx:45",
+          title: "Inconsistent spacing between sections",
+          description: "Gap between hero and features is 48px, but between features and CTA is 32px",
+          suggestion: "Use consistent spacing from the design system spacing scale",
+          source: "ai",
+        },
+      ]),
+    ];
+
+    const result = checkGate8Exit(submissions, config);
+
+    // Gate fails because high_count (1) exceeds max_high_findings (0)
+    expect(result.passed).toBe(false);
+    expect(result.high_count).toBe(1);
+    expect(result.critical_count).toBe(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // 7. Design-quality reviewer is not in required_reviewers by default
+  // -----------------------------------------------------------------------
+  it("passes when design-quality reviewer is missing and not required", () => {
+    const config = makeConfig({
+      reviewers: ["security", "logic", "design-quality"],
+      required_reviewers: ["security", "logic"],
+      max_critical_findings: 0,
+      max_high_findings: 0,
+    });
+
+    const submissions: ReviewFindings[] = [
+      makeSubmission("security"),
+      makeSubmission("logic"),
+      // design-quality is not submitted but not required
+    ];
+
+    const result = checkGate8Exit(submissions, config);
+
+    expect(result.passed).toBe(true);
+    expect(result.missing_reviewers).toHaveLength(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // 8. Design-quality reviewer is in default reviewers list
+  // -----------------------------------------------------------------------
+  it("includes design-quality in default reviewers list", () => {
+    expect(DEFAULTS.gates.gate_8.reviewers).toContain("design-quality");
+  });
+
+  // -----------------------------------------------------------------------
+  // 9. Design-quality is NOT in default required_reviewers
+  // -----------------------------------------------------------------------
+  it("does not include design-quality in default required_reviewers", () => {
+    expect(DEFAULTS.gates.gate_8.required_reviewers).not.toContain("design-quality");
+  });
 });

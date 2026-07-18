@@ -72,6 +72,20 @@ export async function checkGate0Exit(
     }
 
     const result = runCommand(check.command, { cwd: projectRoot });
+
+    // Exit code 127 = command not found — provide a clear, actionable message.
+    if (result.exit_code === 127) {
+      checks.push({
+        name: check.name,
+        passed: false,
+        detail: `Command not found: "${check.command}". Install the required tool or remove this check from your config.`,
+        command: check.command,
+        exit_code: 127,
+        duration_ms: result.duration_ms,
+      });
+      continue;
+    }
+
     const commandPassed = result.exit_code === 0;
 
     checks.push({

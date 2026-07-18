@@ -83,6 +83,10 @@ export function migrateGate0Config(config: RigorConfig): void {
     checks.push({ name: "lint", command: g0.lint_command });
   }
 
+  if (g0.design_command !== "") {
+    checks.push({ name: "design-quality", command: g0.design_command });
+  }
+
   g0.checks = checks;
 }
 

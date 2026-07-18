@@ -555,4 +555,241 @@ describe("checkGate0Exit", () => {
     expect(result.passed).toBe(true);
     expect(runCommand).not.toHaveBeenCalled();
   });
+
+  // =======================================================================
+  // Design-quality and exit-code-127 tests (Impeccable Integration)
+  // =======================================================================
+
+  // -----------------------------------------------------------------------
+  // 17. Design-quality check passes
+  // -----------------------------------------------------------------------
+  it("passes design-quality check when command exits 0", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      design_command: "echo 'No issues found'",
+      require_test_files: false,
+    });
+
+    runCommand.mockReturnValue(okResult("No issues found"));
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(true);
+
+    const designCheck = result.checks.find((c) => c.name === "design-quality");
+    expect(designCheck?.passed).toBe(true);
+    expect(designCheck?.detail).toContain("Design-quality passed");
+  });
+
+  // -----------------------------------------------------------------------
+  // 18. Design-quality check fails with violations
+  // -----------------------------------------------------------------------
+  it("fails design-quality check when command exits 1 with findings", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      design_command: "npx impeccable detect src/",
+      require_test_files: false,
+    });
+
+    runCommand.mockReturnValue({
+      command: "npx impeccable detect src/",
+      exit_code: 1,
+      stdout: "P0: overused-font in src/Button.tsx:5",
+      stderr: "",
+      duration_ms: 200,
+      timed_out: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(false);
+
+    const designCheck = result.checks.find((c) => c.name === "design-quality");
+    expect(designCheck?.passed).toBe(false);
+    expect(designCheck?.detail).toContain("exit code 1");
+  });
+
+  // -----------------------------------------------------------------------
+  // 19. Design-quality check skipped when command is empty
+  // -----------------------------------------------------------------------
+  it("skips design-quality check when design_command is empty", async () => {
+    const config = makeConfig({
+      test_command: "npm test",
+      lint_command: "",
+      design_command: "",
+      require_test_files: false,
+    });
+
+    runCommand.mockReturnValue(okResult("Statements : 90%"));
+    parseCoverage.mockReturnValue(90);
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const designCheck = result.checks.find((c) => c.name === "design-quality");
+    expect(designCheck).toBeUndefined();
+  });
+
+  // -----------------------------------------------------------------------
+  // 20. Design-quality check with command not found (exit 127)
+  // -----------------------------------------------------------------------
+  it("reports command not found when design command exits 127", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      design_command: "npx impeccable detect src/",
+      require_test_files: false,
+    });
+
+    runCommand.mockReturnValue({
+      command: "npx impeccable detect src/",
+      exit_code: 127,
+      stdout: "",
+      stderr: "npx: command 'impeccable' not found",
+      duration_ms: 50,
+      timed_out: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(false);
+
+    const designCheck = result.checks.find((c) => c.name === "design-quality");
+    expect(designCheck?.passed).toBe(false);
+    expect(designCheck?.detail).toContain("Command not found");
+    expect(designCheck?.detail).toContain("npx impeccable detect src/");
+    expect(designCheck?.exit_code).toBe(127);
+  });
+
+  // -----------------------------------------------------------------------
+  // 21. Lint command not found (exit 127) reports clear message
+  // -----------------------------------------------------------------------
+  it("reports command not found when lint command exits 127", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "npx eslint .",
+      require_test_files: false,
+    });
+
+    runCommand.mockReturnValue({
+      command: "npx eslint .",
+      exit_code: 127,
+      stdout: "",
+      stderr: "bash: eslint: command not found",
+      duration_ms: 30,
+      timed_out: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(false);
+
+    const lintCheck = result.checks.find((c) => c.name === "lint");
+    expect(lintCheck?.passed).toBe(false);
+    expect(lintCheck?.detail).toContain("Command not found");
+    expect(lintCheck?.detail).toContain("npx eslint .");
+    expect(lintCheck?.exit_code).toBe(127);
+  });
+
+  // -----------------------------------------------------------------------
+  // 22. Test command not found (exit 127) reports clear message
+  // -----------------------------------------------------------------------
+  it("reports command not found when test command exits 127", async () => {
+    const config = makeConfig({
+      test_command: "npx vitest run",
+      lint_command: "",
+      require_test_files: false,
+    });
+
+    runCommand.mockReturnValue({
+      command: "npx vitest run",
+      exit_code: 127,
+      stdout: "",
+      stderr: "bash: vitest: command not found",
+      duration_ms: 30,
+      timed_out: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(false);
+
+    const testCheck = result.checks.find((c) => c.name === "tests");
+    expect(testCheck?.passed).toBe(false);
+    expect(testCheck?.detail).toContain("Command not found");
+    expect(testCheck?.detail).toContain("npx vitest run");
+    expect(testCheck?.exit_code).toBe(127);
+
+    // Coverage check should NOT run when test command not found
+    const covCheck = result.checks.find((c) => c.name === "coverage");
+    expect(covCheck).toBeUndefined();
+    expect(parseCoverage).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // 23. Gate 0 passes trivially when all three commands are empty
+  // -----------------------------------------------------------------------
+  it("passes trivially when test, lint, and design commands are all empty", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      design_command: "",
+      require_test_files: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(true);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0].detail).toContain("trivially");
+  });
+
+  // -----------------------------------------------------------------------
+  // 24. Design-quality check runs alongside tests and lint
+  // -----------------------------------------------------------------------
+  it("runs design-quality check alongside tests and lint", async () => {
+    const config = makeConfig({
+      test_command: "npm test",
+      lint_command: "npm run lint",
+      design_command: "npx impeccable detect src/",
+      require_test_files: false,
+    });
+
+    // All three commands succeed
+    runCommand.mockReturnValue(okResult("all good"));
+    parseCoverage.mockReturnValue(null);
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(true);
+
+    const testCheck = result.checks.find((c) => c.name === "tests");
+    expect(testCheck?.passed).toBe(true);
+
+    const lintCheck = result.checks.find((c) => c.name === "lint");
+    expect(lintCheck?.passed).toBe(true);
+
+    const designCheck = result.checks.find((c) => c.name === "design-quality");
+    expect(designCheck?.passed).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
+  // 25. Old-format config with design_command migrates to 3 checks
+  // -----------------------------------------------------------------------
+  it("migrates design_command alongside test and lint commands", async () => {
+    const config = makeConfig({
+      test_command: "npm test",
+      lint_command: "eslint .",
+      design_command: "npx impeccable detect src/",
+      coverage_threshold: 80,
+      require_test_files: false,
+    });
+
+    // Should have been migrated to 3 checks
+    expect(config.gates.gate_0.checks).toHaveLength(3);
+    expect(config.gates.gate_0.checks[0].name).toBe("tests");
+    expect(config.gates.gate_0.checks[1].name).toBe("lint");
+    expect(config.gates.gate_0.checks[2].name).toBe("design-quality");
+  });
 });

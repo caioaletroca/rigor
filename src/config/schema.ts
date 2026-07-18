@@ -48,6 +48,7 @@ export interface Gate0Config {
   lint_command: string;
   /** @deprecated Use `checks` instead. Kept for backward compatibility. */
   test_command: string;
+  design_command: string;
   require_test_files: boolean;
   /** Generic checks array. When non-empty, replaces test_command/lint_command. */
   checks: Check[];
@@ -125,6 +126,7 @@ export const DEFAULTS: RigorConfig = {
       coverage_threshold: 85,
       lint_command: "",
       test_command: "",
+      design_command: "",
       require_test_files: true,
       checks: [],
     },
@@ -143,6 +145,7 @@ export const DEFAULTS: RigorConfig = {
         "dead-code",
         "performance",
         "requirements",
+        "design-quality",
       ],
       required_reviewers: ["security", "logic"],
       max_critical_findings: 0,
