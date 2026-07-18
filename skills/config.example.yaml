@@ -79,19 +79,36 @@ gates:
     #   Rust:       "cargo tarpaulin --out Json"
     test_command: ""
 
+    # Design quality command to run (default: "" -- no design check)
+    # For React/Next.js projects using Impeccable:
+    #   "npx impeccable detect src/"
+    # Exit code 0 = clean, 1 = violations found.
+    # Configure Impeccable itself via .impeccable/config.json:
+    #   - ignore specific rules: detector.ignoreRules
+    #   - ignore specific files: detector.ignoreFiles
+    #   - ignore specific values: detector.ignoreValues (e.g. brand fonts)
+    # Inline waivers: <!-- impeccable-disable rule-name: reason -->
+    # No metric -- uses exit code only. Severity control is done via
+    # Impeccable's own config, not Rigor's threshold system.
+    design_command: ""
+
     # Require that new source files have corresponding test files (default: true)
     require_test_files: true
 
   # Gate 8: Review (per epic)
   # These settings control the AI-powered code review phase.
   gate_8:
-    # Reviewer agents to dispatch (default: all nine)
+    # Reviewer agents to dispatch (default: all ten)
     # Each reviewer analyzes the epic diff and returns structured findings.
     #
     # Core reviewers (general-purpose):
     #   code-quality, security, logic, test-quality
     # Extended reviewers (specialized):
     #   nil-safety, consequences, dead-code, performance, requirements
+    # Design reviewer (frontend only):
+    #   design-quality -- uses Impeccable audit + AI judgment for design consistency
+    #   Requires DESIGN.md for grounded review. Most useful for React/Next.js projects.
+    #   Not in required_reviewers by default -- its absence does not block Gate 8.
     reviewers:
       - code-quality
       - security
@@ -102,6 +119,7 @@ gates:
       - dead-code
       - performance
       - requirements
+      - design-quality
 
     # Reviewers that MUST submit findings for the gate to pass (default: security, logic)
     # Other reviewers are informational -- their absence does not block the gate.

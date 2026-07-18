@@ -161,6 +161,7 @@ Output:
 | `dead-code` | Orphaned and unreachable code | Identifies code that became unused as a consequence of changes: orphaned functions, unreachable branches, unused imports, stale type definitions, abandoned test helpers |
 | `performance` | Code-level and runtime hotspots | Allocations in hot paths, unbounded goroutines/promises, N+1 queries, event loop blocking, synchronous I/O in async handlers, missing caching opportunities |
 | `requirements` | Plan compliance and acceptance criteria | Cross-references the implementation against the plan's "Done when" criteria, verifies each criterion has concrete evidence (test, code, behavior), flags criteria without proof |
+| `design-quality` | Design system consistency and visual quality | Runs `impeccable audit` for structured quality scores, then applies AI judgment for subjective design issues (layout rhythm, visual hierarchy, whitespace balance, component composition) grounded in DESIGN.md. Frontend projects only |
 
 Only the reviewers listed in `gates.gate_8.reviewers` are dispatched. The table above defines what each reviewer does -- it is not a hardcoded dispatch list.
 
@@ -177,6 +178,7 @@ Reviewers are split into two categories:
 - `dead-code` — most impactful after refactors, removals, or feature replacements
 - `performance` — most impactful for hot-path changes, API handlers, database queries, or loop-heavy code
 - `requirements` — most impactful at Gate 8 during a `rigor:cycle`, where a plan defines explicit acceptance criteria
+- `design-quality` — most impactful for frontend (React/Next.js) projects with Impeccable and DESIGN.md. Combines deterministic audit scores with AI judgment for subjective design quality
 
 All reviewers follow the same dispatch, schema, and aggregation rules. The distinction is purely organizational — users choose which to enable in `gates.gate_8.reviewers`.
 
@@ -250,6 +252,49 @@ If no plan context is available, skip this reviewer silently.
 ```
 
 The `requirements` reviewer's findings use the same schema as other reviewers. Unmet criteria are reported as `high` severity. Partial criteria are reported as `medium`. A finding's `title` is the criterion text and `description` explains what evidence is missing.
+
+### Design-Quality Reviewer: Additional Context
+
+The `design-quality` reviewer receives extra context beyond the diff:
+
+```
+DESIGN CONTEXT:
+{contents of DESIGN.md if it exists — palette, type scale, spacing, components}
+{contents of PRODUCT.md if it exists — audience, brand voice, visual references}
+
+IMPECCABLE AUDIT OUTPUT:
+{output of `npx impeccable audit` if Impeccable is installed}
+
+The audit output provides structured quality scores across 5 dimensions:
+- Accessibility: contrast ratios, ARIA usage, semantic HTML
+- Performance: render-blocking resources, image optimization
+- Theming: design token consistency, hardcoded values
+- Responsive: breakpoint coverage, fluid typography
+- Anti-patterns: known bad patterns (inline styles, !important abuse)
+
+DESIGN REVIEW INSTRUCTIONS:
+Use the audit scores as grounding, then apply judgment for subjective
+design quality issues the detector cannot catch:
+
+1. Layout rhythm — consistent spacing between sections, alignment of
+   related elements, visual weight distribution
+2. Visual hierarchy — clear heading progression, appropriate emphasis,
+   scannable structure
+3. Whitespace balance — sufficient breathing room, not cramped, not
+   overly sparse
+4. Component composition — appropriate decomposition, consistent prop
+   APIs, reusable abstractions
+5. Design token adherence — uses project tokens from DESIGN.md, not
+   arbitrary values
+
+If DESIGN.md does not exist, focus on universal design quality
+principles only. Do not invent a design system.
+If Impeccable is not installed, skip the audit and rely on AI judgment alone.
+```
+
+The `design-quality` reviewer's findings use the same schema as other reviewers. Design token violations are `high` severity (measurable, objective). Subjective design quality issues (visual hierarchy, whitespace) are `medium` severity. The `source` field is `"tool:impeccable"` for audit-grounded findings and `"ai"` for judgment-based findings.
+
+This reviewer is **not in `required_reviewers` by default**. Its absence does not block Gate 8. It provides value for frontend projects with a design system but is not meaningful for backend-only code.
 
 ### Findings Schema
 
@@ -358,6 +403,7 @@ Produce a structured markdown report in the current session. Do NOT save to disk
 | dead-code | PASS/ISSUES_FOUND | N | no |
 | performance | PASS/ISSUES_FOUND | N | no |
 | requirements | PASS/ISSUES_FOUND | N | no |
+| design-quality | PASS/ISSUES_FOUND | N | no |
 
 ## Report Boundary
 No files were changed. No remediation was performed. No artifacts

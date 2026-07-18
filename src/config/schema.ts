@@ -25,6 +25,7 @@ export interface Gate0Config {
   coverage_threshold: number;
   lint_command: string;
   test_command: string;
+  design_command: string;
   require_test_files: boolean;
 }
 
@@ -129,6 +130,7 @@ export const DEFAULTS: RigorConfig = {
       coverage_threshold: 85,
       lint_command: "",
       test_command: "",
+      design_command: "",
       require_test_files: true,
     },
     gate_1: {
@@ -169,6 +171,7 @@ export const DEFAULTS: RigorConfig = {
         "dead-code",
         "performance",
         "requirements",
+        "design-quality",
       ],
       required_reviewers: ["security", "logic"],
       max_critical_findings: 0,

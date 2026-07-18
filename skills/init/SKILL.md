@@ -225,6 +225,81 @@ gates:
 
 ---
 
+## Step 3b -- Impeccable Detection (React Projects Only)
+
+After generating the config, check for Impeccable if the detected language is React/Next.js.
+
+### 3b.1 -- Check Installation
+
+Run `npx impeccable --version` to check if Impeccable is installed.
+
+| Outcome | Action |
+|---------|--------|
+| Exit code 0 (installed) | Proceed to 3b.2 |
+| Exit code 127 or non-zero (not installed) | Suggest: "For design quality enforcement, install Impeccable: `npm i -D impeccable`. Then set `design_command: \"npx impeccable detect src/\"` in `.rigor/config.yaml` under `gates.gate_0`. The design-quality gate check will activate automatically." |
+
+### 3b.2 -- Check Design Context (only if installed)
+
+| File | Exists? | Action |
+|------|---------|--------|
+| `PRODUCT.md` | Yes | Note: "PRODUCT.md found -- design context available for Impeccable." |
+| `PRODUCT.md` | No | **Guide the user through setup** -- see 3b.2a below |
+| `.impeccable/config.json` | Yes | Note: "Impeccable config found." |
+| `.impeccable/config.json` | No | Suggest (informational): "Consider creating `.impeccable/config.json` for team-wide ignore rules." |
+| `DESIGN.md` | Yes | Note: "DESIGN.md found -- visual system documented." |
+| `DESIGN.md` | No | Note (informational): "DESIGN.md not found. Generate it after initial design work with `npx impeccable document`." |
+
+### 3b.2a -- PRODUCT.md Setup Flow (only if PRODUCT.md missing)
+
+When Impeccable is installed but PRODUCT.md does not exist, guide the user through setup:
+
+1. **Inform the user:** "Impeccable is installed but PRODUCT.md is missing. This file captures your product strategy, audience, and brand voice. The Impeccable detector uses it to ground design quality checks in your specific product context."
+
+2. **Offer to run `npx impeccable init`:** "Run `npx impeccable init` now? This interactive wizard will ask about your product and generate PRODUCT.md."
+
+3. **If user agrees:** Run `npx impeccable init` in the project root. The command is interactive -- it prompts for product name, audience, brand voice, visual references, and anti-references. Let the user answer each prompt.
+
+4. **If user declines:** Note: "Skipping PRODUCT.md setup. You can run `npx impeccable init` later. The design-quality gate check will still run but without product context grounding."
+
+5. **After PRODUCT.md is created:** Verify the file exists and note its location. Then suggest: "Next step: after your initial design work (colors, typography, spacing decisions), run `npx impeccable document` to generate DESIGN.md. This captures the visual system so Impeccable can detect deviations."
+
+The setup flow is suggestive, not mandatory. The design-quality check works without PRODUCT.md -- it catches structural issues (overused fonts, hardcoded colors) regardless. PRODUCT.md adds product-specific grounding (brand fonts, approved color palette) so the detector knows what is intentional vs. a violation.
+
+### 3b.3 -- Update Config
+
+If Impeccable is installed, add or confirm `design_command` in the generated config:
+
+```yaml
+gates:
+  gate_0:
+    design_command: "npx impeccable detect src/"
+```
+
+If Impeccable is NOT installed, do NOT add `design_command` to the config. The check is optional -- let the user install Impeccable and add it manually.
+
+### Output
+
+After Impeccable detection, report the results:
+
+```
+Impeccable Detection (React project):
+  Installation:     installed (v1.2.3)
+  PRODUCT.md:       found
+  DESIGN.md:        not found -- run `npx impeccable document` after design work
+  Config:           .impeccable/config.json found
+  design_command:   set to "npx impeccable detect src/"
+```
+
+Or for a project without Impeccable:
+
+```
+Impeccable Detection (React project):
+  Installation:     not found
+  Suggestion:       npm i -D impeccable (optional -- enables design quality gate)
+```
+
+---
+
 ## Step 4 -- Verification
 
 After creating or updating config, verify each command actually works on this machine.
@@ -239,9 +314,12 @@ For each configured command, run it and check the result:
 
 # Lint command
 <lint_command>
+
+# Design command (React projects only)
+<design_command>
 ```
 
-A command "works" if the executable is found. The command is allowed to exit non-zero (tests may fail, linter may find issues) -- what matters is that the binary exists and runs.
+A command "works" if the executable is found. The command is allowed to exit non-zero (tests may fail, linter may find issues, design violations may exist) -- what matters is that the binary exists and runs.
 
 A command "fails verification" if:
 - Exit code is 127 (command not found)
@@ -256,6 +334,16 @@ Verification:
   Gate 0 is ready.
 ```
 
+For a React project with Impeccable:
+
+```
+Verification:
+  test_command: npx vitest run --coverage -> command found
+  lint_command: npx eslint . -> command found
+  design_command: npx impeccable detect src/ -> command found
+  Gate 0 is ready.
+```
+
 If a command fails verification, suggest the install command:
 
 ```
@@ -263,6 +351,8 @@ Verification:
   test_command: npx vitest run --coverage -> command found
   lint_command: npx eslint . -> NOT FOUND
     Install with: npm install --save-dev eslint
+  design_command: npx impeccable detect src/ -> NOT FOUND
+    Install with: npm install --save-dev impeccable
   Gate 0 is NOT ready -- fix the issues above first.
 ```
 
@@ -286,12 +376,13 @@ Verification:
 
 After init, load the appropriate lang pack for Gate 8 review patterns:
 
-| Language | Lang Pack | Status |
-|----------|-----------|--------|
-| Go | `rigor:lang:go` | available |
-| TypeScript | `rigor:lang:ts` | available |
-| C# | `rigor:lang:csharp` | available |
-| Python | -- | not yet available |
-| Rust | -- | not yet available |
+| Language | Lang Pack | Status | Notes |
+|----------|-----------|--------|-------|
+| Go | `rigor:lang:go` | available | |
+| TypeScript | `rigor:lang:ts` | available | |
+| React/Next.js | `rigor:lang:react` | available | Includes design quality (Impeccable) support |
+| C# | `rigor:lang:csharp` | available | |
+| Python | `rigor:lang:py` | available | |
+| Rust | -- | not yet available | |
 
-The lang pack is not required for init to succeed. It provides Gate 8 review patterns that become relevant when the cycle reaches the review phase.
+The lang pack is not required for init to succeed. It provides Gate 8 review patterns that become relevant when the cycle reaches the review phase. The React lang pack also provides the `design_command` default for Impeccable integration.

@@ -43,11 +43,12 @@ export async function checkGate0Exit(
 
   const testCommand = config.gates.gate_0.test_command;
   const lintCommand = config.gates.gate_0.lint_command;
+  const designCommand = config.gates.gate_0.design_command;
   const coverageThreshold = config.gates.gate_0.coverage_threshold;
   const requireTestFiles = config.gates.gate_0.require_test_files;
 
   // If nothing is configured, pass trivially.
-  if (testCommand === "" && lintCommand === "") {
+  if (testCommand === "" && lintCommand === "" && designCommand === "") {
     checks.push({
       name: "tests",
       passed: true,
@@ -65,42 +66,54 @@ export async function checkGate0Exit(
 
   if (testCommand !== "") {
     const result = runCommand(testCommand, { cwd: projectRoot });
-    testsPassed = result.exit_code === 0;
 
-    checks.push({
-      name: "tests",
-      passed: testsPassed,
-      detail: testsPassed
-        ? "All tests passed"
-        : `Tests failed (exit code ${result.exit_code})`,
-      command: testCommand,
-      exit_code: result.exit_code,
-      duration_ms: result.duration_ms,
-    });
+    if (result.exit_code === 127) {
+      checks.push({
+        name: "tests",
+        passed: false,
+        detail: `Command not found: "${testCommand}". Install the required tool or remove this check from your config.`,
+        command: testCommand,
+        exit_code: 127,
+        duration_ms: result.duration_ms,
+      });
+    } else {
+      testsPassed = result.exit_code === 0;
 
-    // -------------------------------------------------------------------
-    // 2. Coverage (only if tests passed)
-    // -------------------------------------------------------------------
+      checks.push({
+        name: "tests",
+        passed: testsPassed,
+        detail: testsPassed
+          ? "All tests passed"
+          : `Tests failed (exit code ${result.exit_code})`,
+        command: testCommand,
+        exit_code: result.exit_code,
+        duration_ms: result.duration_ms,
+      });
 
-    if (testsPassed) {
-      const combined = result.stdout + result.stderr;
-      const coverage = parseCoverage(combined, "auto");
+      // -----------------------------------------------------------------
+      // 2. Coverage (only if tests passed)
+      // -----------------------------------------------------------------
 
-      if (coverage !== null) {
-        parsedCoverage = coverage;
-        const meets = coverage >= coverageThreshold;
+      if (testsPassed) {
+        const combined = result.stdout + result.stderr;
+        const coverage = parseCoverage(combined, "auto");
 
-        checks.push({
-          name: "coverage",
-          passed: meets,
-          detail: `Coverage ${coverage}% (threshold: ${coverageThreshold}%)`,
-        });
-      } else {
-        checks.push({
-          name: "coverage",
-          passed: true,
-          detail: "Coverage parsing not available",
-        });
+        if (coverage !== null) {
+          parsedCoverage = coverage;
+          const meets = coverage >= coverageThreshold;
+
+          checks.push({
+            name: "coverage",
+            passed: meets,
+            detail: `Coverage ${coverage}% (threshold: ${coverageThreshold}%)`,
+          });
+        } else {
+          checks.push({
+            name: "coverage",
+            passed: true,
+            detail: "Coverage parsing not available",
+          });
+        }
       }
     }
   }
@@ -111,22 +124,67 @@ export async function checkGate0Exit(
 
   if (lintCommand !== "") {
     const result = runCommand(lintCommand, { cwd: projectRoot });
-    const lintPassed = result.exit_code === 0;
 
-    checks.push({
-      name: "lint",
-      passed: lintPassed,
-      detail: lintPassed
-        ? "Lint passed"
-        : `Lint failed (exit code ${result.exit_code})`,
-      command: lintCommand,
-      exit_code: result.exit_code,
-      duration_ms: result.duration_ms,
-    });
+    if (result.exit_code === 127) {
+      checks.push({
+        name: "lint",
+        passed: false,
+        detail: `Command not found: "${lintCommand}". Install the required tool or remove this check from your config.`,
+        command: lintCommand,
+        exit_code: 127,
+        duration_ms: result.duration_ms,
+      });
+    } else {
+      const lintPassed = result.exit_code === 0;
+
+      checks.push({
+        name: "lint",
+        passed: lintPassed,
+        detail: lintPassed
+          ? "Lint passed"
+          : `Lint failed (exit code ${result.exit_code})`,
+        command: lintCommand,
+        exit_code: result.exit_code,
+        duration_ms: result.duration_ms,
+      });
+    }
   }
 
   // -----------------------------------------------------------------------
-  // 4. Test files (informational)
+  // 4. Design quality
+  // -----------------------------------------------------------------------
+
+  if (designCommand !== "") {
+    const result = runCommand(designCommand, { cwd: projectRoot });
+
+    if (result.exit_code === 127) {
+      checks.push({
+        name: "design-quality",
+        passed: false,
+        detail: `Command not found: "${designCommand}". Install the required tool or remove this check from your config.`,
+        command: designCommand,
+        exit_code: 127,
+        duration_ms: result.duration_ms,
+      });
+    } else {
+      const designPassed = result.exit_code === 0;
+      const output = result.stdout.trim();
+
+      checks.push({
+        name: "design-quality",
+        passed: designPassed,
+        detail: designPassed
+          ? "Design quality check passed"
+          : `Design quality check failed${output ? `: ${output}` : ` (exit code ${result.exit_code})`}`,
+        command: designCommand,
+        exit_code: result.exit_code,
+        duration_ms: result.duration_ms,
+      });
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // 5. Test files (informational)
   // -----------------------------------------------------------------------
 
   if (requireTestFiles) {
