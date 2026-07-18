@@ -2,7 +2,8 @@
 
 ## Two-Layer Design
 
-Rigor has two layers that interact at well-defined integration points:
+Rigor is a domain-agnostic agentic project orchestrator. It has two layers
+that interact at well-defined integration points:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -133,3 +134,22 @@ Gate state is persisted as a JSON file after every transition:
 
 The state file is the source of truth. If the AI session crashes, the cycle
 resumes from the last persisted state.
+
+## Domain Packs and Lang Packs
+
+Rigor's gate checks are defined declaratively via **domain packs** and
+resolved with **lang packs**, making the system domain-agnostic.
+
+**Domain packs** (e.g. `software`) define *what* checks to run in
+`skills/domain/<name>/defaults.yaml`. Checks use `${lang.*}` variable
+placeholders for commands. The software domain pack defines checks for
+tests, lint, accessibility, visual regression, e2e, and performance.
+
+**Lang packs** (e.g. `react`, `go`, `typescript`) define *how* to run those
+checks by providing variable values in `skills/lang/<name>/defaults.yaml`.
+For example, the React lang pack sets `lang.test_command` to
+`npx vitest run --coverage` and `lang.a11y_command` to `npx axe-core-cli`.
+
+**Config cascade:** core DEFAULTS -> domain pack defaults -> user config
+(`.rigor/config.yaml`). User config always wins. Checks with empty or
+unresolved commands are skipped automatically by the generic check runner.

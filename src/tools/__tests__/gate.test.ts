@@ -21,10 +21,6 @@ import type { PhaseState } from "../../state/index.js";
 vi.mock("../../gates/index.js", () => ({
   checkGate0Exit: vi.fn(),
   checkGate1Exit: vi.fn().mockReturnValue({ passed: true, checks: [], skipped: true }),
-  checkGate2Exit: vi.fn().mockReturnValue({ passed: true, checks: [], skipped: true }),
-  checkGate3Exit: vi.fn().mockReturnValue({ passed: true, checks: [], skipped: true }),
-  checkGate4Exit: vi.fn().mockReturnValue({ passed: true, checks: [], skipped: true }),
-  checkGate5Exit: vi.fn().mockReturnValue({ passed: true, checks: [], skipped: true }),
   runCustomGates: vi.fn().mockReturnValue({ passed: true, checks: [] }),
 }));
 
@@ -42,18 +38,10 @@ vi.mock("../../executor/index.js", () => ({
 const {
   checkGate0Exit,
   checkGate1Exit,
-  checkGate2Exit,
-  checkGate3Exit,
-  checkGate4Exit,
-  checkGate5Exit,
   runCustomGates,
 } = await import("../../gates/index.js") as {
   checkGate0Exit: ReturnType<typeof vi.fn>;
   checkGate1Exit: ReturnType<typeof vi.fn>;
-  checkGate2Exit: ReturnType<typeof vi.fn>;
-  checkGate3Exit: ReturnType<typeof vi.fn>;
-  checkGate4Exit: ReturnType<typeof vi.fn>;
-  checkGate5Exit: ReturnType<typeof vi.fn>;
   runCustomGates: ReturnType<typeof vi.fn>;
 };
 

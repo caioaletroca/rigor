@@ -17,10 +17,6 @@ import type { GateEvidence } from "../evidence/index.js";
 import {
   checkGate0Exit,
   checkGate1Exit,
-  checkGate2Exit,
-  checkGate3Exit,
-  checkGate4Exit,
-  checkGate5Exit,
   runCustomGates,
 } from "../gates/index.js";
 import { runCommand } from "../executor/index.js";
@@ -272,135 +268,6 @@ export async function handleTaskComplete(
     }
   }
 
-  // 5c. Run frontend gates 2-5 (conditional, after Gate 0 passes)
-  const frontendWarnings: string[] = [];
-
-  if (gate0Result.passed) {
-    // Gate 2: Accessibility
-    const gate2Result = checkGate2Exit(config, projectRoot);
-    if (!gate2Result.skipped) {
-      const gate2Evidence: GateEvidence = {
-        gate: "gate_2",
-        entity_id: params.task_id,
-        passed: gate2Result.passed,
-        timestamp: new Date().toISOString(),
-        checks: gate2Result.checks,
-      };
-      evidenceManager.save(gate2Evidence);
-
-      if (!gate2Result.passed) {
-        if (config.gates.gate_2.required) {
-          stateManager.transition(params.task_id, "failed");
-
-          const lines: string[] = [];
-          lines.push(`Task ${params.task_id} failed Gate 2 (accessibility).`);
-          lines.push("");
-          for (const check of gate2Result.checks) {
-            const icon = check.passed ? "PASS" : "FAIL";
-            lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
-          }
-          return textResult(lines.join("\n"), true);
-        }
-        frontendWarnings.push(
-          `Gate 2 (accessibility): WARN — ${gate2Result.checks.filter((c) => !c.passed).map((c) => c.detail).join("; ")}`,
-        );
-      }
-    }
-
-    // Gate 3: Visual Regression
-    const gate3Result = checkGate3Exit(config, projectRoot);
-    if (!gate3Result.skipped) {
-      const gate3Evidence: GateEvidence = {
-        gate: "gate_3",
-        entity_id: params.task_id,
-        passed: gate3Result.passed,
-        timestamp: new Date().toISOString(),
-        checks: gate3Result.checks,
-      };
-      evidenceManager.save(gate3Evidence);
-
-      if (!gate3Result.passed) {
-        if (config.gates.gate_3.required) {
-          stateManager.transition(params.task_id, "failed");
-
-          const lines: string[] = [];
-          lines.push(`Task ${params.task_id} failed Gate 3 (visual regression).`);
-          lines.push("");
-          for (const check of gate3Result.checks) {
-            const icon = check.passed ? "PASS" : "FAIL";
-            lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
-          }
-          return textResult(lines.join("\n"), true);
-        }
-        frontendWarnings.push(
-          `Gate 3 (visual regression): WARN — ${gate3Result.checks.filter((c) => !c.passed).map((c) => c.detail).join("; ")}`,
-        );
-      }
-    }
-
-    // Gate 4: E2E
-    const gate4Result = checkGate4Exit(config, projectRoot);
-    if (!gate4Result.skipped) {
-      const gate4Evidence: GateEvidence = {
-        gate: "gate_4",
-        entity_id: params.task_id,
-        passed: gate4Result.passed,
-        timestamp: new Date().toISOString(),
-        checks: gate4Result.checks,
-      };
-      evidenceManager.save(gate4Evidence);
-
-      if (!gate4Result.passed) {
-        if (config.gates.gate_4.required) {
-          stateManager.transition(params.task_id, "failed");
-
-          const lines: string[] = [];
-          lines.push(`Task ${params.task_id} failed Gate 4 (e2e tests).`);
-          lines.push("");
-          for (const check of gate4Result.checks) {
-            const icon = check.passed ? "PASS" : "FAIL";
-            lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
-          }
-          return textResult(lines.join("\n"), true);
-        }
-        frontendWarnings.push(
-          `Gate 4 (e2e): WARN — ${gate4Result.checks.filter((c) => !c.passed).map((c) => c.detail).join("; ")}`,
-        );
-      }
-    }
-
-    // Gate 5: Performance
-    const gate5Result = checkGate5Exit(config, projectRoot);
-    if (!gate5Result.skipped) {
-      const gate5Evidence: GateEvidence = {
-        gate: "gate_5",
-        entity_id: params.task_id,
-        passed: gate5Result.passed,
-        timestamp: new Date().toISOString(),
-        checks: gate5Result.checks,
-      };
-      evidenceManager.save(gate5Evidence);
-
-      if (!gate5Result.passed) {
-        if (config.gates.gate_5.required) {
-          stateManager.transition(params.task_id, "failed");
-
-          const lines: string[] = [];
-          lines.push(`Task ${params.task_id} failed Gate 5 (performance).`);
-          lines.push("");
-          for (const check of gate5Result.checks) {
-            const icon = check.passed ? "PASS" : "FAIL";
-            lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
-          }
-          return textResult(lines.join("\n"), true);
-        }
-        frontendWarnings.push(
-          `Gate 5 (performance): WARN — ${gate5Result.checks.filter((c) => !c.passed).map((c) => c.detail).join("; ")}`,
-        );
-      }
-    }
-  }
-
   // 6. Transition based on result
   if (gate0Result.passed) {
     stateManager.transition(params.task_id, "done");
@@ -422,14 +289,6 @@ export async function handleTaskComplete(
   for (const check of gate0Result.checks) {
     const icon = check.passed ? "PASS" : "FAIL";
     lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
-  }
-
-  if (frontendWarnings.length > 0) {
-    lines.push("");
-    lines.push("Frontend gate warnings:");
-    for (const warning of frontendWarnings) {
-      lines.push(`  ${warning}`);
-    }
   }
 
   lines.push("");

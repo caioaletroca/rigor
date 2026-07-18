@@ -1,0 +1,14 @@
+# React/Next.js language pack variables.
+#
+# These values are injected into domain pack checks via ${lang.*} resolution.
+# The user's .rigor/config.yaml can override any of these.
+
+variables:
+  lang.test_command: "npx vitest run --coverage"
+  lang.lint_command: "npx eslint ."
+  lang.coverage_pattern: "auto"
+  # Frontend quality checks
+  lang.a11y_command: "npx axe-core-cli"
+  lang.visual_command: "npx vitest run --project visual"
+  lang.e2e_command: "npx playwright test"
+  lang.perf_command: "npx lighthouse-ci"

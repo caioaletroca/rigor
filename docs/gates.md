@@ -2,8 +2,13 @@
 
 ## Overview
 
-Gates are mandatory quality checkpoints in the development cycle. Each gate
+Gates are mandatory quality checkpoints in the project cycle. Each gate
 has deterministic entry/exit criteria enforced by code, not prompts.
+
+Gates are domain-agnostic: the core gate system runs generic checks defined
+by **domain packs** (e.g. `software`) and resolved via **lang pack** variables
+(e.g. `react`, `go`, `typescript`). The software domain pack is the primary
+example, but the same gate infrastructure works for any domain.
 
 A gate has three parts:
 
@@ -14,6 +19,11 @@ A gate has three parts:
 ## Gate Catalog
 
 ### Gate 0: Implementation (per task)
+
+Gate 0 runs a generic list of `checks[]` defined by the active domain pack
+and resolved with lang pack variables. The software domain pack provides
+checks for tests, lint, accessibility, visual regression, e2e, and
+performance. Checks with empty/unresolved commands are skipped automatically.
 
 **Entry criteria (deterministic):**
 - Task exists in plan
@@ -26,12 +36,11 @@ A gate has three parts:
 - Refactor (TDD REFACTOR)
 
 **Exit criteria (deterministic):**
-- Tests pass (`go test` / `npm test` exit code 0)
-- Coverage >= threshold (parsed from coverage profile)
-- No lint errors (`golangci-lint` / `eslint` exit code 0)
-- New files have corresponding test files
+- All configured checks pass (command exit code 0)
+- Metrics meet thresholds (e.g. coverage >= 85%)
+- New files have corresponding test files (when configured)
 
-**Exit criteria (AI — optional, configurable):**
+**Exit criteria (AI -- optional, configurable):**
 - Code follows project conventions (style review)
 
 ---
@@ -54,117 +63,29 @@ A gate has three parts:
 
 ---
 
-### Gate 2: Accessibility (per task, conditional)
+### Frontend Quality Checks (domain pack, via Gate 0)
 
-**Entry criteria (deterministic):**
-- Gate 0 passed for this task
-- Project is a frontend project (next.config.* or .tsx/.jsx files detected)
+Frontend quality checks (accessibility, visual regression, e2e, performance)
+are defined as checks in the **software domain pack** (`skills/domain/software/defaults.yaml`)
+and run through Gate 0's generic check runner. They are not separate gates.
 
-**Work (deterministic):**
-- Run accessibility audit command (default: `npx axe-core-cli`)
-- Parse violation count from output
+Each check uses a `${lang.*}` variable placeholder. When the lang pack (e.g.
+React) provides the corresponding command, the check runs. When the variable
+resolves to an empty string (no lang pack loaded, or the lang pack does not
+provide that command), Gate 0 skips the check automatically.
 
-**Exit criteria (deterministic):**
-- Violation count <= max_violations (default: 0)
-- Command exits with code 0
+**Checks defined in the software domain pack:**
 
-**Configuration:**
-```yaml
-gates:
-  gate_2:
-    enabled: true        # Enable/disable the gate
-    required: false      # When false, failures are warnings; when true, failures block
-    a11y_command: "npx axe-core-cli"
-    max_violations: 0
-```
+| Check | Variable | React default |
+|-------|----------|---------------|
+| Accessibility | `${lang.a11y_command}` | `npx axe-core-cli` |
+| Visual regression | `${lang.visual_command}` | `npx vitest run --project visual` |
+| E2E tests | `${lang.e2e_command}` | `npx playwright test` |
+| Performance | `${lang.perf_command}` | `npx lighthouse-ci` |
 
-**Behavior:** Opt-in by default. Runs and reports but does not block task
-completion unless `required: true` is set. Skipped entirely for non-frontend
-projects.
-
----
-
-### Gate 3: Visual Regression (per task, conditional)
-
-**Entry criteria (deterministic):**
-- Gate 0 passed for this task
-- Visual/snapshot test files exist (*.visual.{ts,tsx} or *.snapshot.{ts,tsx})
-
-**Work (deterministic):**
-- Run visual regression test command (default: `npx vitest run --project visual`)
-
-**Exit criteria (deterministic):**
-- Command exits with code 0
-
-**Configuration:**
-```yaml
-gates:
-  gate_3:
-    enabled: true
-    required: false
-    visual_test_command: "npx vitest run --project visual"
-```
-
-**Behavior:** Opt-in by default. Only runs when visual/snapshot test files are
-detected. Failures are warnings unless `required: true`.
-
----
-
-### Gate 4: E2E (per task, conditional)
-
-**Entry criteria (deterministic):**
-- Gate 0 passed for this task
-- E2E test files exist (e2e/**/*.{ts,tsx} or *.e2e.{ts,tsx})
-
-**Work (deterministic):**
-- Run end-to-end test command (default: `npx playwright test`)
-
-**Exit criteria (deterministic):**
-- Command exits with code 0
-
-**Configuration:**
-```yaml
-gates:
-  gate_4:
-    enabled: true
-    required: false
-    e2e_command: "npx playwright test"
-```
-
-**Behavior:** Opt-in by default. Only runs when e2e test files are detected.
-Failures are warnings unless `required: true`.
-
----
-
-### Gate 5: Performance (per task, conditional)
-
-**Entry criteria (deterministic):**
-- Gate 0 passed for this task
-- Next.js config file exists (next.config.*)
-
-**Work (deterministic):**
-- Run performance command (default: `npx lighthouse-ci`)
-- Parse performance score from output if available
-- Compare score against min_score threshold
-
-**Exit criteria (deterministic):**
-- Command exits with code 0
-- Performance score >= min_score (default: 90)
-
-**Configuration:**
-```yaml
-gates:
-  gate_5:
-    enabled: true
-    required: false
-    perf_command: "npx lighthouse-ci"
-    min_score: 90
-    budget_file: ""       # Optional path to budget.json
-```
-
-**Behavior:** Opt-in by default. Only runs for Next.js projects. When
-`budget_file` is set, it is passed as `--budget-path` to the performance
-command. Failures are warnings unless `required: true`.
+**Overriding:** Set the command in `.rigor/config.yaml` under
+`gates.gate_0.checks` to replace the domain pack defaults entirely, or
+provide a lang pack with different variable values.
 
 ---
 

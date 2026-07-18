@@ -9,4 +9,15 @@ gates:
           label: "coverage"
       - name: "lint"
         command: "${lang.lint_command}"
+      # Frontend quality checks — only active when the lang pack provides
+      # the corresponding command variable. Empty command = skipped by the
+      # generic check runner (Gate 0 already handles this).
+      - name: "accessibility"
+        command: "${lang.a11y_command}"
+      - name: "visual_regression"
+        command: "${lang.visual_command}"
+      - name: "e2e"
+        command: "${lang.e2e_command}"
+      - name: "performance"
+        command: "${lang.perf_command}"
     require_test_files: true
