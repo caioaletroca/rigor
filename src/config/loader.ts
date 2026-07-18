@@ -1,12 +1,13 @@
 /**
  * Config loader — reads .rigor/config.yaml and deep-merges with DEFAULTS.
  *
- * Merge cascade: core DEFAULTS → domain pack defaults → user config.
+ * Merge cascade: core DEFAULTS → domain pack defaults → global config → project config → env vars.
  */
 
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { parse } from "yaml";
 import { DEFAULTS } from "./schema.js";
 import type { RigorConfig, Check } from "./schema.js";
@@ -183,73 +184,126 @@ export function resolveVariables(
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Global config path
 // ---------------------------------------------------------------------------
 
 const CONFIG_DIR = ".rigor";
 const CONFIG_FILE = "config.yaml";
 
 /**
- * Load Rigor configuration from `<projectRoot>/.rigor/config.yaml`.
- *
- * Merge cascade: core DEFAULTS → domain pack defaults → user config.
- *
- * - If the file does not exist, returns {@link DEFAULTS}.
- * - If the file exists, deep-merges its values over DEFAULTS (arrays replace,
- *   objects merge, primitives override).
- * - If `domain` is set, loads the domain pack's `defaults.yaml` and inserts
- *   it between core defaults and user config in the merge cascade.
- * - If YAML parsing fails, throws with a descriptive message.
+ * Returns the platform-appropriate global config path.
+ * - Windows: %APPDATA%/rigor/config.yaml
+ * - Linux/macOS: ~/.config/rigor/config.yaml
  */
-export function loadConfig(projectRoot: string): RigorConfig {
-  const configPath = join(projectRoot, CONFIG_DIR, CONFIG_FILE);
+export function getGlobalConfigPath(): string {
+  if (process.platform === "win32" && process.env.APPDATA) {
+    return join(process.env.APPDATA, "rigor", CONFIG_FILE);
+  }
+  return join(homedir(), ".config", "rigor", CONFIG_FILE);
+}
 
-  if (!existsSync(configPath)) {
-    return structuredClone(DEFAULTS);
+// ---------------------------------------------------------------------------
+// YAML file reader
+// ---------------------------------------------------------------------------
+
+/**
+ * Read and parse a YAML file. Returns null if file does not exist or is empty.
+ * Throws on invalid YAML.
+ */
+function readYamlFile(filePath: string): Record<string, unknown> | null {
+  if (!existsSync(filePath)) {
+    return null;
   }
 
-  const raw = readFileSync(configPath, "utf-8");
+  const raw = readFileSync(filePath, "utf-8");
 
   let parsed: unknown;
   try {
     parsed = parse(raw);
   } catch (cause: unknown) {
-    const message =
-      cause instanceof Error ? cause.message : String(cause);
-    throw new Error(
-      `Failed to parse YAML config at ${configPath}: ${message}`,
-    );
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`Failed to parse YAML config at ${filePath}: ${message}`);
   }
 
-  // An empty file or a file with only comments parses to null.
   if (parsed === null || parsed === undefined) {
-    return structuredClone(DEFAULTS);
+    return null;
   }
 
   if (!isPlainObject(parsed)) {
     throw new Error(
-      `Invalid config at ${configPath}: expected an object, got ${typeof parsed}`,
+      `Invalid config at ${filePath}: expected an object, got ${typeof parsed}`,
     );
   }
 
-  // Build the merge cascade: DEFAULTS → domain pack → user config
+  return parsed;
+}
+
+// ---------------------------------------------------------------------------
+// Env var overrides
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply env var overrides to config.
+ * Currently supports:
+ *   RIGOR_SYNC_ENABLED=true  -> config.sync.enabled = true
+ */
+function applyEnvOverrides(config: RigorConfig): void {
+  const syncEnabled = process.env.RIGOR_SYNC_ENABLED;
+  if (syncEnabled !== undefined) {
+    config.sync.enabled = syncEnabled === "true" || syncEnabled === "1";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Load Rigor configuration with full cascade:
+ *   DEFAULTS → domain pack → global config → project config → env vars
+ *
+ * - Domain pack defaults are loaded if `domain` is set in project config.
+ * - Global config is silently ignored if missing.
+ * - Project config merges on top of global.
+ * - Env vars override everything.
+ * - Legacy Gate 0 fields are migrated to checks[] for backward compat.
+ */
+export function loadConfig(projectRoot: string): RigorConfig {
   let base = structuredClone(DEFAULTS) as unknown as Record<string, unknown>;
 
-  // If user config specifies a domain, load the domain pack defaults
-  const domain = parsed["domain"];
-  if (typeof domain === "string" && domain !== "") {
-    const domainDefaults = loadDomainPackDefaults(domain, projectRoot);
-    if (domainDefaults) {
-      base = deepMerge(base, domainDefaults);
-    }
+  // Layer 1: Global config
+  const globalPath = getGlobalConfigPath();
+  const globalConfig = readYamlFile(globalPath);
+  if (globalConfig) {
+    base = deepMerge(base, globalConfig);
   }
 
-  // Merge user config on top (user always wins)
-  const merged = deepMerge(base, parsed);
-  const config = merged as unknown as RigorConfig;
+  // Layer 2: Project config
+  const projectPath = join(projectRoot, CONFIG_DIR, CONFIG_FILE);
+  const projectConfig = readYamlFile(projectPath);
+
+  // If project config specifies a domain, load domain pack defaults
+  // between core defaults and user config in the cascade.
+  if (projectConfig) {
+    const domain = projectConfig["domain"];
+    if (typeof domain === "string" && domain !== "") {
+      const domainDefaults = loadDomainPackDefaults(domain, projectRoot);
+      if (domainDefaults) {
+        base = deepMerge(base, domainDefaults);
+      }
+    }
+
+    // Merge project config on top (user always wins over domain pack + global)
+    base = deepMerge(base, projectConfig);
+  }
+
+  const config = base as unknown as RigorConfig;
 
   // Migrate legacy Gate 0 fields to checks[] for backward compat.
   migrateGate0Config(config);
+
+  // Layer 3: Env var overrides
+  applyEnvOverrides(config);
 
   return config;
 }

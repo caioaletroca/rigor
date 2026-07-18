@@ -12,11 +12,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { loadConfig } from "./config/index.js";
 import { StateManager } from "./state/index.js";
 import { EvidenceManager } from "./evidence/index.js";
+import { SyncManager } from "./sync/index.js";
+import { createProviders } from "./sync/factory.js";
 import {
   registerCycleTools,
   registerGateTools,
   registerReviewTools,
   registerRecoveryTools,
+  registerSyncTools,
 } from "./tools/index.js";
 import type { RigorConfig } from "./config/index.js";
 
@@ -28,6 +31,7 @@ export interface ServerContext {
   server: McpServer;
   stateManager: StateManager;
   evidenceManager: EvidenceManager;
+  syncManager?: SyncManager;
   config: RigorConfig;
 }
 
@@ -39,7 +43,19 @@ export interface ServerContext {
  */
 export function createServer(projectRoot: string): ServerContext {
   const config = loadConfig(projectRoot);
-  const stateManager = new StateManager(projectRoot);
+
+  // Build sync layer if enabled
+  let syncManager: SyncManager | undefined;
+  if (config.sync?.enabled) {
+    const providers = createProviders(config.sync);
+    syncManager = new SyncManager(
+      projectRoot,
+      providers,
+      config.sync.primary,
+    );
+  }
+
+  const stateManager = new StateManager(projectRoot, syncManager);
   const evidenceManager = new EvidenceManager(projectRoot);
 
   const server = new McpServer(
@@ -50,8 +66,9 @@ export function createServer(projectRoot: string): ServerContext {
   registerGateTools(server, stateManager, config, projectRoot);
   registerReviewTools(server, stateManager, evidenceManager, config, projectRoot);
   registerRecoveryTools(server, stateManager, evidenceManager, projectRoot);
+  registerSyncTools(server, syncManager);
 
-  return { server, stateManager, evidenceManager, config };
+  return { server, stateManager, evidenceManager, syncManager, config };
 }
 
 // ---------------------------------------------------------------------------

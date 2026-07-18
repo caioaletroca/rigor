@@ -41,3 +41,6 @@ export {
   handlePhaseManage,
   handleCycleDiagnose,
 } from "./recovery.js";
+
+export { registerSyncTools, handleSyncStatus, handleSyncRetry, handleSyncReplay, handleSyncEnable } from "./sync.js";
+export type { SyncRetryParams, SyncReplayParams, SyncEnableParams } from "./sync.js";

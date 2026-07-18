@@ -24,6 +24,9 @@ import type {
   Status,
   TaskState,
 } from "./schema.js";
+import type { SyncManager } from "../sync/index.js";
+import { transitionToEventType } from "../sync/index.js";
+import type { SyncEntityType, SyncEvent } from "../sync/index.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -40,11 +43,16 @@ export class StateManager {
   private readonly rigorDir: string;
   private readonly statePath: string;
   private readonly tmpPath: string;
+  private readonly syncManager?: SyncManager;
 
-  constructor(private readonly projectRoot: string) {
+  constructor(
+    private readonly projectRoot: string,
+    syncManager?: SyncManager,
+  ) {
     this.rigorDir = join(projectRoot, RIGOR_DIR);
     this.statePath = join(this.rigorDir, STATE_FILE);
     this.tmpPath = join(this.rigorDir, `${STATE_FILE}.tmp`);
+    this.syncManager = syncManager;
 
     if (!existsSync(this.rigorDir)) {
       mkdirSync(this.rigorDir, { recursive: true });
@@ -118,6 +126,16 @@ export class StateManager {
     };
 
     this.save(state);
+
+    // Fire cycle_initialized sync event
+    this.emitSyncEvent({
+      type: "cycle_initialized",
+      entity_type: "cycle",
+      entity_id: state.cycle_id,
+      cycle_id: state.cycle_id,
+      timestamp: new Date().toISOString(),
+    });
+
     return state;
   }
 
@@ -149,8 +167,25 @@ export class StateManager {
       throw new InvalidTransitionError(entityId, entity.status, toStatus);
     }
 
+    const previousStatus = entity.status;
     entity.status = toStatus;
     this.save(state);
+
+    // Fire sync event for the transition
+    const entityType = this.inferEntityType(entityId);
+    const eventType = transitionToEventType(entityType, toStatus);
+    if (eventType) {
+      this.emitSyncEvent({
+        type: eventType,
+        entity_type: entityType,
+        entity_id: entityId,
+        cycle_id: state.cycle_id,
+        timestamp: new Date().toISOString(),
+        previous_status: previousStatus,
+        new_status: toStatus,
+      });
+    }
+
     return state;
   }
 
@@ -250,6 +285,27 @@ export class StateManager {
   // -----------------------------------------------------------------------
   // Internal helpers
   // -----------------------------------------------------------------------
+
+  /**
+   * Infer entity type from its id format.
+   * - Numeric (e.g. "1") = phase
+   * - Two dot-separated segments (e.g. "1.1") = epic
+   * - Three dot-separated segments (e.g. "1.1.1") = task
+   */
+  private inferEntityType(entityId: string): SyncEntityType {
+    const parts = entityId.split(".");
+    if (parts.length >= 3) return "task";
+    if (parts.length === 2) return "epic";
+    return "phase";
+  }
+
+  /**
+   * Fire-and-forget sync event dispatch.
+   * Errors are handled inside SyncManager — this layer just ignores them.
+   */
+  private emitSyncEvent(event: SyncEvent): void {
+    this.syncManager?.dispatch(event).catch(() => {});
+  }
 
   /**
    * Walk the state tree to locate an entity by its string id.

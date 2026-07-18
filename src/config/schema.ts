@@ -87,12 +87,32 @@ export interface GatesConfig {
   custom_gates: CustomGateConfig[];
 }
 
+/** Provider-specific config — discriminated by `type` field. */
+export interface SyncProviderConfig {
+  /** Provider type: "webhook", "jira", "github-projects", etc. */
+  type: string;
+  /** Optional allowlist of event types this provider handles. */
+  events?: string[];
+  /** All other fields are provider-specific (url, token, project_key, etc.). */
+  [key: string]: unknown;
+}
+
+export interface SyncConfig {
+  /** Enable/disable the sync layer. Default: false. */
+  enabled: boolean;
+  /** Name of the primary provider (for tooling queries). */
+  primary?: string;
+  /** Named map of provider configs. Keys are logical names. */
+  providers: Record<string, SyncProviderConfig>;
+}
+
 export interface RigorConfig {
   /** Domain pack to load (e.g. "software"). Undefined means no domain pack. */
   domain?: string;
   commit: CommitConfig;
   ship: ShipConfig;
   gates: GatesConfig;
+  sync: SyncConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,5 +175,9 @@ export const DEFAULTS: RigorConfig = {
       require_user_approval: true,
     },
     custom_gates: [],
+  },
+  sync: {
+    enabled: false,
+    providers: {},
   },
 };

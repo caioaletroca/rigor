@@ -12,5 +12,7 @@ export type {
   CustomGateConfig,
   Check,
   Metric,
+  SyncConfig,
+  SyncProviderConfig,
 } from "./schema.js";
-export { loadConfig, loadDomainPackDefaults, resolveVariables } from "./loader.js";
+export { loadConfig, loadDomainPackDefaults, resolveVariables, getGlobalConfigPath } from "./loader.js";
