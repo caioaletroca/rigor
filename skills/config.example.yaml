@@ -230,3 +230,20 @@ sync:
   #     repo: myrepo
   #     project_number: 1
   #     token: ${GITHUB_TOKEN}
+
+# ─── Scaffold Tools ───────────────────────────────────────────────
+# These MCP tools help create new domain packs and lang packs:
+#
+#   new_lang_pack: Create a new language pack
+#     name: "rust"
+#     test_command: "cargo test"
+#     lint_command: "cargo clippy"
+#     coverage_pattern: "auto"   # optional
+#     frontend: false             # optional, adds a11y/visual/e2e/perf vars
+#
+#   new_domain: Create a new domain pack
+#     name: "data-science"
+#     description: "Data science and ML projects"
+#     checks:                     # optional gate_0 check definitions
+#       - name: "notebooks"
+#         command: "jupyter nbconvert --execute"

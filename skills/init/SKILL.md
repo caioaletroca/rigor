@@ -50,6 +50,24 @@ Any single high-confidence signal is sufficient. Two or more medium-confidence s
 
 If no domain is detected, leave the `domain` field unset (core defaults only).
 
+### Custom Domain Packs
+
+Beyond the built-in "software" domain, custom domain packs may exist in the project's `skills/domain/` directory (scaffolded via the `new_domain` MCP tool). When scanning for domains:
+
+1. Check the built-in "software" domain signals first (above).
+2. Then scan `skills/domain/` in the project root for additional domain packs. Each subdirectory with a `DOMAIN.md` is a domain pack -- read its Detection Signals table for project signals.
+3. If a custom domain pack's detection signals match, report it alongside any built-in matches.
+
+If multiple domains match, prefer the one with higher-confidence signals. Present all matches to the user and let them choose.
+
+### Custom Lang Packs
+
+Beyond the built-in lang packs (Go, TypeScript, C#, Python, React), custom lang packs may exist in the project's `skills/lang/` directory (scaffolded via the `new_lang_pack` MCP tool). When detecting the language:
+
+1. Check the built-in language signals first (Step 1 table).
+2. Then scan `skills/lang/` in the project root for additional packs. Each subdirectory with a `SKILL.md` is a lang pack -- read its Detection Heuristics section for signals.
+3. If a custom lang pack's signals match, use it.
+
 ### Output
 
 Report the detected domain before proceeding to stack detection:

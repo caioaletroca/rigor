@@ -20,6 +20,7 @@ import {
   registerReviewTools,
   registerRecoveryTools,
   registerSyncTools,
+  registerScaffoldTools,
 } from "./tools/index.js";
 import type { RigorConfig } from "./config/index.js";
 
@@ -67,6 +68,7 @@ export function createServer(projectRoot: string): ServerContext {
   registerReviewTools(server, stateManager, evidenceManager, config, projectRoot);
   registerRecoveryTools(server, stateManager, evidenceManager, projectRoot);
   registerSyncTools(server, syncManager);
+  registerScaffoldTools(server, projectRoot);
 
   return { server, stateManager, evidenceManager, syncManager, config };
 }
