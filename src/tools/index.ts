@@ -45,5 +45,5 @@ export {
 export { registerSyncTools, handleSyncStatus, handleSyncRetry, handleSyncReplay, handleSyncEnable } from "./sync.js";
 export type { SyncRetryParams, SyncReplayParams, SyncEnableParams } from "./sync.js";
 
-export { registerScaffoldTools, handleNewLangPack, handleNewDomain } from "./scaffold.js";
-export type { NewLangPackParams, NewDomainParams } from "./scaffold.js";
+export { registerScaffoldTools, handleNewLangPack, handleNewDomain, handleInstallCommands } from "./scaffold.js";
+export type { NewLangPackParams, NewDomainParams, InstallCommandsParams } from "./scaffold.js";

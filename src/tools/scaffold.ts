@@ -1,5 +1,5 @@
 /**
- * Scaffold MCP tools: new_lang_pack and new_domain.
+ * Scaffold MCP tools: new_lang_pack, new_domain, and install_commands.
  *
  * Exported handler functions are pure logic returning CallToolResult,
  * keeping them testable without an MCP transport.
@@ -8,7 +8,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import {
   scaffoldLangPack,
   scaffoldDomainPack,
@@ -166,6 +168,143 @@ export async function handleNewDomain(
 }
 
 // ---------------------------------------------------------------------------
+// install_commands handler
+// ---------------------------------------------------------------------------
+
+/** Resolve the Rigor installation root from the compiled module location. */
+function getRigorRoot(): string {
+  const thisFile = fileURLToPath(import.meta.url);
+  // From dist/tools/scaffold.js -> up 2 levels to repo root
+  return join(dirname(thisFile), "..", "..");
+}
+
+interface SkillMeta {
+  name: string;
+  shortName: string;
+  description: string;
+  skillPath: string;
+}
+
+function parseSkillFrontmatter(content: string): { name?: string; description?: string } {
+  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!match) return {};
+  const fm = match[1];
+  const nameMatch = fm.match(/^name:\s*(.+)$/m);
+  const descMatch = fm.match(/^description:\s*>-?\s*\n([\s\S]*?)(?=\n\w|\n---)/);
+  const descSingleMatch = fm.match(/^description:\s*(.+)$/m);
+  return {
+    name: nameMatch?.[1].trim(),
+    description: descMatch
+      ? descMatch[1].split("\n").map((l: string) => l.trim()).join(" ").trim()
+      : descSingleMatch?.[1].trim(),
+  };
+}
+
+function discoverSkills(rigorRoot: string): SkillMeta[] {
+  const skillsDir = join(rigorRoot, "skills");
+  if (!existsSync(skillsDir)) return [];
+
+  const skills: SkillMeta[] = [];
+  const entries = readdirSync(skillsDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    // Skip lang/ and domain/ directories (not user-invocable commands)
+    if (!entry.isDirectory() || entry.name === "lang" || entry.name === "domain") continue;
+
+    const skillFile = join(skillsDir, entry.name, "SKILL.md");
+    if (!existsSync(skillFile)) continue;
+
+    const content = readFileSync(skillFile, "utf-8");
+    const fm = parseSkillFrontmatter(content);
+
+    const name = fm.name ?? `rigor:${entry.name}`;
+    const shortName = name.replace(/^rigor:/, "").replace(/:/g, "-");
+
+    skills.push({
+      name,
+      shortName,
+      description: fm.description ?? "",
+      skillPath: skillFile,
+    });
+  }
+
+  return skills.sort((a, b) => a.shortName.localeCompare(b.shortName));
+}
+
+export interface InstallCommandsParams {
+  client: "opencode" | "claude";
+}
+
+export async function handleInstallCommands(
+  params: InstallCommandsParams,
+  projectRoot: string,
+): Promise<CallToolResult> {
+  const rigorRoot = getRigorRoot();
+  const skills = discoverSkills(rigorRoot);
+
+  if (skills.length === 0) {
+    return textResult("No skills found. Is Rigor installed correctly?", true);
+  }
+
+  // Determine target directory
+  const commandsDir = params.client === "opencode"
+    ? join(projectRoot, ".opencode", "commands")
+    : join(projectRoot, ".claude", "commands");
+
+  mkdirSync(commandsDir, { recursive: true });
+
+  const created: string[] = [];
+  const skipped: string[] = [];
+
+  for (const skill of skills) {
+    const fileName = `rigor-${skill.shortName}.md`;
+    const filePath = join(commandsDir, fileName);
+
+    // Skip if already exists
+    if (existsSync(filePath)) {
+      skipped.push(fileName);
+      continue;
+    }
+
+    // Use absolute path to reference the skill file
+    const content = [
+      "---",
+      `description: "${skill.description}"`,
+      "---",
+      "",
+      `@${skill.skillPath}`,
+      "",
+    ].join("\n");
+
+    writeFileSync(filePath, content, "utf-8");
+    created.push(fileName);
+  }
+
+  const lines: string[] = [];
+  lines.push(`Installed ${created.length} Rigor commands for ${params.client}.`);
+  lines.push(`Target: ${commandsDir}`);
+
+  if (created.length > 0) {
+    lines.push("");
+    lines.push("Created:");
+    for (const f of created) {
+      lines.push(`  /${f.replace(".md", "").replace("rigor-", "rigor:")}`);
+    }
+  }
+
+  if (skipped.length > 0) {
+    lines.push("");
+    lines.push(`Skipped ${skipped.length} (already exist).`);
+  }
+
+  lines.push("");
+  lines.push("Commands reference skill files via @path inclusion.");
+  lines.push("No content is duplicated. Update the skill, commands update automatically.");
+
+  return textResult(lines.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -210,6 +349,17 @@ export function registerScaffoldTools(
     },
     async (params) => {
       return handleNewDomain(params, projectRoot);
+    },
+  );
+
+  server.tool(
+    "install_commands",
+    "Install Rigor skills as slash commands for your AI coding tool",
+    {
+      client: z.enum(["opencode", "claude"]).describe("Target client: 'opencode' or 'claude'"),
+    },
+    async (params) => {
+      return handleInstallCommands(params, projectRoot);
     },
   );
 }
