@@ -186,17 +186,31 @@ interface SkillMeta {
 }
 
 function parseSkillFrontmatter(content: string): { name?: string; description?: string } {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
   const fm = match[1];
   const nameMatch = fm.match(/^name:\s*(.+)$/m);
-  const descMatch = fm.match(/^description:\s*>-?\s*\n([\s\S]*?)(?=\n\w|\n---)/);
-  const descSingleMatch = fm.match(/^description:\s*(.+)$/m);
+
+  // Try multiline description (>- or > followed by indented lines)
+  let description: string | undefined;
+  const multilineMatch = fm.match(/^description:\s*>-?\s*\r?\n((?:[ \t]+.+\r?\n?)+)/m);
+  if (multilineMatch) {
+    description = multilineMatch[1]
+      .split(/\r?\n/)
+      .map((l: string) => l.trim())
+      .filter((l: string) => l.length > 0)
+      .join(" ");
+  } else {
+    // Single-line description (not starting with > or >-)
+    const singleMatch = fm.match(/^description:\s*(?!>)(.+)$/m);
+    if (singleMatch) {
+      description = singleMatch[1].trim();
+    }
+  }
+
   return {
     name: nameMatch?.[1].trim(),
-    description: descMatch
-      ? descMatch[1].split("\n").map((l: string) => l.trim()).join(" ").trim()
-      : descSingleMatch?.[1].trim(),
+    description,
   };
 }
 
@@ -233,6 +247,15 @@ function discoverSkills(rigorRoot: string): SkillMeta[] {
 
 export interface InstallCommandsParams {
   client: "opencode" | "claude";
+  global?: boolean;
+}
+
+function getGlobalCommandsDir(client: "opencode" | "claude"): string {
+  const home = process.env.USERPROFILE || process.env.HOME || "";
+  if (client === "opencode") {
+    return join(home, ".config", "opencode", "commands");
+  }
+  return join(home, ".claude", "commands");
 }
 
 export async function handleInstallCommands(
@@ -247,9 +270,11 @@ export async function handleInstallCommands(
   }
 
   // Determine target directory
-  const commandsDir = params.client === "opencode"
-    ? join(projectRoot, ".opencode", "commands")
-    : join(projectRoot, ".claude", "commands");
+  const commandsDir = params.global
+    ? getGlobalCommandsDir(params.client)
+    : params.client === "opencode"
+      ? join(projectRoot, ".opencode", "commands")
+      : join(projectRoot, ".claude", "commands");
 
   mkdirSync(commandsDir, { recursive: true });
 
@@ -267,9 +292,11 @@ export async function handleInstallCommands(
     }
 
     // Use absolute path to reference the skill file
+    // Truncate description to first sentence for cleaner command list
+    const shortDesc = skill.description.split(". ")[0].replace(/"/g, "'");
     const content = [
       "---",
-      `description: "${skill.description}"`,
+      `description: ${shortDesc}`,
       "---",
       "",
       `@${skill.skillPath}`,
@@ -280,8 +307,9 @@ export async function handleInstallCommands(
     created.push(fileName);
   }
 
+  const scope = params.global ? "globally" : "for this project";
   const lines: string[] = [];
-  lines.push(`Installed ${created.length} Rigor commands for ${params.client}.`);
+  lines.push(`Installed ${created.length} Rigor commands for ${params.client} (${scope}).`);
   lines.push(`Target: ${commandsDir}`);
 
   if (created.length > 0) {
@@ -357,6 +385,7 @@ export function registerScaffoldTools(
     "Install Rigor skills as slash commands for your AI coding tool",
     {
       client: z.enum(["opencode", "claude"]).describe("Target client: 'opencode' or 'claude'"),
+      global: z.boolean().optional().describe("Install globally (all projects) instead of per-project (default: false)"),
     },
     async (params) => {
       return handleInstallCommands(params, projectRoot);
