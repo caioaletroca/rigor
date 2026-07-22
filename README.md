@@ -28,7 +28,9 @@ npm run build
 
 ### Configure your MCP client
 
-Add Rigor to your MCP client configuration (e.g. Claude Code `settings.json`):
+Add Rigor to your MCP client configuration. Works with Claude Code, OpenCode, Hermes Agent, or any MCP-compatible client.
+
+**Claude Code** (`settings.json`):
 
 ```json
 {
@@ -39,6 +41,18 @@ Add Rigor to your MCP client configuration (e.g. Claude Code `settings.json`):
     }
   }
 }
+```
+
+**Hermes Agent** (via `hermes mcp add` or directly in `~/.hermes/config.yaml`):
+
+```yaml
+mcp_servers:
+  rigor:
+    command: node
+    args:
+      - /path/to/rigor/dist/server.js
+      - --project-root
+      - /path/to/your/project
 ```
 
 ### Initialize a project
@@ -143,6 +157,7 @@ gates:
 |------|-------------|
 | `new_lang_pack` | Create a language pack for a new language |
 | `new_domain` | Create a domain pack for a new domain |
+| `install_commands` | Install Rigor skills as slash commands (Claude Code, OpenCode, or Hermes) |
 
 ## Configuration
 
@@ -257,6 +272,7 @@ Rigor ships workflow skills that orchestrate the MCP tools:
 | `rigor:lint` | Run linter, fix issues, verify clean |
 | `rigor:init` | Project onboarding and config generation |
 | `rigor:debug` | Systematic 4-phase debugging |
+| `rigor:explore` | Two-phase autonomous codebase exploration |
 | `rigor:brainstorm` | Socratic design exploration |
 | `rigor:receive-review` | Process review feedback with verification |
 | `rigor:test-guard` | Catch mock abuse and test anti-patterns |
@@ -266,7 +282,7 @@ Rigor ships workflow skills that orchestrate the MCP tools:
 
 ```
 ┌─────────────────────────────────────┐
-│         AI Agent (Claude, etc.)     │
+│  AI Agent (Claude, Hermes, etc.)    │
 │  Writes code, reviews, tests, fixes │
 │  MUST call Rigor tools to advance   │
 └──────────────┬──────────────────────┘
