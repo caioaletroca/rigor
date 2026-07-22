@@ -246,14 +246,17 @@ function discoverSkills(rigorRoot: string): SkillMeta[] {
 }
 
 export interface InstallCommandsParams {
-  client: "opencode" | "claude";
+  client: "opencode" | "claude" | "hermes";
   global?: boolean;
 }
 
-function getGlobalCommandsDir(client: "opencode" | "claude"): string {
+function getGlobalCommandsDir(client: "opencode" | "claude" | "hermes"): string {
   const home = process.env.USERPROFILE || process.env.HOME || "";
   if (client === "opencode") {
     return join(home, ".config", "opencode", "commands");
+  }
+  if (client === "hermes") {
+    return join(home, ".hermes", "skills", "software-development");
   }
   return join(home, ".claude", "commands");
 }
@@ -270,11 +273,14 @@ export async function handleInstallCommands(
   }
 
   // Determine target directory
+  const isHermes = params.client === "hermes";
   const commandsDir = params.global
     ? getGlobalCommandsDir(params.client)
-    : params.client === "opencode"
-      ? join(projectRoot, ".opencode", "commands")
-      : join(projectRoot, ".claude", "commands");
+    : isHermes
+      ? join(projectRoot, ".hermes", "skills", "software-development")
+      : params.client === "opencode"
+        ? join(projectRoot, ".opencode", "commands")
+        : join(projectRoot, ".claude", "commands");
 
   mkdirSync(commandsDir, { recursive: true });
 
@@ -282,29 +288,44 @@ export async function handleInstallCommands(
   const skipped: string[] = [];
 
   for (const skill of skills) {
-    const fileName = `rigor-${skill.shortName}.md`;
-    const filePath = join(commandsDir, fileName);
+    if (isHermes) {
+      // Hermes: each skill gets its own subdirectory with a SKILL.md
+      const skillDir = join(commandsDir, `rigor-${skill.shortName}`);
+      const filePath = join(skillDir, "SKILL.md");
 
-    // Skip if already exists
-    if (existsSync(filePath)) {
-      skipped.push(fileName);
-      continue;
+      if (existsSync(filePath)) {
+        skipped.push(`rigor-${skill.shortName}`);
+        continue;
+      }
+
+      // Copy full content since Hermes does not support @path references
+      const content = readFileSync(skill.skillPath, "utf-8");
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(filePath, content, "utf-8");
+      created.push(`rigor-${skill.shortName}`);
+    } else {
+      // Claude/OpenCode: flat markdown files with @path references
+      const fileName = `rigor-${skill.shortName}.md`;
+      const filePath = join(commandsDir, fileName);
+
+      if (existsSync(filePath)) {
+        skipped.push(fileName);
+        continue;
+      }
+
+      const shortDesc = skill.description.split(". ")[0].replace(/"/g, "'");
+      const content = [
+        "---",
+        `description: ${shortDesc}`,
+        "---",
+        "",
+        `@${skill.skillPath}`,
+        "",
+      ].join("\n");
+
+      writeFileSync(filePath, content, "utf-8");
+      created.push(fileName);
     }
-
-    // Use absolute path to reference the skill file
-    // Truncate description to first sentence for cleaner command list
-    const shortDesc = skill.description.split(". ")[0].replace(/"/g, "'");
-    const content = [
-      "---",
-      `description: ${shortDesc}`,
-      "---",
-      "",
-      `@${skill.skillPath}`,
-      "",
-    ].join("\n");
-
-    writeFileSync(filePath, content, "utf-8");
-    created.push(fileName);
   }
 
   const scope = params.global ? "globally" : "for this project";
@@ -316,7 +337,11 @@ export async function handleInstallCommands(
     lines.push("");
     lines.push("Created:");
     for (const f of created) {
-      lines.push(`  /${f.replace(".md", "").replace("rigor-", "rigor:")}`);
+      if (isHermes) {
+        lines.push(`  /rigor:${f.replace("rigor-", "")}`);
+      } else {
+        lines.push(`  /${f.replace(".md", "").replace("rigor-", "rigor:")}`);
+      }
     }
   }
 
@@ -326,8 +351,13 @@ export async function handleInstallCommands(
   }
 
   lines.push("");
-  lines.push("Commands reference skill files via @path inclusion.");
-  lines.push("No content is duplicated. Update the skill, commands update automatically.");
+  if (isHermes) {
+    lines.push("Skills copied as self-contained SKILL.md files (Hermes does not support @path).");
+    lines.push("To update, re-run install_commands (delete existing to overwrite).");
+  } else {
+    lines.push("Commands reference skill files via @path inclusion.");
+    lines.push("No content is duplicated. Update the skill, commands update automatically.");
+  }
 
   return textResult(lines.join("\n"));
 }
@@ -384,7 +414,7 @@ export function registerScaffoldTools(
     "install_commands",
     "Install Rigor skills as slash commands for your AI coding tool",
     {
-      client: z.enum(["opencode", "claude"]).describe("Target client: 'opencode' or 'claude'"),
+      client: z.enum(["opencode", "claude", "hermes"]).describe("Target client: 'opencode', 'claude', or 'hermes'"),
       global: z.boolean().optional().describe("Install globally (all projects) instead of per-project (default: false)"),
     },
     async (params) => {
