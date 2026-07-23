@@ -5,6 +5,7 @@
   "type": "module",
   "main": "dist/server.js",
   "bin": {
+    "rigor": "dist/cli.js",
     "rigor-server": "dist/server.js"
   },
   "scripts": {
@@ -16,6 +17,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.4.1",
+    "commander": "^15.0.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
