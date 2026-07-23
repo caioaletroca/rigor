@@ -26,9 +26,28 @@ npm install
 npm run build
 ```
 
+### Install skills
+
+Use the CLI to install Rigor's workflow skills into your AI coding tool:
+
+```bash
+# Claude Code
+rigor install --client claude --global
+
+# Hermes Agent
+rigor install --client hermes --global
+
+# OpenCode
+rigor install --client opencode --global
+```
+
+This gives you slash commands like `/rigor:cycle`, `/rigor:plan`, `/rigor:review`, etc. For Claude Code and OpenCode, skills are referenced via `@path` (no duplication, auto-updates). For Hermes, skills are copied as self-contained SKILL.md files.
+
+Drop `--global` to install per-project instead. Your AI agent can also call the `install_commands` MCP tool to install skills into a project automatically.
+
 ### Configure your MCP client
 
-Add Rigor to your MCP client configuration. Works with Claude Code, OpenCode, Hermes Agent, or any MCP-compatible client.
+Add Rigor as an MCP server. Works with Claude Code, OpenCode, Hermes Agent, or any MCP-compatible client.
 
 **Claude Code** (`settings.json`):
 
