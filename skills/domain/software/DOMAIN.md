@@ -34,3 +34,11 @@ Any single high-confidence signal is sufficient. Two or more medium-confidence s
 | React | `rigor:lang:react` | `lang.test_command`, `lang.lint_command`, `lang.coverage_pattern` |
 
 When no lang pack is active, `${lang.*}` placeholders remain unresolved and the corresponding checks are skipped.
+
+## Domain Skills
+
+Beyond Gate 0 checks, the software pack ships domain-scoped skills under `skills/domain/software/skills/`. These install as slash commands only when `domain: software` is active.
+
+| Skill | What it does |
+|-------|-------------|
+| `rigor:worktree` | Creates an isolated, collision-free git worktree for parallel branch work: directory-priority selection, `.gitignore` safety, dependency install, a baseline test against the configured Gate 0 command, and one-agent-per-worktree naming rules so multiple agents can share a repo without colliding. |
