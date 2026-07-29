@@ -264,6 +264,8 @@ Rigor is **domain-agnostic**. The gate system doesn't care if you're building so
 |--------|--------|
 | `software` | tests, lint, coverage, accessibility, visual regression, e2e, performance |
 
+A domain pack can also ship **domain-scoped skills** under `skills/domain/<domain>/skills/`. These are discovered by `install_commands` and installed as slash commands only when that domain is the active one (a global install surfaces all of them). The `software` pack ships `rigor:worktree` this way.
+
 ### Shipped language packs
 
 | Lang | Test | Lint | Extras |
@@ -296,6 +298,12 @@ Rigor ships workflow skills that orchestrate the MCP tools:
 | `rigor:receive-review` | Process review feedback with verification |
 | `rigor:test-guard` | Catch mock abuse and test anti-patterns |
 | `rigor:new-skill` | Scaffold a new skill |
+
+**Domain-scoped skills** live *inside* a domain pack and install as slash commands only when that domain is active. The `software` pack ships:
+
+| Skill | What it does |
+|-------|-------------|
+| `rigor:worktree` | Create an isolated, collision-free git worktree for parallel branch work (directory-priority selection, `.gitignore` safety, dependency install, baseline test against the configured Gate 0 command, and one-agent-per-worktree naming so multiple agents can share a repo without colliding) |
 
 ## Architecture
 
