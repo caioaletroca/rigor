@@ -1,2 +1,15 @@
 node_modules/
 dist/
+worktrees/
+.worktrees/
+
+# Rigor cycle runtime state (evidence/state are machine-specific; keep config.yaml)
+.rigor/state.json
+.rigor/current-cycle.json
+.rigor/evidence/
+.rigor/history/
+.rigor/baselines/
+.rigor/sync/
+
+# Local MCP server registration (machine-specific absolute paths)
+.mcp.json

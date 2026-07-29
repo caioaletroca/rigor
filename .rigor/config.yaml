@@ -1,0 +1,34 @@
+# .rigor/config.yaml -- Gate configuration for the worktree-skill cycle.
+#
+# Gate 0 runs the repo's real, currently-green checks:
+#   - build:  tsc (npm run build)
+#   - tests:  vitest, scoped to src/ so the polluting nested worktrees/
+#             copies are excluded (formalized by the dogfood fix in Epic 2.1).
+#
+# Coverage and lint gates are intentionally OMITTED: this repo has no
+# coverage provider (@vitest/coverage-v8) and no ESLint config installed.
+# Configuring gates with no tooling behind them would be fake enforcement.
+# Adding that tooling is a separate follow-up.
+gates:
+  gate_0:
+    require_test_files: true
+    checks:
+      - name: build
+        command: "npm run build"
+      - name: tests
+        command: "npx vitest run src/"
+
+  gate_8:
+    reviewers:
+      - code-quality
+      - security
+      - logic
+      - test-quality
+    required_reviewers:
+      - security
+      - logic
+    max_critical_findings: 0
+    max_high_findings: 0
+
+  gate_9:
+    require_user_approval: true
