@@ -60,6 +60,33 @@ function discoverSkills() {
     }
   }
 
+  // Domain-scoped skills: skills/domain/<domain>/skills/<name>/SKILL.md
+  // install.mjs is global (no project/domain context), so these are symlinked
+  // unconditionally by bare leaf name -- slash-command domain gating is
+  // install_commands' job. Top-level skills win on a name collision.
+  const domainRoot = join(SKILLS_SOURCE, "domain");
+  if (existsSync(domainRoot)) {
+    for (const domain of readdirSync(domainRoot)) {
+      const domainPath = join(domainRoot, domain);
+      if (!statSync(domainPath).isDirectory()) continue;
+
+      const skillsDir = join(domainPath, "skills");
+      if (!existsSync(skillsDir) || !statSync(skillsDir).isDirectory()) continue;
+
+      for (const leaf of readdirSync(skillsDir)) {
+        const leafPath = join(skillsDir, leaf);
+        if (!statSync(leafPath).isDirectory()) continue;
+        if (!existsSync(join(leafPath, "SKILL.md"))) continue;
+
+        if (skills.some((s) => s.name === leaf)) {
+          log(`Skipping domain-scoped skill '${leaf}' (name already used by a top-level skill)`);
+          continue;
+        }
+        skills.push({ name: leaf, sourcePath: leafPath });
+      }
+    }
+  }
+
   return skills;
 }
 

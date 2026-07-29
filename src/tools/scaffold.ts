@@ -10,7 +10,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from "node:fs";
 import {
   scaffoldLangPack,
   scaffoldDomainPack,
@@ -19,6 +19,7 @@ import {
   validateLangPackVariables,
 } from "../scaffold/index.js";
 import type { LangPackInput, DomainPackInput, DomainCheckInput } from "../scaffold/index.js";
+import { loadConfig } from "../config/index.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -214,6 +215,18 @@ function parseSkillFrontmatter(content: string): { name?: string; description?: 
   };
 }
 
+/**
+ * Build a SkillMeta from a SKILL.md file, deriving `name`/`shortName` the same
+ * way for both top-level and domain-scoped discovery: frontmatter `name` wins,
+ * falling back to `rigor:<leaf>`, and `shortName` strips the `rigor:` prefix.
+ */
+function buildSkillMeta(skillFile: string, leafName: string): SkillMeta {
+  const fm = parseSkillFrontmatter(readFileSync(skillFile, "utf-8"));
+  const name = fm.name ?? `rigor:${leafName}`;
+  const shortName = name.replace(/^rigor:/, "").replace(/:/g, "-");
+  return { name, shortName, description: fm.description ?? "", skillPath: skillFile };
+}
+
 function discoverSkills(rigorRoot: string): SkillMeta[] {
   const skillsDir = join(rigorRoot, "skills");
   if (!existsSync(skillsDir)) return [];
@@ -228,21 +241,76 @@ function discoverSkills(rigorRoot: string): SkillMeta[] {
     const skillFile = join(skillsDir, entry.name, "SKILL.md");
     if (!existsSync(skillFile)) continue;
 
-    const content = readFileSync(skillFile, "utf-8");
-    const fm = parseSkillFrontmatter(content);
-
-    const name = fm.name ?? `rigor:${entry.name}`;
-    const shortName = name.replace(/^rigor:/, "").replace(/:/g, "-");
-
-    skills.push({
-      name,
-      shortName,
-      description: fm.description ?? "",
-      skillPath: skillFile,
-    });
+    skills.push(buildSkillMeta(skillFile, entry.name));
   }
 
   return skills.sort((a, b) => a.shortName.localeCompare(b.shortName));
+}
+
+/**
+ * Discover invokable skills that live inside a domain pack, at
+ * `skills/domain/<domain>/skills/<name>/SKILL.md`.
+ *
+ * Gating:
+ * - When `opts.global` is true, skills from every domain are returned
+ *   (a global install has no single active project domain).
+ * - Otherwise, only skills whose domain equals `activeDomain` are returned,
+ *   and none when `activeDomain` is undefined (no domain active).
+ *
+ * Naming mirrors `discoverSkills`: the frontmatter `name` wins, falling back
+ * to `rigor:<leaf>`, and `shortName` strips the `rigor:` prefix.
+ */
+export function discoverDomainScopedSkills(
+  rigorRoot: string,
+  activeDomain: string | undefined,
+  opts: { global?: boolean } = {},
+): SkillMeta[] {
+  const domainRoot = join(rigorRoot, "skills", "domain");
+  if (!existsSync(domainRoot) || !statSync(domainRoot).isDirectory()) return [];
+
+  const skills: SkillMeta[] = [];
+
+  for (const domainEntry of readdirSync(domainRoot, { withFileTypes: true })) {
+    if (!domainEntry.isDirectory()) continue;
+    // Domain gating: unless global, only the active domain's skills qualify.
+    if (!opts.global && domainEntry.name !== activeDomain) continue;
+
+    const skillsDir = join(domainRoot, domainEntry.name, "skills");
+    // Guard isDirectory too: a domain shipping a FILE named `skills` would
+    // otherwise make readdirSync throw ENOTDIR and abort the whole install.
+    if (!existsSync(skillsDir) || !statSync(skillsDir).isDirectory()) continue;
+
+    for (const skillEntry of readdirSync(skillsDir, { withFileTypes: true })) {
+      if (!skillEntry.isDirectory()) continue;
+
+      const skillFile = join(skillsDir, skillEntry.name, "SKILL.md");
+      if (!existsSync(skillFile)) continue;
+
+      skills.push(buildSkillMeta(skillFile, skillEntry.name));
+    }
+  }
+
+  return skills.sort((a, b) => a.shortName.localeCompare(b.shortName));
+}
+
+/**
+ * Merge top-level and domain-scoped skills, de-duplicating by `shortName`.
+ * Top-level skills win over domain-scoped ones, and the first domain-scoped
+ * skill wins over a later one with the same shortName (relevant on a global
+ * install, where more than one domain's skills are surfaced together).
+ */
+export function mergeSkills(
+  topLevel: SkillMeta[],
+  domainScoped: SkillMeta[],
+): SkillMeta[] {
+  const seen = new Set(topLevel.map((s) => s.shortName));
+  const merged = [...topLevel];
+  for (const s of domainScoped) {
+    if (seen.has(s.shortName)) continue;
+    seen.add(s.shortName);
+    merged.push(s);
+  }
+  return merged;
 }
 
 export interface InstallCommandsParams {
@@ -266,7 +334,25 @@ export async function handleInstallCommands(
   projectRoot: string,
 ): Promise<CallToolResult> {
   const rigorRoot = getRigorRoot();
-  const skills = discoverSkills(rigorRoot);
+  const topLevelSkills = discoverSkills(rigorRoot);
+
+  // Resolve the active domain. A global install has no single project domain,
+  // so domain-scoped skills from every domain are surfaced; a per-project
+  // install gates them on the project's configured `domain:`. A missing or
+  // invalid config must never throw the install -- treat it as no domain.
+  let activeDomain: string | undefined;
+  if (!params.global) {
+    try {
+      activeDomain = loadConfig(projectRoot).domain;
+    } catch {
+      activeDomain = undefined;
+    }
+  }
+  const domainSkills = discoverDomainScopedSkills(rigorRoot, activeDomain, {
+    global: params.global,
+  });
+
+  const skills = mergeSkills(topLevelSkills, domainSkills);
 
   if (skills.length === 0) {
     return textResult("No skills found. Is Rigor installed correctly?", true);
