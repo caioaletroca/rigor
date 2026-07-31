@@ -186,7 +186,7 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 5. Passes trivially when no commands are configured
   // -----------------------------------------------------------------------
-  it("passes trivially when no commands are configured", async () => {
+  it("FAILS by default when no commands are configured (no hollow pass)", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -195,9 +195,25 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
+    expect(result.passed).toBe(false);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("passes an empty gate only when allow_empty is true", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      require_test_files: false,
+      allow_empty: true,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
     expect(result.passed).toBe(true);
     expect(result.checks).toHaveLength(1);
-    expect(result.checks[0].detail).toContain("trivially");
+    expect(result.checks[0].detail).toContain("allow_empty");
   });
 
   // -----------------------------------------------------------------------
@@ -390,7 +406,7 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 13. Empty checks array passes trivially
   // -----------------------------------------------------------------------
-  it("passes trivially when checks array is empty", async () => {
+  it("FAILS when checks array is empty (default)", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -400,9 +416,9 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
     expect(result.checks).toHaveLength(1);
-    expect(result.checks[0].detail).toContain("trivially");
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
     expect(runCommand).not.toHaveBeenCalled();
   });
 
@@ -521,7 +537,7 @@ describe("checkGate0Exit", () => {
     expect(testsCheck).toBeUndefined();
   });
 
-  it("skips checks with whitespace-only command strings", async () => {
+  it("FAILS when the only check has a whitespace-only command", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -533,13 +549,13 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    // Should pass trivially since the only check was skipped
-    // and no checks produced results, but the checks array is empty
-    expect(result.passed).toBe(true);
+    // The only check was skipped, so nothing ran — must not certify.
+    expect(result.passed).toBe(false);
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
     expect(runCommand).not.toHaveBeenCalled();
   });
 
-  it("passes when all checks have empty commands", async () => {
+  it("FAILS when all checks have empty commands", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -552,7 +568,7 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
     expect(runCommand).not.toHaveBeenCalled();
   });
 
@@ -730,7 +746,7 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 23. Gate 0 passes trivially when all three commands are empty
   // -----------------------------------------------------------------------
-  it("passes trivially when test, lint, and design commands are all empty", async () => {
+  it("FAILS when test, lint, and design commands are all empty (default)", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -740,9 +756,9 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
     expect(result.checks).toHaveLength(1);
-    expect(result.checks[0].detail).toContain("trivially");
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
   });
 
   // -----------------------------------------------------------------------

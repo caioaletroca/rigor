@@ -50,16 +50,10 @@ export async function checkGate0Exit(
   const g0 = config.gates.gate_0;
   const requireTestFiles = g0.require_test_files;
 
-  // If nothing is configured, pass trivially.
-  if (g0.checks.length === 0) {
-    checks.push({
-      name: "tests",
-      passed: true,
-      detail: "No test or lint commands configured — gate 0 passes trivially",
-    });
-
-    return { passed: true, checks };
-  }
+  // Track whether any check actually executed a command. An empty `checks`
+  // array — or checks whose commands are all empty/unresolved (e.g. unresolved
+  // ${lang.*} variables) — means nothing was verified.
+  let ranAnyCommand = false;
 
   // -----------------------------------------------------------------------
   // Iterate generic checks
@@ -71,6 +65,7 @@ export async function checkGate0Exit(
       continue;
     }
 
+    ranAnyCommand = true;
     const result = runCommand(check.command, { cwd: projectRoot });
 
     // Exit code 127 = command not found — provide a clear, actionable message.
@@ -136,6 +131,40 @@ export async function checkGate0Exit(
         });
       }
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // No runnable check — do NOT silently certify an unverified task.
+  // -----------------------------------------------------------------------
+
+  if (!ranAnyCommand) {
+    if (g0.allow_empty) {
+      return {
+        passed: true,
+        checks: [
+          {
+            name: "gate_0",
+            passed: true,
+            detail:
+              "No runnable checks configured — passing because gates.gate_0.allow_empty is true.",
+          },
+        ],
+      };
+    }
+
+    return {
+      passed: false,
+      checks: [
+        {
+          name: "gate_0",
+          passed: false,
+          detail:
+            "No runnable Gate 0 checks (checks[] empty or all commands unresolved). " +
+            "Refusing to certify an unverified task. Configure gates.gate_0.checks, " +
+            "activate a domain/lang pack, or set gates.gate_0.allow_empty: true.",
+        },
+      ],
+    };
   }
 
   // -----------------------------------------------------------------------
