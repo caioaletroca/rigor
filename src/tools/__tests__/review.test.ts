@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
@@ -230,6 +230,28 @@ describe("review tools", () => {
       expect(extractText(result)).toContain("no tasks");
     });
 
+    // 1c. Reloads config from disk when config is null (no stale boot config)
+    it("reloads gate config from disk when config is null", () => {
+      stateManager.init("test-plan.md", makePhases());
+      mkdirSync(join(tempDir, ".rigor"), { recursive: true });
+      writeFileSync(
+        join(tempDir, ".rigor", "config.yaml"),
+        "gates:\n  gate_8:\n    reviewers:\n      - security\n      - logic\n",
+        "utf-8",
+      );
+
+      const result = handleReviewStart(
+        { epic_id: "1.1" },
+        stateManager,
+        null,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      // Reviewers reflect the on-disk file, not the default 10-reviewer list.
+      expect(extractText(result)).toContain("Expected reviewers: security, logic");
+    });
+
     // 2. Rejects when tasks incomplete
     it("rejects when tasks are incomplete", () => {
       stateManager.init("test-plan.md", makePhasesWithIncompleteTask());
@@ -293,6 +315,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       expect(result.isError).toBeUndefined();
@@ -329,6 +352,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       const result = handleAcceptStart(
@@ -371,6 +395,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       const criteria = passingCriteria();
@@ -411,6 +436,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       runCustomGates.mockReturnValueOnce({
@@ -463,6 +489,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
       handleAcceptSubmit(
         {

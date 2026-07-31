@@ -15,6 +15,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { StateManager } from "../state/index.js";
 import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
+import { loadConfig } from "../config/index.js";
 import type { EvidenceManager, GateEvidence } from "../evidence/index.js";
 import { checkGate8Exit, checkGate9Exit, runCustomGates } from "../gates/index.js";
 import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
@@ -41,9 +42,12 @@ export interface ReviewStartParams {
 export function handleReviewStart(
   params: ReviewStartParams,
   stateManager: StateManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
 ): CallToolResult {
+  // Reload config fresh from disk when not supplied (see gate.ts handlers).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
   if (state === null) {
@@ -97,7 +101,7 @@ export function handleReviewStart(
   }
 
   // 4b. Run pre_review custom gates
-  const customResult = runCustomGates("pre_review", params.epic_id, config, projectRoot);
+  const customResult = runCustomGates("pre_review", params.epic_id, cfg, projectRoot);
   if (!customResult.passed) {
     const lines: string[] = [];
     lines.push(`Epic ${params.epic_id} blocked by custom pre_review gate.`);
@@ -110,7 +114,7 @@ export function handleReviewStart(
   }
 
   // 5. Return summary
-  const reviewers = config.gates.gate_8.reviewers;
+  const reviewers = cfg.gates.gate_8.reviewers;
   const lines: string[] = [];
   lines.push(`Review started for epic ${params.epic_id}: ${epic.name}`);
   lines.push(`Tasks: ${epic.tasks.length} (all done, all passed Gate 0)`);
@@ -132,8 +136,12 @@ export function handleReviewSubmit(
   params: ReviewSubmitParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
+  projectRoot: string,
 ): CallToolResult {
+  // Reload config fresh from disk when not supplied (see gate.ts handlers).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify epic is in "doing" status
   const state = stateManager.load();
   if (state === null) {
@@ -167,7 +175,7 @@ export function handleReviewSubmit(
   }
 
   // 3. Run Gate 8 checks
-  const gate8Result = checkGate8Exit(submissions, config);
+  const gate8Result = checkGate8Exit(submissions, cfg);
 
   // 4. Save evidence
   const evidence: GateEvidence = {
@@ -286,9 +294,12 @@ export function handleAcceptSubmit(
   params: AcceptSubmitParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
 ): CallToolResult {
+  // Reload config fresh from disk when not supplied (see gate.ts handlers).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state
   const state = stateManager.load();
   if (state === null) {
@@ -323,7 +334,7 @@ export function handleAcceptSubmit(
   }
 
   // 4. Run Gate 9 checks
-  const gate9Result = checkGate9Exit(criteria, params.user_approved, config);
+  const gate9Result = checkGate9Exit(criteria, params.user_approved, cfg);
 
   // 5. Save evidence
   const evidence: GateEvidence = {
@@ -353,7 +364,7 @@ export function handleAcceptSubmit(
 
   // 6b. Run post_accept custom gates (only if Gate 9 passed)
   if (gate9Result.passed) {
-    const customResult = runCustomGates("post_accept", params.epic_id, config, projectRoot);
+    const customResult = runCustomGates("post_accept", params.epic_id, cfg, projectRoot);
     if (!customResult.passed) {
       // Save custom gate evidence
       const customEvidence: GateEvidence = {
@@ -412,7 +423,7 @@ export function handleAcceptSubmit(
         lines.push(`  - ${c.criterion}`);
       }
     }
-    if (config.gates.gate_9.require_user_approval && !params.user_approved) {
+    if (cfg.gates.gate_9.require_user_approval && !params.user_approved) {
       lines.push("");
       lines.push("User approval: required but not given");
     }
@@ -519,15 +530,16 @@ export function registerReviewTools(
   server: McpServer,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  config: RigorConfig,
   projectRoot: string,
 ): void {
+  // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
+  // per invocation — config edits take effect without a server restart.
   server.tool(
     "review_start",
     "Start code review for an epic — verifies all tasks are done and passed Gate 0",
     { epic_id: z.string().describe("Epic id (e.g. 1.1)") },
     async (params) => {
-      return handleReviewStart(params, stateManager, config, projectRoot);
+      return handleReviewStart(params, stateManager, null, projectRoot);
     },
   );
 
@@ -541,7 +553,7 @@ export function registerReviewTools(
         .describe("JSON array of ReviewFindings objects"),
     },
     async (params) => {
-      return handleReviewSubmit(params, stateManager, evidenceManager, config);
+      return handleReviewSubmit(params, stateManager, evidenceManager, null, projectRoot);
     },
   );
 
@@ -568,7 +580,7 @@ export function registerReviewTools(
         .describe("Whether the user has approved the epic"),
     },
     async (params) => {
-      return handleAcceptSubmit(params, stateManager, evidenceManager, config, projectRoot);
+      return handleAcceptSubmit(params, stateManager, evidenceManager, null, projectRoot);
     },
   );
 

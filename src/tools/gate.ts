@@ -12,6 +12,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { StateManager } from "../state/index.js";
 import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
+import { loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import type { GateEvidence } from "../evidence/index.js";
 import {
@@ -43,9 +44,13 @@ export interface TaskStartParams {
 export function handleTaskStart(
   params: TaskStartParams,
   stateManager: StateManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
 ): CallToolResult {
+  // Reload config fresh from disk when not explicitly supplied, so edits to
+  // .rigor/config.yaml take effect without restarting the server.
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
   if (state === null) {
@@ -102,7 +107,7 @@ export function handleTaskStart(
   }
 
   // 5b. Run pre_task custom gates
-  const customResult = runCustomGates("pre_task", params.task_id, config, projectRoot);
+  const customResult = runCustomGates("pre_task", params.task_id, cfg, projectRoot);
   if (!customResult.passed) {
     const lines: string[] = [];
     lines.push(`Task ${params.task_id} blocked by custom pre_task gate.`);
@@ -115,7 +120,7 @@ export function handleTaskStart(
   }
 
   // 5c. Run Gate 1 infrastructure check (conditional)
-  const gate1Result = checkGate1Exit(config, projectRoot);
+  const gate1Result = checkGate1Exit(cfg, projectRoot);
   if (!gate1Result.skipped) {
     // Save Gate 1 evidence
     const evidenceManager = new EvidenceManager(projectRoot);
@@ -165,9 +170,12 @@ export interface TaskCompleteParams {
 export async function handleTaskComplete(
   params: TaskCompleteParams,
   stateManager: StateManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
 ): Promise<CallToolResult> {
+  // Reload config fresh from disk when not explicitly supplied (see handleTaskStart).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
   if (state === null) {
@@ -197,7 +205,7 @@ export async function handleTaskComplete(
   }
 
   // 3. Run Gate 0 exit checks
-  const gate0Result = await checkGate0Exit(params.task_id, config, projectRoot);
+  const gate0Result = await checkGate0Exit(params.task_id, cfg, projectRoot);
 
   // 4. Save evidence
   const evidenceManager = new EvidenceManager(projectRoot);
@@ -235,7 +243,7 @@ export async function handleTaskComplete(
 
   // 5b. Run post_task custom gates (only if Gate 0 passed)
   if (gate0Result.passed) {
-    const customResult = runCustomGates("post_task", params.task_id, config, projectRoot);
+    const customResult = runCustomGates("post_task", params.task_id, cfg, projectRoot);
     if (!customResult.passed) {
       // Save custom gate evidence
       const customEvidence: GateEvidence = {
@@ -304,15 +312,16 @@ export async function handleTaskComplete(
 export function registerGateTools(
   server: McpServer,
   stateManager: StateManager,
-  config: RigorConfig,
   projectRoot: string,
 ): void {
+  // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
+  // per invocation — config edits take effect without a server restart.
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
     { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
     async (params) => {
-      return handleTaskStart(params, stateManager, config, projectRoot);
+      return handleTaskStart(params, stateManager, null, projectRoot);
     },
   );
 
@@ -321,7 +330,7 @@ export function registerGateTools(
     "Complete a task — runs Gate 0 exit checks (tests, coverage, lint), saves evidence",
     { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
     async (params) => {
-      return handleTaskComplete(params, stateManager, config, projectRoot);
+      return handleTaskComplete(params, stateManager, null, projectRoot);
     },
   );
 }
