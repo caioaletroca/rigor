@@ -213,6 +213,23 @@ describe("review tools", () => {
       expect(epic.status).toBe("doing");
     });
 
+    // 1b. Rejects an epic with no tasks (rolling-wave / unelaborated epic)
+    it("rejects an epic that has no tasks", () => {
+      const phases = makePhases();
+      phases[0].epics[0].tasks = [];
+      stateManager.init("test-plan.md", phases);
+
+      const result = handleReviewStart(
+        { epic_id: "1.1" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("no tasks");
+    });
+
     // 2. Rejects when tasks incomplete
     it("rejects when tasks are incomplete", () => {
       stateManager.init("test-plan.md", makePhasesWithIncompleteTask());

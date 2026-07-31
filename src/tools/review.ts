@@ -61,6 +61,17 @@ export function handleReviewStart(
     throw error;
   }
 
+  // 2b. An epic with no tasks cannot be reviewed — there is no implemented
+  // work to certify. Guards the rolling-wave case where a later-phase epic
+  // has not yet been elaborated into tasks.
+  if (epic.tasks.length === 0) {
+    return textResult(
+      `Epic "${params.epic_id}" has no tasks — cannot review an epic with no implemented work. ` +
+        `Elaborate its tasks into the plan (and re-init the cycle) before review.`,
+      true,
+    );
+  }
+
   // 3. Verify ALL tasks in this epic have status "done" and gate_0.passed
   const incompleteTasks: string[] = [];
   for (const task of epic.tasks) {
