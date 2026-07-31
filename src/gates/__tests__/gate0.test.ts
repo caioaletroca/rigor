@@ -265,20 +265,21 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 8. test_files check is informational
   // -----------------------------------------------------------------------
-  it("records test_files as informational pass when enabled", async () => {
+  it("passes test_files when the changeset has no new source files", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "npm run lint",
       require_test_files: true,
     });
 
+    // lint -> ok; git status --porcelain -> empty (no changes)
     runCommand.mockReturnValue(okResult());
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
     const tfCheck = result.checks.find((c) => c.name === "test_files");
     expect(tfCheck?.passed).toBe(true);
-    expect(tfCheck?.detail).toContain("Phase 4");
+    expect(tfCheck?.detail).toContain("No new source files");
   });
 
   // =======================================================================
@@ -807,5 +808,81 @@ describe("checkGate0Exit", () => {
     expect(config.gates.gate_0.checks[0].name).toBe("tests");
     expect(config.gates.gate_0.checks[1].name).toBe("lint");
     expect(config.gates.gate_0.checks[2].name).toBe("design-quality");
+  });
+
+  // =======================================================================
+  // require_test_files (git-diff enforcement) — P5
+  // =======================================================================
+
+  it("fails require_test_files when a new source file has no matching test", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(okResult("?? src/foo/bar.ts\n")); // git status --porcelain
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(false);
+    expect(tf?.detail).toContain("bar.ts");
+    expect(result.passed).toBe(false);
+  });
+
+  it("passes require_test_files when the new source has a matching test in the changeset", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(okResult("?? src/foo/bar.ts\n?? src/foo/bar.test.ts\n")); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+  });
+
+  it("ignores modified (non-new) source files for require_test_files", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(okResult(" M src/foo/bar.ts\n")); // modified, not new
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+  });
+
+  it("skips require_test_files when git is unavailable / not a repo", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(failResult(128)); // git status fails
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(tf?.detail).toContain("Skipped");
   });
 });

@@ -168,15 +168,12 @@ export async function checkGate0Exit(
   }
 
   // -----------------------------------------------------------------------
-  // Test files (informational)
+  // Test files: every newly-added source file must have a matching test in
+  // the same changeset (see evaluateTestFiles).
   // -----------------------------------------------------------------------
 
   if (requireTestFiles) {
-    checks.push({
-      name: "test_files",
-      passed: true,
-      detail: "Skipped: requires git diff integration (Phase 4)",
-    });
+    checks.push(evaluateTestFiles(projectRoot));
   }
 
   // -----------------------------------------------------------------------
@@ -195,4 +192,93 @@ export async function checkGate0Exit(
 function capitalize(s: string): string {
   if (s.length === 0) return s;
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const SOURCE_EXT = /\.(ts|tsx|js|jsx|go|py|cs|java|rs)$/;
+
+/** A path that is itself a test file (by filename marker or a test directory). */
+function isTestPath(path: string): boolean {
+  const base = path.split("/").pop() ?? path;
+  return (
+    /\.(test|spec)\.[a-z]+$/.test(base) ||
+    /_test\.[a-z]+$/.test(base) ||
+    /(^|\/)(__tests__|__test__|tests?)\//.test(path)
+  );
+}
+
+/** Basename with directory and source extension stripped (e.g. src/a/foo.ts -> foo). */
+function sourceStem(path: string): string {
+  const base = path.split("/").pop() ?? path;
+  return base.replace(SOURCE_EXT, "");
+}
+
+/** Basename of a test file with test markers + extension stripped (foo.test.ts -> foo). */
+function testStem(path: string): string {
+  const base = path.split("/").pop() ?? path;
+  return base
+    .replace(/\.(test|spec)\.[a-z]+$/, "")
+    .replace(/_test\.[a-z]+$/, "")
+    .replace(SOURCE_EXT, "");
+}
+
+/**
+ * Enforce require_test_files: every newly-added (untracked or added) source
+ * file in the working tree must have a matching test file present in the same
+ * changeset, matched by basename stem. Modified files are not required to add
+ * a test. Skips gracefully when git is unavailable / not a repo.
+ */
+export function evaluateTestFiles(projectRoot: string): CheckResult {
+  const result = runCommand("git status --porcelain", { cwd: projectRoot });
+
+  if (result.exit_code !== 0) {
+    return {
+      name: "test_files",
+      passed: true,
+      detail: "Skipped: not a git repository or git unavailable",
+    };
+  }
+
+  const lines = String(result.stdout)
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.length > 0);
+
+  const newSource: string[] = [];
+  const testStems = new Set<string>();
+
+  for (const line of lines) {
+    const status = line.slice(0, 2);
+    let path = line.slice(3).trim();
+    if (path.includes(" -> ")) path = path.split(" -> ").pop()!.trim(); // rename target
+    path = path.replace(/^"|"$/g, "");
+
+    if (isTestPath(path)) {
+      testStems.add(testStem(path));
+      continue;
+    }
+
+    const isNew = status.includes("A") || status.includes("?");
+    if (isNew && SOURCE_EXT.test(path)) {
+      newSource.push(path);
+    }
+  }
+
+  const uncovered = newSource.filter((s) => !testStems.has(sourceStem(s)));
+
+  if (uncovered.length === 0) {
+    return {
+      name: "test_files",
+      passed: true,
+      detail:
+        newSource.length === 0
+          ? "No new source files requiring tests"
+          : `All ${newSource.length} new source file(s) have a matching test`,
+    };
+  }
+
+  return {
+    name: "test_files",
+    passed: false,
+    detail: `New source files without a matching test in the changeset: ${uncovered.join(", ")}`,
+  };
 }
