@@ -185,6 +185,20 @@ The server validates all epics are "done", marks the phase as complete, and acti
 
 ---
 
+## Rolling-Wave Elaboration
+
+Rolling-wave plans leave later phases at epic level (no tasks) at plan time. The cycle parses the plan once at `cycle_init`, so tasks you add to a later-phase epic afterward are invisible to the server until you re-parse.
+
+When execution reaches a phase whose epics still have no tasks, elaborate those tasks in the plan file, then:
+
+```
+cycle_reload()   -- re-parse the plan, merge new phases/epics/tasks into the running cycle
+```
+
+`cycle_reload` preserves the status and gate evidence of everything already in progress or done — it only **adds** newly-appeared entities. Do NOT use `cycle_reset` for this (that destroys all evidence). Run `cycle_reload` before `review_start` on any epic that was epic-level at init.
+
+---
+
 ## Recovery Protocol
 
 When something goes wrong, follow this order:

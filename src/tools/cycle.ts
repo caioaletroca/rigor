@@ -110,6 +110,95 @@ export function handleCycleInit(
 }
 
 // ---------------------------------------------------------------------------
+// cycle_reload handler
+// ---------------------------------------------------------------------------
+
+export interface CycleReloadParams {
+  /** Optional plan path override. Defaults to the cycle's stored plan_path. */
+  plan_path?: string;
+}
+
+/**
+ * Re-parse the plan and merge NEW phases/epics/tasks into the existing cycle
+ * without destroying progress. Enables rolling-wave execution: later phases
+ * that were epic-level (no tasks) at cycle_init can be elaborated in the plan
+ * and ingested mid-cycle. Existing entities keep their status and gate
+ * evidence untouched; entities removed from the plan are left in place.
+ */
+export function handleCycleReload(
+  params: CycleReloadParams,
+  stateManager: StateManager,
+  projectRoot: string,
+): CallToolResult {
+  const state = stateManager.load();
+  if (state === null) {
+    return textResult("No active cycle. Run cycle_init first.", true);
+  }
+
+  const planPath = params.plan_path
+    ? isAbsolute(params.plan_path)
+      ? params.plan_path
+      : resolve(projectRoot, params.plan_path)
+    : state.plan_path;
+
+  let plan;
+  try {
+    plan = parsePlan(planPath);
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return textResult(`Failed to parse plan at ${planPath}: ${msg}`, true);
+  }
+
+  const added = { phases: 0, epics: 0, tasks: 0 };
+
+  for (const parsedPhase of plan.phases) {
+    const phase = state.phases.find((p) => p.id === parsedPhase.id);
+    if (!phase) {
+      const newPhase = phaseToState(parsedPhase);
+      state.phases.push(newPhase);
+      added.phases++;
+      added.epics += newPhase.epics.length;
+      for (const e of newPhase.epics) added.tasks += e.tasks.length;
+      continue;
+    }
+
+    for (const parsedEpic of parsedPhase.epics) {
+      const epic = phase.epics.find((e) => e.id === parsedEpic.id);
+      if (!epic) {
+        const newEpic = epicToState(parsedEpic);
+        phase.epics.push(newEpic);
+        added.epics++;
+        added.tasks += newEpic.tasks.length;
+        continue;
+      }
+
+      for (const parsedTask of parsedEpic.tasks) {
+        const exists = epic.tasks.some((t) => t.id === parsedTask.id);
+        if (!exists) {
+          epic.tasks.push(taskToState(parsedTask));
+          added.tasks++;
+        }
+        // Existing task: keep its status and gate_0 evidence untouched.
+      }
+    }
+  }
+
+  if (params.plan_path) {
+    state.plan_path = planPath;
+  }
+
+  stateManager.save(state);
+
+  const summary = {
+    reloaded_from: planPath,
+    added,
+    note: "Existing phases, epics, and tasks kept their status and evidence; only new entities were added.",
+  };
+
+  return textResult(JSON.stringify(summary, null, 2));
+}
+
+// ---------------------------------------------------------------------------
 // cycle_status handler
 // ---------------------------------------------------------------------------
 
@@ -211,6 +300,20 @@ export function registerCycleTools(
     { plan_path: z.string().describe("Relative or absolute path to the plan.md file") },
     async (params) => {
       return handleCycleInit(params, stateManager, projectRoot);
+    },
+  );
+
+  server.tool(
+    "cycle_reload",
+    "Re-parse the plan and merge new phases/epics/tasks into the running cycle without losing progress (rolling-wave elaboration)",
+    {
+      plan_path: z
+        .string()
+        .optional()
+        .describe("Optional plan path override; defaults to the cycle's stored plan_path"),
+    },
+    async (params) => {
+      return handleCycleReload(params, stateManager, projectRoot);
     },
   );
 
