@@ -17,7 +17,7 @@ import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { loadConfig } from "../config/index.js";
 import type { EvidenceManager, GateEvidence } from "../evidence/index.js";
-import { checkGate8Exit, checkGate9Exit, runCustomGates } from "../gates/index.js";
+import { checkGate8Exit, checkGate9Exit, runCustomGates, Gate9Criteria } from "../gates/index.js";
 import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
 
 // ---------------------------------------------------------------------------
@@ -325,13 +325,23 @@ export function handleAcceptSubmit(
     );
   }
 
-  // 3. Parse criteria JSON
-  let criteria: AcceptanceCriterion[];
+  // 3. Parse and structurally validate criteria JSON. A malformed payload
+  // (not an array, empty, or an item missing `criterion`/`evidence`/`met`)
+  // is a schema error — short-circuit before evaluation so a missing `met`
+  // is never silently treated as an unmet criterion, and no evidence is
+  // written or state mutated.
+  let parsedCriteria: unknown;
   try {
-    criteria = JSON.parse(params.criteria) as AcceptanceCriterion[];
+    parsedCriteria = JSON.parse(params.criteria);
   } catch {
     return textResult("Invalid criteria JSON.", true);
   }
+
+  const validated = Gate9Criteria.safeParse(parsedCriteria);
+  if (!validated.success) {
+    return textResult(`Invalid criteria JSON: ${validated.error.message}`, true);
+  }
+  const criteria: AcceptanceCriterion[] = validated.data;
 
   // 4. Run Gate 9 checks
   const gate9Result = checkGate9Exit(criteria, params.user_approved, cfg);

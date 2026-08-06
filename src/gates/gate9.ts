@@ -5,6 +5,7 @@
  * and user approval is required when configured.
  */
 
+import { z } from "zod";
 import type { RigorConfig } from "../config/index.js";
 import type { CheckResult } from "../evidence/index.js";
 
@@ -12,11 +13,24 @@ import type { CheckResult } from "../evidence/index.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AcceptanceCriterion {
-  criterion: string;
-  evidence: string;
-  met: boolean;
-}
+/**
+ * Runtime schema for the Gate 9 acceptance-criteria payload. Callers parse
+ * untrusted JSON into this before evaluation so a missing `met` (or any
+ * malformed item) is surfaced as an explicit schema error rather than being
+ * silently coalesced to an unmet criterion. Shared with `review.ts` so both
+ * sides agree on the per-item contract.
+ */
+export const Gate9Criteria = z
+  .array(
+    z.object({
+      criterion: z.string(),
+      evidence: z.string(),
+      met: z.boolean(),
+    }),
+  )
+  .min(1);
+
+export type AcceptanceCriterion = z.infer<typeof Gate9Criteria>[number];
 
 export interface Gate9Result {
   passed: boolean;
