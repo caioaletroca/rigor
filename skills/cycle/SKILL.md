@@ -66,6 +66,8 @@ cycle_init({ plan_path: "docs/plans/my-plan.md" })
 
 The server parses the plan, creates initial state, and returns the cycle summary. If a cycle already exists, it returns an error -- use `cycle_reset` first.
 
+**Project root:** when you pass an **absolute** `plan_path` that sits inside a git repository whose root differs from the server's `--project-root`, `cycle_init` writes `.rigor/` state and evidence under the plan's git root (the reliable signal) and returns a `warning` plus the derived `project_root` in the summary. `cycle_status`/`task_*` still read the server root, so the warning is your cue to restart the server with the correct `--project-root`. A relative `plan_path`, or a plan outside any repo, keeps the server root unchanged.
+
 After init, call `cycle_status` to see the full state and confirm Phase 1 tasks are ready.
 
 ---
@@ -102,7 +104,7 @@ Gate 0 exit criteria enforced by the server:
 - Configured lint command must pass
 - Custom `post_task` gates must pass (if configured)
 
-**If Gate 0 fails:** Read the evidence. Fix the failing check. Call `task_complete` again (the task stays in "doing" so you can retry without calling `task_start`).
+**If Gate 0 fails:** The task transitions to `failed` (it does not remain in "doing"). Read the evidence, fix the failing check, then call `task_start({ task_id })` again -- its entry criteria accept a `failed` task -- to move it back to "doing" and retry. Never fabricate evidence to force a pass.
 
 ---
 
