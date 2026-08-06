@@ -196,12 +196,16 @@ function capitalize(s: string): string {
 
 const SOURCE_EXT = /\.(ts|tsx|js|jsx|go|py|cs|java|rs)$/;
 
+/** pytest-style prefix marker: `test_<name>.<ext>` (e.g. tests/test_foo.py). */
+const TEST_PREFIX = /^test_/;
+
 /** A path that is itself a test file (by filename marker or a test directory). */
 function isTestPath(path: string): boolean {
   const base = path.split("/").pop() ?? path;
   return (
     /\.(test|spec)\.[a-z]+$/.test(base) ||
     /_test\.[a-z]+$/.test(base) ||
+    (TEST_PREFIX.test(base) && SOURCE_EXT.test(base)) ||
     /(^|\/)(__tests__|__test__|tests?)\//.test(path)
   );
 }
@@ -216,6 +220,7 @@ function sourceStem(path: string): string {
 function testStem(path: string): string {
   const base = path.split("/").pop() ?? path;
   return base
+    .replace(TEST_PREFIX, "")
     .replace(/\.(test|spec)\.[a-z]+$/, "")
     .replace(/_test\.[a-z]+$/, "")
     .replace(SOURCE_EXT, "");

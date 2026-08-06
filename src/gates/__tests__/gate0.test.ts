@@ -885,4 +885,83 @@ describe("checkGate0Exit", () => {
     expect(tf?.passed).toBe(true);
     expect(tf?.detail).toContain("Skipped");
   });
+
+  // -----------------------------------------------------------------------
+  // pytest-style `test_<name>.py` source/test pairing (Epic 1.1)
+  // -----------------------------------------------------------------------
+
+  it("passes require_test_files for a pytest-style tests/test_<name>.py pairing", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(okResult("?? src/foo.py\n?? tests/test_foo.py\n")); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+  });
+
+  it("recognizes a co-located test_<name>.py file as the matching test", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(okResult("?? src/foo.py\n?? src/test_foo.py\n")); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+  });
+
+  it("fails require_test_files when a new .py source has no matching pytest test", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(okResult("?? src/foo.py\n")); // git status, no test
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(false);
+    expect(tf?.detail).toContain("foo.py");
+    expect(result.passed).toBe(false);
+  });
+
+  it("still recognizes <name>_test.py and <name>.test.ts pairings", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockReturnValueOnce(okResult()) // lint
+      .mockReturnValueOnce(
+        okResult("?? src/bar.py\n?? src/bar_test.py\n?? src/baz.ts\n?? src/baz.test.ts\n"),
+      ); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+  });
 });
