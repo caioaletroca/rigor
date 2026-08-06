@@ -6,11 +6,13 @@
  * without spinning up a real MCP transport.
  */
 
-import { resolve, isAbsolute } from "node:path";
+import { resolve, isAbsolute, dirname, join } from "node:path";
+import { existsSync } from "node:fs";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { StateManager, PhaseState, EpicState, TaskState } from "../state/index.js";
+import { StateManager } from "../state/index.js";
+import type { PhaseState, EpicState, TaskState } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { parsePlan } from "../plan/index.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
@@ -24,6 +26,46 @@ function textResult(text: string, isError?: boolean): CallToolResult {
     content: [{ type: "text", text }],
     ...(isError ? { isError: true } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Project-root resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk upward from `startDir` looking for a `.git` marker (directory or file),
+ * returning the first directory that contains one. Returns `null` when no
+ * repository root is found before reaching the filesystem root.
+ */
+function findGitRoot(startDir: string): string | null {
+  let dir = startDir;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (existsSync(join(dir, ".git"))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return null;
+    }
+    dir = parent;
+  }
+}
+
+/**
+ * Resolve the project root to anchor `.rigor/` state against.
+ *
+ * When `planPath` is absolute, its enclosing git repository root is the most
+ * reliable signal — the server's `--project-root` may have been misconfigured
+ * or omitted (a known dogfood recurrence). Falls back to `serverRoot` for
+ * relative plan paths or when the plan is not inside a git repository, keeping
+ * the explicit server root authoritative whenever it is the only signal.
+ */
+function resolveProjectRoot(planPath: string, serverRoot: string): string {
+  if (!isAbsolute(planPath)) {
+    return serverRoot;
+  }
+  return findGitRoot(dirname(planPath)) ?? serverRoot;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +117,15 @@ export function handleCycleInit(
     ? params.plan_path
     : resolve(projectRoot, params.plan_path);
 
-  const existing = stateManager.load();
+  // Prefer the plan's git root when an absolute plan path points outside the
+  // server's configured root. State/evidence then land under the correct
+  // repository even if `--project-root` was wrong. When they agree (or no repo
+  // is found), the server-provided StateManager is used unchanged.
+  const effectiveRoot = resolveProjectRoot(resolvedPath, projectRoot);
+  const usingDerivedRoot = effectiveRoot !== projectRoot;
+  const sm = usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager;
+
+  const existing = sm.load();
   if (existing !== null) {
     return textResult(
       "A cycle already exists. Use cycle_reset to start over.",
@@ -87,7 +137,7 @@ export function handleCycleInit(
 
   const phases = plan.phases.map(phaseToState);
 
-  const state = stateManager.init(resolvedPath, phases);
+  const state = sm.init(resolvedPath, phases);
 
   let epicCount = 0;
   let taskCount = 0;
@@ -98,13 +148,22 @@ export function handleCycleInit(
     }
   }
 
-  const summary = {
+  const summary: Record<string, unknown> = {
     cycle_id: state.cycle_id,
     plan_path: state.plan_path,
     phases: state.phases.length,
     epics: epicCount,
     tasks: taskCount,
   };
+
+  if (usingDerivedRoot) {
+    summary.project_root = effectiveRoot;
+    summary.warning =
+      `Server --project-root (${projectRoot}) differs from the plan's git root ` +
+      `(${effectiveRoot}). State and evidence were written under the git root. ` +
+      `cycle_status/task_* still read the server root — restart the server with ` +
+      `--project-root ${effectiveRoot} to align them.`;
+  }
 
   return textResult(JSON.stringify(summary, null, 2));
 }
@@ -130,7 +189,18 @@ export function handleCycleReload(
   stateManager: StateManager,
   projectRoot: string,
 ): CallToolResult {
-  const state = stateManager.load();
+  // Mirror cycle_init: when an absolute plan_path override points outside the
+  // server root, target that plan's git root. Without an override (or with a
+  // relative one), the server root stays authoritative and behavior is
+  // unchanged.
+  const effectiveRoot =
+    params.plan_path && isAbsolute(params.plan_path)
+      ? resolveProjectRoot(params.plan_path, projectRoot)
+      : projectRoot;
+  const usingDerivedRoot = effectiveRoot !== projectRoot;
+  const sm = usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager;
+
+  const state = sm.load();
   if (state === null) {
     return textResult("No active cycle. Run cycle_init first.", true);
   }
@@ -187,13 +257,20 @@ export function handleCycleReload(
     state.plan_path = planPath;
   }
 
-  stateManager.save(state);
+  sm.save(state);
 
-  const summary = {
+  const summary: Record<string, unknown> = {
     reloaded_from: planPath,
     added,
     note: "Existing phases, epics, and tasks kept their status and evidence; only new entities were added.",
   };
+
+  if (usingDerivedRoot) {
+    summary.project_root = effectiveRoot;
+    summary.warning =
+      `Server --project-root (${projectRoot}) differs from the plan's git root ` +
+      `(${effectiveRoot}). State was read and written under the git root.`;
+  }
 
   return textResult(JSON.stringify(summary, null, 2));
 }

@@ -6,7 +6,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, cpSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  cpSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
@@ -64,7 +72,12 @@ describe("cycle tools", () => {
 
   describe("cycle_init", () => {
     it("creates state from plan and returns success with counts", () => {
-      const params: CycleInitParams = { plan_path: SAMPLE_PLAN };
+      // Copy the fixture into the server root so root resolution stays anchored
+      // to tempDir (an absolute in-repo fixture path would otherwise resolve to
+      // this repo's own git root).
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      const params: CycleInitParams = { plan_path: planPath };
       const result = handleCycleInit(params, stateManager, tempDir);
 
       expect(result.isError).toBeUndefined();
@@ -101,7 +114,9 @@ describe("cycle tools", () => {
 
     it("rejects when a cycle already exists", () => {
       // Init first cycle
-      const params: CycleInitParams = { plan_path: SAMPLE_PLAN };
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      const params: CycleInitParams = { plan_path: planPath };
       handleCycleInit(params, stateManager, tempDir);
 
       // Try to init again
@@ -121,7 +136,9 @@ describe("cycle tools", () => {
     });
 
     it("maps task done checkbox to done status", () => {
-      const params: CycleInitParams = { plan_path: SAMPLE_PLAN };
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      const params: CycleInitParams = { plan_path: planPath };
       handleCycleInit(params, stateManager, tempDir);
 
       const state = stateManager.load();
@@ -150,7 +167,11 @@ describe("cycle tools", () => {
     });
 
     it("returns correct summary for a fresh cycle", () => {
-      handleCycleInit({ plan_path: SAMPLE_PLAN }, stateManager, tempDir);
+      // Anchor the plan inside the server root so the derived git root stays
+      // tempDir (an absolute in-repo fixture path would resolve to rigor's root).
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
 
       const result = handleCycleStatus(stateManager);
       const text = extractText(result);
@@ -169,7 +190,10 @@ describe("cycle tools", () => {
     });
 
     it("shows progress and active task for mid-progress cycle", () => {
-      handleCycleInit({ plan_path: SAMPLE_PLAN }, stateManager, tempDir);
+      // Anchor the plan inside the server root (see note in the test above).
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
 
       // Transition task 1.1.2 to "doing"
       stateManager.transition("1.1.2", "doing");
