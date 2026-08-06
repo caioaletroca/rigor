@@ -1,0 +1,19 @@
+{
+  "model": "gemma4",
+  "condition": "with-rigor",
+  "checks": {
+    "builds": 0,
+    "test_file_exists": 1,
+    "tests_pass": 0,
+    "coverage_above_85": 0,
+    "lint_clean": 0,
+    "tool_registers": 1,
+    "handler_follows_pattern": 0,
+    "tests_follow_pattern": 1,
+    "reads_history_dir": 0,
+    "edge_case_handling": 0
+  },
+  "total": 3,
+  "max": 10,
+  "timestamp": "2026-07-20T22:53:55Z"
+}

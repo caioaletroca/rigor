@@ -1,0 +1,7 @@
+{
+  "name": "fixture-perfect",
+  "scripts": {
+    "build": "echo build ok",
+    "test": "echo test ok"
+  }
+}
