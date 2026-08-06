@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
@@ -213,6 +213,45 @@ describe("review tools", () => {
       expect(epic.status).toBe("doing");
     });
 
+    // 1b. Rejects an epic with no tasks (rolling-wave / unelaborated epic)
+    it("rejects an epic that has no tasks", () => {
+      const phases = makePhases();
+      phases[0].epics[0].tasks = [];
+      stateManager.init("test-plan.md", phases);
+
+      const result = handleReviewStart(
+        { epic_id: "1.1" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("no tasks");
+    });
+
+    // 1c. Reloads config from disk when config is null (no stale boot config)
+    it("reloads gate config from disk when config is null", () => {
+      stateManager.init("test-plan.md", makePhases());
+      mkdirSync(join(tempDir, ".rigor"), { recursive: true });
+      writeFileSync(
+        join(tempDir, ".rigor", "config.yaml"),
+        "gates:\n  gate_8:\n    reviewers:\n      - security\n      - logic\n",
+        "utf-8",
+      );
+
+      const result = handleReviewStart(
+        { epic_id: "1.1" },
+        stateManager,
+        null,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      // Reviewers reflect the on-disk file, not the default 10-reviewer list.
+      expect(extractText(result)).toContain("Expected reviewers: security, logic");
+    });
+
     // 2. Rejects when tasks incomplete
     it("rejects when tasks are incomplete", () => {
       stateManager.init("test-plan.md", makePhasesWithIncompleteTask());
@@ -276,6 +315,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       expect(result.isError).toBeUndefined();
@@ -312,6 +352,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       const result = handleAcceptStart(
@@ -354,6 +395,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       const criteria = passingCriteria();
@@ -394,6 +436,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
 
       runCustomGates.mockReturnValueOnce({
@@ -429,6 +472,69 @@ describe("review tools", () => {
       const epic = stateManager.getEpic("1.1");
       expect(epic.status).not.toBe("done");
     });
+
+    // 8. Rejects criteria with a missing `met` field as a schema error
+    it("returns a schema error when a criterion is missing 'met' and writes no evidence", () => {
+      stateManager.init("test-plan.md", makePhases());
+      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      handleReviewSubmit(
+        { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
+        stateManager,
+        evidenceManager,
+        config,
+        tempDir,
+      );
+
+      const result = handleAcceptSubmit(
+        {
+          epic_id: "1.1",
+          // No `met` on the item — must be a schema error, not silent unmet.
+          criteria: JSON.stringify([{ criterion: "x", evidence: "y" }]),
+          user_approved: true,
+        },
+        stateManager,
+        evidenceManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Invalid criteria JSON");
+
+      // No Gate 9 evidence written, epic not accepted.
+      expect(evidenceManager.load("gate_9", "1.1")).toBeNull();
+      expect(stateManager.getEpic("1.1").status).not.toBe("done");
+    });
+
+    // 9. Rejects an empty criteria array (min(1))
+    it("returns a schema error for an empty criteria array", () => {
+      stateManager.init("test-plan.md", makePhases());
+      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      handleReviewSubmit(
+        { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
+        stateManager,
+        evidenceManager,
+        config,
+        tempDir,
+      );
+
+      const result = handleAcceptSubmit(
+        {
+          epic_id: "1.1",
+          criteria: "[]",
+          user_approved: true,
+        },
+        stateManager,
+        evidenceManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Invalid criteria JSON");
+      expect(evidenceManager.load("gate_9", "1.1")).toBeNull();
+      expect(stateManager.getEpic("1.1").status).not.toBe("done");
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -446,6 +552,7 @@ describe("review tools", () => {
         stateManager,
         evidenceManager,
         config,
+        tempDir,
       );
       handleAcceptSubmit(
         {

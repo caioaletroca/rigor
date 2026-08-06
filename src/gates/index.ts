@@ -11,7 +11,7 @@ export type {
   ReviewFinding,
 } from "./gate8.js";
 
-export { checkGate9Exit } from "./gate9.js";
+export { checkGate9Exit, Gate9Criteria } from "./gate9.js";
 export type {
   Gate9Result,
   AcceptanceCriterion,
