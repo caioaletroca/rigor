@@ -15,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { ReviewFindings } from "../gates/gate8.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +36,7 @@ export interface GateEvidence {
   passed: boolean;
   timestamp: string;
   checks: CheckResult[];
+  review_submissions?: ReviewFindings[];
 }
 
 // ---------------------------------------------------------------------------

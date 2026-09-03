@@ -141,6 +141,10 @@ The `submissions` parameter is a JSON array of `ReviewFindings` objects:
 
 Gate 8 checks: required reviewers present, critical/high finding counts within thresholds.
 
+**If Gate 8 fails:** Read the saved findings, remediate them, and wait for user
+confirmation before dispatching reviewers again. Do not call `review_start` a
+second time; submit the updated reviewer results directly with `review_submit`.
+
 ---
 
 ## Step 4 -- Accept Each Epic

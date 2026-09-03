@@ -76,6 +76,16 @@ export function handleReviewStart(
     );
   }
 
+  // A submitted review can be updated directly with review_submit after fixes.
+  // Refusing to restart here prevents orchestrators from spawning a fresh full
+  // reviewer set for the same epic by accident.
+  if (epic.gate_8.evidence_path) {
+    const nextStep = epic.gate_8.passed
+      ? `Gate 8 already passed. Run accept_start for epic "${params.epic_id}".`
+      : `Gate 8 already has failed review evidence. Fix the saved findings, then call review_submit directly without another review_start.`;
+    return textResult(nextStep, true);
+  }
+
   // 3. Verify ALL tasks in this epic have status "done" and gate_0.passed
   const incompleteTasks: string[] = [];
   for (const task of epic.tasks) {
@@ -184,6 +194,7 @@ export function handleReviewSubmit(
     passed: gate8Result.passed,
     timestamp: new Date().toISOString(),
     checks: gate8Result.checks,
+    review_submissions: submissions,
   };
   const evidencePath = evidenceManager.save(evidence);
 
@@ -210,6 +221,7 @@ export function handleReviewSubmit(
     lines.push(`Gate 8 PASSED for epic ${params.epic_id}.`);
   } else {
     lines.push(`Gate 8 FAILED for epic ${params.epic_id}.`);
+    lines.push("Review findings were saved. After remediation, call review_submit directly without another review_start.");
   }
 
   lines.push("");

@@ -252,6 +252,29 @@ describe("review tools", () => {
       expect(extractText(result)).toContain("Expected reviewers: security, logic");
     });
 
+    it("rejects restarting a review that already has evidence", () => {
+      stateManager.init("test-plan.md", makePhases());
+      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      handleReviewSubmit(
+        { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
+        stateManager,
+        evidenceManager,
+        config,
+        tempDir,
+      );
+
+      const result = handleReviewStart(
+        { epic_id: "1.1" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Gate 8 already passed");
+      expect(extractText(result)).toContain("accept_start");
+    });
+
     // 2. Rejects when tasks incomplete
     it("rejects when tasks are incomplete", () => {
       stateManager.init("test-plan.md", makePhasesWithIncompleteTask());
@@ -335,6 +358,53 @@ describe("review tools", () => {
       const evidence = evidenceManager.load("gate_8", "1.1");
       expect(evidence).not.toBeNull();
       expect(evidence?.passed).toBe(true);
+      expect(evidence?.review_submissions).toEqual(submissions);
+    });
+
+    it("saves failed findings and allows direct resubmission", () => {
+      stateManager.init("test-plan.md", makePhases());
+      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      const failedSubmissions: ReviewFindings[] = [
+        {
+          reviewer: "security",
+          verdict: "ISSUES_FOUND",
+          findings: [{
+            severity: "high",
+            file: "src/auth.ts:10",
+            title: "Missing authorization",
+            description: "Mutation is not protected.",
+            suggestion: "Require authorization.",
+            source: "ai",
+          }],
+        },
+        { reviewer: "logic", verdict: "PASS", findings: [] },
+      ];
+
+      const failed = handleReviewSubmit(
+        { epic_id: "1.1", submissions: JSON.stringify(failedSubmissions) },
+        stateManager,
+        evidenceManager,
+        config,
+        tempDir,
+      );
+      const restart = handleReviewStart(
+        { epic_id: "1.1" }, stateManager, config, tempDir,
+      );
+      const passed = handleReviewSubmit(
+        { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
+        stateManager,
+        evidenceManager,
+        config,
+        tempDir,
+      );
+
+      expect(failed.isError).toBe(true);
+      expect(extractText(failed)).toContain("findings were saved");
+      expect(restart.isError).toBe(true);
+      expect(extractText(restart)).toContain("without another review_start");
+      expect(passed.isError).toBeUndefined();
+      expect(evidenceManager.load("gate_8", "1.1")?.review_submissions)
+        .toEqual(passingSubmissions());
     });
   });
 

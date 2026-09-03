@@ -25,6 +25,16 @@ describe("loadConfig", () => {
     expect(config).toEqual(DEFAULTS);
   });
 
+  it("defaults to the four core reviewers", () => {
+    const config = loadConfig(tmpDir);
+    expect(config.gates.gate_8.reviewers).toEqual([
+      "code-quality",
+      "security",
+      "logic",
+      "test-quality",
+    ]);
+  });
+
   it("returns a fresh copy, not a reference to DEFAULTS", () => {
     const config = loadConfig(tmpDir);
     config.commit.gpg_sign = true;
