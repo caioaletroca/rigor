@@ -12,6 +12,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { StateManager } from "../state/index.js";
 import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
+import { loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import type { GateEvidence } from "../evidence/index.js";
 import {
@@ -32,6 +33,51 @@ function textResult(text: string, isError?: boolean): CallToolResult {
   };
 }
 
+const activeTaskCompletions = new Map<string, string>();
+
+function completionKey(projectRoot: string, taskId: string): string {
+  return `${projectRoot}\u0000${taskId}`;
+}
+
+export function isGate0AttemptActive(projectRoot: string, taskId: string, attemptId: string): boolean {
+  return activeTaskCompletions.get(completionKey(projectRoot, taskId)) === attemptId;
+}
+
+export function isTaskCompletionActive(projectRoot: string, taskId: string): boolean {
+  return activeTaskCompletions.has(completionKey(projectRoot, taskId));
+}
+
+function activeCompletionResult(taskId: string, attemptId: string): CallToolResult {
+  return textResult(
+    `Task ${taskId} Gate 0 attempt ${attemptId} is already executing. ` +
+      "No checks were rerun. Poll cycle_status for progress and call task_complete again after the attempt reaches a terminal task status.",
+  );
+}
+
+function terminalCompletionResult(
+  taskId: string,
+  taskStatus: "done" | "failed",
+  evidence: GateEvidence,
+  evidencePath: string,
+  customEvidence?: GateEvidence | null,
+): CallToolResult {
+  const lines = [
+    `Task ${taskId} already has a terminal Gate 0 result (${taskStatus}); returning persisted evidence without rerunning checks.`,
+    "",
+    "Gate 0 checks:",
+    ...evidence.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`),
+  ];
+  if (customEvidence) {
+    lines.push(
+      "",
+      "Custom post-task checks:",
+      ...customEvidence.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`),
+    );
+  }
+  lines.push("", `Evidence: ${evidencePath}`);
+  return textResult(lines.join("\n"), taskStatus === "failed");
+}
+
 // ---------------------------------------------------------------------------
 // task_start handler
 // ---------------------------------------------------------------------------
@@ -40,12 +86,16 @@ export interface TaskStartParams {
   task_id: string;
 }
 
-export function handleTaskStart(
+export async function handleTaskStart(
   params: TaskStartParams,
   stateManager: StateManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
-): CallToolResult {
+): Promise<CallToolResult> {
+  // Reload config fresh from disk when not explicitly supplied, so edits to
+  // .rigor/config.yaml take effect without restarting the server.
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
   if (state === null) {
@@ -94,7 +144,7 @@ export function handleTaskStart(
 
   // 5. Working tree check (warn, don't block)
   const warnings: string[] = [];
-  const gitResult = runCommand("git status --porcelain", { cwd: projectRoot });
+  const gitResult = await runCommand("git status --porcelain", { cwd: projectRoot });
   if (gitResult.exit_code === 0 && gitResult.stdout.trim() !== "") {
     warnings.push(
       "Warning: working tree has uncommitted changes.",
@@ -102,7 +152,7 @@ export function handleTaskStart(
   }
 
   // 5b. Run pre_task custom gates
-  const customResult = runCustomGates("pre_task", params.task_id, config, projectRoot);
+  const customResult = await runCustomGates("pre_task", params.task_id, cfg, projectRoot);
   if (!customResult.passed) {
     const lines: string[] = [];
     lines.push(`Task ${params.task_id} blocked by custom pre_task gate.`);
@@ -115,7 +165,7 @@ export function handleTaskStart(
   }
 
   // 5c. Run Gate 1 infrastructure check (conditional)
-  const gate1Result = checkGate1Exit(config, projectRoot);
+  const gate1Result = await checkGate1Exit(cfg, projectRoot);
   if (!gate1Result.skipped) {
     // Save Gate 1 evidence
     const evidenceManager = new EvidenceManager(projectRoot);
@@ -165,9 +215,12 @@ export interface TaskCompleteParams {
 export async function handleTaskComplete(
   params: TaskCompleteParams,
   stateManager: StateManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
 ): Promise<CallToolResult> {
+  // Reload config fresh from disk when not explicitly supplied (see handleTaskStart).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
   if (state === null) {
@@ -188,6 +241,35 @@ export async function handleTaskComplete(
     throw error;
   }
 
+  const evidenceManager = new EvidenceManager(projectRoot);
+  const existingEvidence = evidenceManager.load("gate_0", params.task_id);
+  const customPostTaskEvidence = evidenceManager.load("custom_post_task", params.task_id);
+  const persistedEvidencePath = task.gate_0.evidence_path;
+  const hasTerminalGate0Evidence = Boolean(existingEvidence?.gate_0_attempt?.finished_at);
+  const hasFailedPostTaskEvidence = customPostTaskEvidence?.passed === false;
+  if (
+    hasTerminalGate0Evidence &&
+    existingEvidence &&
+    (
+      (task.status === "done" && existingEvidence.passed) ||
+      (task.status === "failed" && (!existingEvidence.passed || hasFailedPostTaskEvidence))
+    )
+  ) {
+    return terminalCompletionResult(
+      params.task_id,
+      task.status,
+      existingEvidence,
+      persistedEvidencePath ?? "persisted evidence",
+      existingEvidence.passed && hasFailedPostTaskEvidence ? customPostTaskEvidence : null,
+    );
+  }
+
+  const key = completionKey(projectRoot, params.task_id);
+  const activeAttemptId = activeTaskCompletions.get(key);
+  if (activeAttemptId) {
+    return activeCompletionResult(params.task_id, activeAttemptId);
+  }
+
   if (task.status !== "doing") {
     return textResult(
       `Task "${params.task_id}" is in "${task.status}" status. ` +
@@ -196,19 +278,112 @@ export async function handleTaskComplete(
     );
   }
 
-  // 3. Run Gate 0 exit checks
-  const gate0Result = await checkGate0Exit(params.task_id, config, projectRoot);
+  // 3. Persist an in-progress attempt before running checks so interrupted work is auditable.
+  const startedAt = new Date().toISOString();
+  const attemptId = crypto.randomUUID();
+  activeTaskCompletions.set(key, attemptId);
+  try {
+    const inProgressEvidence: GateEvidence = {
+      gate: "gate_0",
+      entity_id: params.task_id,
+      passed: false,
+      timestamp: startedAt,
+      checks: [],
+      gate_0_attempt: { version: 1, id: attemptId, started_at: startedAt },
+    };
+    const inProgressEvidencePath = evidenceManager.save(inProgressEvidence);
+    const inProgressState = stateManager.load();
+    if (inProgressState !== null) {
+      for (const phase of inProgressState.phases) {
+        for (const epic of phase.epics) {
+          for (const inProgressTask of epic.tasks) {
+            if (inProgressTask.id === params.task_id) {
+              inProgressTask.gate_0 = {
+                ...inProgressTask.gate_0,
+                evidence_path: inProgressEvidencePath,
+              };
+            }
+          }
+        }
+      }
+      stateManager.save(inProgressState);
+    }
 
-  // 4. Save evidence
-  const evidenceManager = new EvidenceManager(projectRoot);
-  const evidence: GateEvidence = {
-    gate: "gate_0",
-    entity_id: params.task_id,
-    passed: gate0Result.passed,
-    timestamp: new Date().toISOString(),
-    checks: gate0Result.checks,
-  };
-  const evidencePath = evidenceManager.save(evidence);
+    let gate0Result;
+    let evidencePath: string;
+    try {
+      gate0Result = await checkGate0Exit(params.task_id, cfg, projectRoot, {
+      onCheckStart: (progress) => {
+        evidenceManager.save({
+          ...inProgressEvidence,
+          gate_0_attempt: {
+            version: 1,
+            id: attemptId,
+            started_at: startedAt,
+            current_check: {
+              ...progress,
+              started_at: new Date().toISOString(),
+            },
+          },
+        });
+      },
+    });
+    const outcome = gate0Result.passed
+      ? "passed"
+      : gate0Result.checks.some((check) => check.timed_out)
+        ? "timed_out"
+        : gate0Result.checks.some((check) => check.cancelled)
+          ? "cancelled"
+          : "failed";
+    const finishedAt = new Date().toISOString();
+    evidencePath = evidenceManager.saveTerminalGate0Attempt({
+      ...inProgressEvidence,
+      passed: gate0Result.passed,
+      timestamp: finishedAt,
+      checks: gate0Result.checks,
+      gate_0_attempt: {
+        version: 1,
+        id: attemptId,
+        started_at: startedAt,
+        finished_at: finishedAt,
+        outcome,
+      },
+    });
+  } catch (error: unknown) {
+    const finishedAt = new Date().toISOString();
+    const detail = error instanceof Error ? error.message : String(error);
+    evidencePath = evidenceManager.saveTerminalGate0Attempt({
+      ...inProgressEvidence,
+      timestamp: finishedAt,
+      checks: [{ name: "gate_0", passed: false, detail: `Gate 0 execution error: ${detail}` }],
+      gate_0_attempt: {
+        version: 1,
+        id: attemptId,
+        started_at: startedAt,
+        finished_at: finishedAt,
+        outcome: "execution_error",
+      },
+    });
+    const failedState = stateManager.load();
+    if (failedState !== null) {
+      for (const phase of failedState.phases) {
+        for (const epic of phase.epics) {
+          for (const failedTask of epic.tasks) {
+            if (failedTask.id === params.task_id) {
+              failedTask.gate_0 = { passed: false, evidence_path: evidencePath };
+            }
+          }
+        }
+      }
+      stateManager.save(failedState);
+    }
+    stateManager.transition(params.task_id, "failed");
+    return textResult(
+      `Task ${params.task_id} failed because Gate 0 could not run.\n\n` +
+        `  [FAIL] gate_0: Gate 0 execution error: ${detail}\n\nEvidence: ${evidencePath}`,
+      true,
+    );
+  }
 
   // 5. Update task gate_0 field in state
   const freshState = stateManager.load();
@@ -235,7 +410,38 @@ export async function handleTaskComplete(
 
   // 5b. Run post_task custom gates (only if Gate 0 passed)
   if (gate0Result.passed) {
-    const customResult = runCustomGates("post_task", params.task_id, config, projectRoot);
+    let customResult;
+    try {
+      customResult = await runCustomGates("post_task", params.task_id, cfg, projectRoot);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      evidenceManager.save({
+        gate: "custom_post_task",
+        entity_id: params.task_id,
+        passed: false,
+        timestamp: new Date().toISOString(),
+        checks: [{ name: "custom_post_task", passed: false, detail: `Post-task custom gate execution error: ${detail}` }],
+      });
+      const failedState = stateManager.load();
+      if (failedState !== null) {
+        for (const phase of failedState.phases) {
+          for (const epic of phase.epics) {
+            for (const failedTask of epic.tasks) {
+              if (failedTask.id === params.task_id) {
+                failedTask.gate_0 = { passed: false, evidence_path: evidencePath };
+              }
+            }
+          }
+        }
+        stateManager.save(failedState);
+      }
+      stateManager.transition(params.task_id, "failed");
+      return textResult(
+        `Task ${params.task_id} passed Gate 0 but post_task custom gates could not run.\n\n` +
+          `  [FAIL] custom_post_task: Post-task custom gate execution error: ${detail}\n\nEvidence: ${evidencePath}`,
+        true,
+      );
+    }
     if (!customResult.passed) {
       // Save custom gate evidence
       const customEvidence: GateEvidence = {
@@ -248,7 +454,20 @@ export async function handleTaskComplete(
       evidenceManager.save(customEvidence);
 
       // Gate 0 passed but post_task custom gate failed → task fails
-      stateManager.transition(params.task_id, "failed");
+    const failedState = stateManager.load();
+    if (failedState !== null) {
+      for (const phase of failedState.phases) {
+        for (const epic of phase.epics) {
+          for (const failedTask of epic.tasks) {
+            if (failedTask.id === params.task_id) {
+              failedTask.gate_0 = { passed: false, evidence_path: evidencePath };
+            }
+          }
+        }
+      }
+      stateManager.save(failedState);
+    }
+    stateManager.transition(params.task_id, "failed");
 
       const lines: string[] = [];
       lines.push(`Task ${params.task_id} passed Gate 0 but failed post_task custom gate.`);
@@ -264,6 +483,7 @@ export async function handleTaskComplete(
         const icon = check.passed ? "PASS" : "FAIL";
         lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
       }
+      activeTaskCompletions.delete(key);
       return textResult(lines.join("\n"), true);
     }
   }
@@ -294,7 +514,32 @@ export async function handleTaskComplete(
   lines.push("");
   lines.push(`Evidence: ${evidencePath}`);
 
-  return textResult(lines.join("\n"), !gate0Result.passed);
+    return textResult(lines.join("\n"), !gate0Result.passed);
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    try {
+      stateManager.transition(params.task_id, "failed");
+      return textResult(
+        `Task ${params.task_id} failed while initializing or persisting its Gate 0 attempt. ` +
+          `The active attempt was cleared and the task can be retried.\n\n` +
+          `  [FAIL] gate_0: ${detail}`,
+        true,
+      );
+    } catch (transitionError: unknown) {
+      const transitionDetail = transitionError instanceof Error
+        ? transitionError.message
+        : String(transitionError);
+      return textResult(
+        `Task ${params.task_id} could not initialize its Gate 0 attempt and could not be transitioned safely. ` +
+          `The active attempt was cleared; inspect and recover the task with task_manage.\n\n` +
+          `  [FAIL] gate_0: ${detail}\n` +
+          `  [FAIL] state recovery: ${transitionDetail}`,
+        true,
+      );
+    }
+  } finally {
+    activeTaskCompletions.delete(key);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,15 +549,16 @@ export async function handleTaskComplete(
 export function registerGateTools(
   server: McpServer,
   stateManager: StateManager,
-  config: RigorConfig,
   projectRoot: string,
 ): void {
+  // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
+  // per invocation — config edits take effect without a server restart.
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
     { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
     async (params) => {
-      return handleTaskStart(params, stateManager, config, projectRoot);
+      return handleTaskStart(params, stateManager, null, projectRoot);
     },
   );
 
@@ -321,7 +567,7 @@ export function registerGateTools(
     "Complete a task — runs Gate 0 exit checks (tests, coverage, lint), saves evidence",
     { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
     async (params) => {
-      return handleTaskComplete(params, stateManager, config, projectRoot);
+      return handleTaskComplete(params, stateManager, null, projectRoot);
     },
   );
 }

@@ -1,0 +1,19 @@
+{
+  "model": "deepseek",
+  "condition": "with-rigor",
+  "checks": {
+    "builds": 1,
+    "test_file_exists": 1,
+    "tests_pass": 1,
+    "coverage_above_85": 0,
+    "lint_clean": 1,
+    "tool_registers": 1,
+    "handler_follows_pattern": 1,
+    "tests_follow_pattern": 1,
+    "reads_history_dir": 1,
+    "edge_case_handling": 1
+  },
+  "total": 9,
+  "max": 10,
+  "timestamp": "2026-07-20T22:56:12Z"
+}

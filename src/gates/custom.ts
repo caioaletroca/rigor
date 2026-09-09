@@ -26,12 +26,12 @@ export interface CustomGateResult {
  * Returns `passed: true` if no gates match or all matching gates succeed.
  * A single failing command fails the entire set (short-circuit).
  */
-export function runCustomGates(
+export async function runCustomGates(
   position: CustomGatePosition,
   _entityId: string,
   config: RigorConfig,
   projectRoot: string,
-): CustomGateResult {
+): Promise<CustomGateResult> {
   const gates = config.gates.custom_gates.filter((g) => g.position === position);
 
   if (gates.length === 0) {
@@ -41,22 +41,29 @@ export function runCustomGates(
   const checks: CheckResult[] = [];
 
   for (const gate of gates) {
-    const result = runCommand(gate.command, {
+    const result = await runCommand(gate.command, {
       cwd: projectRoot,
       timeout_ms: gate.timeout_ms,
     });
 
     const passed = result.exit_code === 0;
+    const detail = result.timed_out
+      ? `Custom gate "${gate.name}" timed out`
+      : result.cancelled
+        ? `Custom gate "${gate.name}" was cancelled`
+        : passed
+          ? `Custom gate "${gate.name}" passed`
+          : `Custom gate "${gate.name}" failed (exit code ${result.exit_code})`;
 
     checks.push({
       name: `custom:${gate.name}`,
       passed,
-      detail: passed
-        ? `Custom gate "${gate.name}" passed`
-        : `Custom gate "${gate.name}" failed (exit code ${result.exit_code})`,
+      detail,
       command: gate.command,
       exit_code: result.exit_code,
       duration_ms: result.duration_ms,
+      timed_out: result.timed_out,
+      cancelled: result.cancelled,
     });
 
     // Short-circuit: first failure stops remaining gates.

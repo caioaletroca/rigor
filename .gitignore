@@ -13,3 +13,6 @@ worktrees/
 
 # Local MCP server registration (machine-specific absolute paths)
 .mcp.json
+
+# Local Claude Code settings (machine-specific permissions and MCP refs)
+.claude/settings.local.json

@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, basename } from "node:path";
@@ -100,6 +101,12 @@ export class StateManager {
     const data = JSON.stringify(state, null, 2);
     writeFileSync(this.tmpPath, data, "utf-8");
     renameSync(this.tmpPath, this.statePath);
+  }
+
+  clear(): void {
+    if (existsSync(this.statePath)) {
+      unlinkSync(this.statePath);
+    }
   }
 
   // -----------------------------------------------------------------------

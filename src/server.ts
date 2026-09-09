@@ -64,9 +64,9 @@ export function createServer(projectRoot: string): ServerContext {
   );
 
   registerCycleTools(server, stateManager, config, projectRoot);
-  registerGateTools(server, stateManager, config, projectRoot);
-  registerReviewTools(server, stateManager, evidenceManager, config, projectRoot);
-  registerRecoveryTools(server, stateManager, evidenceManager, projectRoot);
+  registerGateTools(server, stateManager, projectRoot);
+  registerReviewTools(server, stateManager, evidenceManager, projectRoot);
+  registerRecoveryTools(server, stateManager, evidenceManager, projectRoot, config);
   registerSyncTools(server, syncManager);
   registerScaffoldTools(server, projectRoot);
 

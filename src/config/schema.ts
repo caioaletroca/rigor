@@ -39,6 +39,8 @@ export interface Check {
   command: string;
   /** Optional metric extraction from command output. */
   metric?: Metric;
+  /** Optional command timeout in milliseconds. */
+  timeout_ms?: number;
 }
 
 export interface Gate0Config {
@@ -52,6 +54,13 @@ export interface Gate0Config {
   require_test_files: boolean;
   /** Generic checks array. When non-empty, replaces test_command/lint_command. */
   checks: Check[];
+  /**
+   * When no runnable check resolves (empty `checks`, or every command empty/
+   * unresolved), Gate 0 FAILS by default rather than silently certifying an
+   * unverified task. Set `true` to allow an empty gate to pass (e.g. docs-only
+   * projects). Default: false.
+   */
+  allow_empty: boolean;
 }
 
 export interface Gate8Config {
@@ -149,6 +158,7 @@ export const DEFAULTS: RigorConfig = {
       design_command: "",
       require_test_files: true,
       checks: [],
+      allow_empty: false,
     },
     gate_1: {
       enabled: true,
@@ -160,12 +170,6 @@ export const DEFAULTS: RigorConfig = {
         "security",
         "logic",
         "test-quality",
-        "nil-safety",
-        "consequences",
-        "dead-code",
-        "performance",
-        "requirements",
-        "design-quality",
       ],
       required_reviewers: ["security", "logic"],
       max_critical_findings: 0,

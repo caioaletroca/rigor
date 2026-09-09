@@ -71,7 +71,7 @@ function failResult(exitCode: number = 1): CommandResult {
 // Suite
 // ---------------------------------------------------------------------------
 
-describe("Gate 1 — infrastructure check", () => {
+describe("Gate 1 — infrastructure check", async () => {
   let tempDir: string;
 
   beforeEach(() => {
@@ -86,10 +86,10 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 1. Gate 1 disabled → skipped, passed
   // -----------------------------------------------------------------------
-  it("returns skipped and passed when Gate 1 is disabled", () => {
+  it("returns skipped and passed when Gate 1 is disabled", async () => {
     const config = makeConfig({ enabled: false });
 
-    const result = checkGate1Exit(config, tempDir);
+    const result = await checkGate1Exit(config, tempDir);
 
     expect(result.passed).toBe(true);
     expect(result.skipped).toBe(true);
@@ -101,13 +101,13 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 2. No baseline exists → creates baseline, returns skipped
   // -----------------------------------------------------------------------
-  it("creates baseline and returns skipped when no baseline exists", () => {
+  it("creates baseline and returns skipped when no baseline exists", async () => {
     const config = makeConfig({ enabled: true });
 
     // Create a package.json in the temp dir so there's something to hash
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
 
-    const result = checkGate1Exit(config, tempDir);
+    const result = await checkGate1Exit(config, tempDir);
 
     expect(result.passed).toBe(true);
     expect(result.skipped).toBe(true);
@@ -121,7 +121,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 3. Unchanged dependencies → returns skipped
   // -----------------------------------------------------------------------
-  it("returns skipped when dependencies have not changed", () => {
+  it("returns skipped when dependencies have not changed", async () => {
     const config = makeConfig({ enabled: true });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
@@ -129,7 +129,7 @@ describe("Gate 1 — infrastructure check", () => {
     // Create a baseline first
     saveBaseline(tempDir);
 
-    const result = checkGate1Exit(config, tempDir);
+    const result = await checkGate1Exit(config, tempDir);
 
     expect(result.passed).toBe(true);
     expect(result.skipped).toBe(true);
@@ -139,7 +139,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 4. Changed package.json → detects change, returns changedFiles
   // -----------------------------------------------------------------------
-  it("detects changed package.json", () => {
+  it("detects changed package.json", async () => {
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
 
     // Create baseline with original content
@@ -157,7 +157,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 5. Audit command passes → returns passed with audit check
   // -----------------------------------------------------------------------
-  it("returns passed when audit command succeeds", () => {
+  it("returns passed when audit command succeeds", async () => {
     const config = makeConfig({ enabled: true, audit_command: "npm audit" });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
@@ -166,9 +166,9 @@ describe("Gate 1 — infrastructure check", () => {
     // Modify to trigger change
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test-changed" }');
 
-    runCommand.mockReturnValue(okResult());
+    runCommand.mockResolvedValue(okResult());
 
-    const result = checkGate1Exit(config, tempDir);
+    const result = await checkGate1Exit(config, tempDir);
 
     expect(result.passed).toBe(true);
     expect(result.skipped).toBe(false);
@@ -185,7 +185,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 6. Audit command fails → returns failed with audit check
   // -----------------------------------------------------------------------
-  it("returns failed when audit command fails", () => {
+  it("returns failed when audit command fails", async () => {
     const config = makeConfig({ enabled: true, audit_command: "npm audit" });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
@@ -194,9 +194,9 @@ describe("Gate 1 — infrastructure check", () => {
     // Modify to trigger change
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test-changed" }');
 
-    runCommand.mockReturnValue(failResult(1));
+    runCommand.mockResolvedValue(failResult(1));
 
-    const result = checkGate1Exit(config, tempDir);
+    const result = await checkGate1Exit(config, tempDir);
 
     expect(result.passed).toBe(false);
     expect(result.skipped).toBe(false);
@@ -210,7 +210,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 7. Baseline updated after successful check
   // -----------------------------------------------------------------------
-  it("updates baseline after successful audit", () => {
+  it("updates baseline after successful audit", async () => {
     const config = makeConfig({ enabled: true, audit_command: "npm audit" });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "v1" }');
@@ -219,9 +219,9 @@ describe("Gate 1 — infrastructure check", () => {
     // Modify to trigger change
     writeFileSync(join(tempDir, "package.json"), '{ "name": "v2" }');
 
-    runCommand.mockReturnValue(okResult());
+    runCommand.mockResolvedValue(okResult());
 
-    checkGate1Exit(config, tempDir);
+    await checkGate1Exit(config, tempDir);
 
     // Baseline should now reflect the v2 content — a second run should see no changes
     const { changed } = detectDependencyChanges(tempDir);
@@ -231,7 +231,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 8. Baseline NOT updated after failed check
   // -----------------------------------------------------------------------
-  it("does not update baseline after failed audit", () => {
+  it("does not update baseline after failed audit", async () => {
     const config = makeConfig({ enabled: true, audit_command: "npm audit" });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "v1" }');
@@ -240,9 +240,9 @@ describe("Gate 1 — infrastructure check", () => {
     // Modify to trigger change
     writeFileSync(join(tempDir, "package.json"), '{ "name": "v2" }');
 
-    runCommand.mockReturnValue(failResult(1));
+    runCommand.mockResolvedValue(failResult(1));
 
-    checkGate1Exit(config, tempDir);
+    await checkGate1Exit(config, tempDir);
 
     // Baseline should still reference v1, so changes are still detected
     const { changed } = detectDependencyChanges(tempDir);
@@ -252,7 +252,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 9. Detects removed dependency files
   // -----------------------------------------------------------------------
-  it("detects removed dependency files", () => {
+  it("detects removed dependency files", async () => {
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
     writeFileSync(join(tempDir, "go.mod"), "module example.com/test");
 
@@ -270,7 +270,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 10. Detects newly added dependency files
   // -----------------------------------------------------------------------
-  it("detects newly added dependency files", () => {
+  it("detects newly added dependency files", async () => {
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
 
     saveBaseline(tempDir);
@@ -287,7 +287,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 11. No audit command configured → still passes on dependency change
   // -----------------------------------------------------------------------
-  it("passes with no audit command when dependencies change", () => {
+  it("passes with no audit command when dependencies change", async () => {
     const config = makeConfig({ enabled: true, audit_command: "" });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "v1" }');
@@ -295,7 +295,7 @@ describe("Gate 1 — infrastructure check", () => {
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "v2" }');
 
-    const result = checkGate1Exit(config, tempDir);
+    const result = await checkGate1Exit(config, tempDir);
 
     expect(result.passed).toBe(true);
     expect(result.skipped).toBe(false);
@@ -307,7 +307,7 @@ describe("Gate 1 — infrastructure check", () => {
   // -----------------------------------------------------------------------
   // 12. Corrupted baseline → treated as no baseline (creates new one)
   // -----------------------------------------------------------------------
-  it("handles corrupted baseline file gracefully", () => {
+  it("handles corrupted baseline file gracefully", async () => {
     const config = makeConfig({ enabled: true });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "test" }');
@@ -317,7 +317,7 @@ describe("Gate 1 — infrastructure check", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "deps.json"), "not valid json {{{");
 
-    const result = checkGate1Exit(config, tempDir);
+    const result = await checkGate1Exit(config, tempDir);
 
     // Should treat as first run (no baseline) → skipped
     expect(result.passed).toBe(true);
