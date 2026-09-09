@@ -150,10 +150,10 @@ export function detectDependencyChanges(projectRoot: string): {
 /**
  * Run Gate 1 exit checks -- infrastructure validation after dependency changes.
  */
-export function checkGate1Exit(
+export async function checkGate1Exit(
   config: RigorConfig,
   projectRoot: string,
-): Gate1Result {
+): Promise<Gate1Result> {
   // If Gate 1 is disabled, skip
   if (!config.gates.gate_1.enabled) {
     return {
@@ -193,7 +193,7 @@ export function checkGate1Exit(
   // Run audit command if configured
   const auditCommand = config.gates.gate_1.audit_command;
   if (auditCommand !== "") {
-    const result = runCommand(auditCommand, { cwd: projectRoot });
+    const result = await runCommand(auditCommand, { cwd: projectRoot });
     const passed = result.exit_code === 0;
 
     checks.push({

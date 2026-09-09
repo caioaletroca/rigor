@@ -18,6 +18,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
+import { EvidenceManager } from "../../evidence/index.js";
 import { handleCycleInit, handleCycleStatus, handleCycleReload } from "../cycle.js";
 import type { CycleInitParams } from "../cycle.js";
 
@@ -187,6 +188,65 @@ describe("cycle tools", () => {
       expect(text).toContain("Active Task: none");
       // 1 done (1.1.1 [x]) out of 3 total in phase 1
       expect(text).toContain("1/3 tasks completed");
+    });
+
+    it("labels an unfinished persisted Gate 0 attempt as stale", () => {
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      stateManager.transition("1.1.2", "doing");
+      const evidenceManager = new EvidenceManager(tempDir);
+      evidenceManager.save({
+        gate: "gate_0",
+        entity_id: "1.1.2",
+        passed: false,
+        timestamp: new Date().toISOString(),
+        checks: [],
+        gate_0_attempt: {
+          version: 1,
+          id: "attempt-123",
+          started_at: new Date().toISOString(),
+          current_check: {
+            check_name: "tests",
+            command: "npm test",
+            started_at: new Date(Date.now() - 100).toISOString(),
+            configured_timeout_ms: 5000,
+          },
+        },
+      });
+
+      const text = extractText(handleCycleStatus(stateManager, evidenceManager));
+      expect(text).toContain("Gate 0: stale unfinished attempt; task remains stuck.");
+      expect(text).not.toContain("Gate 0: executing");
+    });
+
+    it("does not report a stale attempt as executing when its timeout is unconfigured", () => {
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      stateManager.transition("1.1.2", "doing");
+      const evidenceManager = new EvidenceManager(tempDir);
+      evidenceManager.save({
+        gate: "gate_0",
+        entity_id: "1.1.2",
+        passed: false,
+        timestamp: new Date().toISOString(),
+        checks: [],
+        gate_0_attempt: {
+          version: 1,
+          id: "attempt-123",
+          started_at: new Date().toISOString(),
+          current_check: {
+            check_name: "test_files",
+            command: "git status --porcelain",
+            started_at: new Date().toISOString(),
+          },
+        },
+      });
+
+      const text = extractText(handleCycleStatus(stateManager, evidenceManager));
+      expect(text).toContain("Gate 0: stale unfinished attempt; task remains stuck.");
+      expect(text).not.toContain("Gate 0: executing");
     });
 
     it("shows progress and active task for mid-progress cycle", () => {

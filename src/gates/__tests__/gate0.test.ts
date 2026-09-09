@@ -100,7 +100,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("Statements : 90%"));
+    runCommand.mockResolvedValue(okResult("Statements : 90%"));
     parseCoverage.mockReturnValue(90);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -126,7 +126,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(failResult(1));
+    runCommand.mockResolvedValue(failResult(1));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -148,7 +148,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("Statements : 70%"));
+    runCommand.mockResolvedValue(okResult("Statements : 70%"));
     parseCoverage.mockReturnValue(70);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -172,7 +172,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(failResult(2));
+    runCommand.mockResolvedValue(failResult(2));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -227,7 +227,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(failResult(1));
+    runCommand.mockResolvedValue(failResult(1));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -250,7 +250,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("no coverage info here"));
+    runCommand.mockResolvedValue(okResult("no coverage info here"));
     parseCoverage.mockReturnValue(null);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -273,7 +273,7 @@ describe("checkGate0Exit", () => {
     });
 
     // lint -> ok; git status --porcelain -> empty (no changes)
-    runCommand.mockReturnValue(okResult());
+    runCommand.mockResolvedValue(okResult());
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -307,7 +307,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult("Score: 92.5"));
+    runCommand.mockResolvedValue(okResult("Score: 92.5"));
     parseMetric.mockReturnValue(92.5);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -344,7 +344,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult("Score: 55"));
+    runCommand.mockResolvedValue(okResult("Score: 55"));
     parseMetric.mockReturnValue(55);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -370,7 +370,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult());
+    runCommand.mockResolvedValue(okResult());
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -394,7 +394,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(failResult(2));
+    runCommand.mockResolvedValue(failResult(2));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -445,8 +445,8 @@ describe("checkGate0Exit", () => {
 
     // Now run it through the gate
     runCommand
-      .mockReturnValueOnce(okResult("Statements : 95%"))  // tests
-      .mockReturnValueOnce(okResult());                     // lint
+      .mockResolvedValueOnce(okResult("Statements : 95%"))  // tests
+      .mockResolvedValueOnce(okResult());                     // lint
     parseCoverage.mockReturnValue(95);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -485,7 +485,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult("Performance: 95"));
+    runCommand.mockResolvedValue(okResult("Performance: 95"));
     parseMetric.mockReturnValue(95);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -521,7 +521,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult());
+    runCommand.mockResolvedValue(okResult());
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -588,7 +588,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("No issues found"));
+    runCommand.mockResolvedValue(okResult("No issues found"));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -610,7 +610,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx impeccable detect src/",
       exit_code: 1,
       stdout: "P0: overused-font in src/Button.tsx:5",
@@ -639,7 +639,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("Statements : 90%"));
+    runCommand.mockResolvedValue(okResult("Statements : 90%"));
     parseCoverage.mockReturnValue(90);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -659,7 +659,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx impeccable detect src/",
       exit_code: 127,
       stdout: "",
@@ -689,7 +689,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx eslint .",
       exit_code: 127,
       stdout: "",
@@ -719,7 +719,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx vitest run",
       exit_code: 127,
       stdout: "",
@@ -774,7 +774,7 @@ describe("checkGate0Exit", () => {
     });
 
     // All three commands succeed
-    runCommand.mockReturnValue(okResult("all good"));
+    runCommand.mockResolvedValue(okResult("all good"));
     parseCoverage.mockReturnValue(null);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -822,13 +822,18 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(okResult("?? src/foo/bar.ts\n")); // git status --porcelain
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo/bar.ts\n")); // git status --porcelain
 
-    const result = await checkGate0Exit("1.1.1", config, "/project");
+    const onCheckStart = vi.fn();
+    const result = await checkGate0Exit("1.1.1", config, "/project", { onCheckStart });
 
     const tf = result.checks.find((c) => c.name === "test_files");
     expect(tf?.passed).toBe(false);
+    expect(onCheckStart).toHaveBeenLastCalledWith({
+      check_name: "test_files",
+      command: "git status --porcelain",
+    });
     expect(tf?.detail).toContain("bar.ts");
     expect(result.passed).toBe(false);
   });
@@ -841,8 +846,8 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(okResult("?? src/foo/bar.ts\n?? src/foo/bar.test.ts\n")); // git status
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo/bar.ts\n?? src/foo/bar.test.ts\n")); // git status
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -859,8 +864,8 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(okResult(" M src/foo/bar.ts\n")); // modified, not new
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult(" M src/foo/bar.ts\n")); // modified, not new
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -876,8 +881,8 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(failResult(128)); // git status fails
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(failResult(128)); // git status fails
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -898,8 +903,8 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(okResult("?? src/foo.py\n?? tests/test_foo.py\n")); // git status
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo.py\n?? tests/test_foo.py\n")); // git status
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -916,8 +921,8 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(okResult("?? src/foo.py\n?? src/test_foo.py\n")); // git status
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo.py\n?? src/test_foo.py\n")); // git status
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -934,8 +939,8 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(okResult("?? src/foo.py\n")); // git status, no test
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo.py\n")); // git status, no test
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -943,6 +948,35 @@ describe("checkGate0Exit", () => {
     expect(tf?.passed).toBe(false);
     expect(tf?.detail).toContain("foo.py");
     expect(result.passed).toBe(false);
+  });
+
+  it("forwards configured timeout and records it for timed-out checks", async () => {
+    const config = makeConfig({
+      checks: [{ name: "tests", command: "npm test", timeout_ms: 5_000 }],
+      require_test_files: false,
+    });
+    runCommand.mockResolvedValue({
+      ...failResult(),
+      duration_ms: 5_100,
+      timed_out: true,
+      cancelled: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(runCommand).toHaveBeenCalledWith("npm test", {
+      cwd: "/project",
+      timeout_ms: 5_000,
+    });
+    expect(result.checks[0]).toMatchObject({
+      command: "npm test",
+      duration_ms: 5_100,
+      configured_timeout_ms: 5_000,
+      timed_out: true,
+      cancelled: false,
+    });
+    expect(result.checks[0].detail).toContain("5000ms");
+    expect(result.checks[0].detail).not.toContain("exit code");
   });
 
   it("still recognizes <name>_test.py and <name>.test.ts pairings", async () => {
@@ -953,8 +987,8 @@ describe("checkGate0Exit", () => {
     });
 
     runCommand
-      .mockReturnValueOnce(okResult()) // lint
-      .mockReturnValueOnce(
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(
         okResult("?? src/bar.py\n?? src/bar_test.py\n?? src/baz.ts\n?? src/baz.test.ts\n"),
       ); // git status
 

@@ -7,16 +7,25 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  mkdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
 import { EvidenceManager } from "../../evidence/index.js";
+import { ArchiveManager } from "../../archive/manager.js";
 import { DEFAULTS } from "../../config/index.js";
 import type { RigorConfig } from "../../config/index.js";
 import type { PhaseState } from "../../state/index.js";
 import type { ReviewFindings } from "../../gates/index.js";
 import type { AcceptanceCriterion } from "../../gates/index.js";
+import { handleCycleInit } from "../cycle.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -26,7 +35,7 @@ vi.mock("../../gates/index.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../gates/index.js")>();
   return {
     ...actual,
-    runCustomGates: vi.fn().mockReturnValue({ passed: true, checks: [] }),
+    runCustomGates: vi.fn().mockResolvedValue({ passed: true, checks: [] }),
   };
 });
 
@@ -169,7 +178,7 @@ const config: RigorConfig = DEFAULTS;
 // Suite
 // ---------------------------------------------------------------------------
 
-describe("review tools", () => {
+describe("review tools", async () => {
   let tempDir: string;
   let stateManager: StateManager;
   let evidenceManager: EvidenceManager;
@@ -189,12 +198,12 @@ describe("review tools", () => {
   // review_start
   // -----------------------------------------------------------------------
 
-  describe("review_start", () => {
+  describe("review_start", async () => {
     // 1. Succeeds when all tasks done
-    it("succeeds when all tasks are done and passed Gate 0", () => {
+    it("succeeds when all tasks are done and passed Gate 0", async () => {
       stateManager.init("test-plan.md", makePhases());
 
-      const result = handleReviewStart(
+      const result = await handleReviewStart(
         { epic_id: "1.1" },
         stateManager,
         config,
@@ -214,12 +223,12 @@ describe("review tools", () => {
     });
 
     // 1b. Rejects an epic with no tasks (rolling-wave / unelaborated epic)
-    it("rejects an epic that has no tasks", () => {
+    it("rejects an epic that has no tasks", async () => {
       const phases = makePhases();
       phases[0].epics[0].tasks = [];
       stateManager.init("test-plan.md", phases);
 
-      const result = handleReviewStart(
+      const result = await handleReviewStart(
         { epic_id: "1.1" },
         stateManager,
         config,
@@ -231,7 +240,7 @@ describe("review tools", () => {
     });
 
     // 1c. Reloads config from disk when config is null (no stale boot config)
-    it("reloads gate config from disk when config is null", () => {
+    it("reloads gate config from disk when config is null", async () => {
       stateManager.init("test-plan.md", makePhases());
       mkdirSync(join(tempDir, ".rigor"), { recursive: true });
       writeFileSync(
@@ -240,7 +249,7 @@ describe("review tools", () => {
         "utf-8",
       );
 
-      const result = handleReviewStart(
+      const result = await handleReviewStart(
         { epic_id: "1.1" },
         stateManager,
         null,
@@ -252,10 +261,10 @@ describe("review tools", () => {
       expect(extractText(result)).toContain("Expected reviewers: security, logic");
     });
 
-    it("rejects restarting a review that already has evidence", () => {
+    it("rejects restarting a review that already has evidence", async () => {
       stateManager.init("test-plan.md", makePhases());
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
-      handleReviewSubmit(
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
@@ -263,7 +272,7 @@ describe("review tools", () => {
         tempDir,
       );
 
-      const result = handleReviewStart(
+      const result = await handleReviewStart(
         { epic_id: "1.1" },
         stateManager,
         config,
@@ -276,10 +285,10 @@ describe("review tools", () => {
     });
 
     // 2. Rejects when tasks incomplete
-    it("rejects when tasks are incomplete", () => {
+    it("rejects when tasks are incomplete", async () => {
       stateManager.init("test-plan.md", makePhasesWithIncompleteTask());
 
-      const result = handleReviewStart(
+      const result = await handleReviewStart(
         { epic_id: "1.1" },
         stateManager,
         config,
@@ -293,10 +302,10 @@ describe("review tools", () => {
     });
 
     // 3. Blocks when pre_review custom gate fails
-    it("blocks when pre_review custom gate fails", () => {
+    it("blocks when pre_review custom gate fails", async () => {
       stateManager.init("test-plan.md", makePhases());
 
-      runCustomGates.mockReturnValueOnce({
+      runCustomGates.mockResolvedValueOnce({
         passed: false,
         checks: [
           {
@@ -307,7 +316,7 @@ describe("review tools", () => {
         ],
       });
 
-      const result = handleReviewStart(
+      const result = await handleReviewStart(
         { epic_id: "1.1" },
         stateManager,
         config,
@@ -325,15 +334,15 @@ describe("review tools", () => {
   // review_submit
   // -----------------------------------------------------------------------
 
-  describe("review_submit", () => {
+  describe("review_submit", async () => {
     // 3. Saves evidence and updates state
-    it("saves evidence and updates state on pass", () => {
+    it("saves evidence and updates state on pass", async () => {
       stateManager.init("test-plan.md", makePhases());
       // Start review first (transitions epic to "doing")
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
 
       const submissions = passingSubmissions();
-      const result = handleReviewSubmit(
+      const result = await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(submissions) },
         stateManager,
         evidenceManager,
@@ -361,9 +370,9 @@ describe("review tools", () => {
       expect(evidence?.review_submissions).toEqual(submissions);
     });
 
-    it("saves failed findings and allows direct resubmission", () => {
+    it("saves failed findings and allows direct resubmission", async () => {
       stateManager.init("test-plan.md", makePhases());
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
       const failedSubmissions: ReviewFindings[] = [
         {
           reviewer: "security",
@@ -380,17 +389,17 @@ describe("review tools", () => {
         { reviewer: "logic", verdict: "PASS", findings: [] },
       ];
 
-      const failed = handleReviewSubmit(
+      const failed = await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(failedSubmissions) },
         stateManager,
         evidenceManager,
         config,
         tempDir,
       );
-      const restart = handleReviewStart(
+      const restart = await handleReviewStart(
         { epic_id: "1.1" }, stateManager, config, tempDir,
       );
-      const passed = handleReviewSubmit(
+      const passed = await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
@@ -412,12 +421,12 @@ describe("review tools", () => {
   // accept_start
   // -----------------------------------------------------------------------
 
-  describe("accept_start", () => {
+  describe("accept_start", async () => {
     // 4. Succeeds when gate_8 passed
-    it("succeeds when gate_8 passed", () => {
+    it("succeeds when gate_8 passed", async () => {
       stateManager.init("test-plan.md", makePhases());
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
-      handleReviewSubmit(
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
@@ -425,7 +434,7 @@ describe("review tools", () => {
         tempDir,
       );
 
-      const result = handleAcceptStart(
+      const result = await handleAcceptStart(
         { epic_id: "1.1" },
         stateManager,
       );
@@ -437,10 +446,10 @@ describe("review tools", () => {
     });
 
     // 5. Rejects when gate_8 not passed
-    it("rejects when gate_8 not passed", () => {
+    it("rejects when gate_8 not passed", async () => {
       stateManager.init("test-plan.md", makePhases());
 
-      const result = handleAcceptStart(
+      const result = await handleAcceptStart(
         { epic_id: "1.1" },
         stateManager,
       );
@@ -455,12 +464,12 @@ describe("review tools", () => {
   // accept_submit
   // -----------------------------------------------------------------------
 
-  describe("accept_submit", () => {
+  describe("accept_submit", async () => {
     // 6. Transitions epic to done on pass
-    it("transitions epic to done on pass", () => {
+    it("transitions epic to done on pass", async () => {
       stateManager.init("test-plan.md", makePhases());
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
-      handleReviewSubmit(
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
@@ -469,7 +478,7 @@ describe("review tools", () => {
       );
 
       const criteria = passingCriteria();
-      const result = handleAcceptSubmit(
+      const result = await handleAcceptSubmit(
         {
           epic_id: "1.1",
           criteria: JSON.stringify(criteria),
@@ -498,10 +507,10 @@ describe("review tools", () => {
     });
 
     // 7. Blocks when post_accept custom gate fails
-    it("returns error when post_accept custom gate fails", () => {
+    it("returns error when post_accept custom gate fails", async () => {
       stateManager.init("test-plan.md", makePhases());
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
-      handleReviewSubmit(
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
@@ -509,7 +518,7 @@ describe("review tools", () => {
         tempDir,
       );
 
-      runCustomGates.mockReturnValueOnce({
+      runCustomGates.mockResolvedValueOnce({
         passed: false,
         checks: [
           {
@@ -521,7 +530,7 @@ describe("review tools", () => {
       });
 
       const criteria = passingCriteria();
-      const result = handleAcceptSubmit(
+      const result = await handleAcceptSubmit(
         {
           epic_id: "1.1",
           criteria: JSON.stringify(criteria),
@@ -544,10 +553,10 @@ describe("review tools", () => {
     });
 
     // 8. Rejects criteria with a missing `met` field as a schema error
-    it("returns a schema error when a criterion is missing 'met' and writes no evidence", () => {
+    it("returns a schema error when a criterion is missing 'met' and writes no evidence", async () => {
       stateManager.init("test-plan.md", makePhases());
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
-      handleReviewSubmit(
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
@@ -555,7 +564,7 @@ describe("review tools", () => {
         tempDir,
       );
 
-      const result = handleAcceptSubmit(
+      const result = await handleAcceptSubmit(
         {
           epic_id: "1.1",
           // No `met` on the item — must be a schema error, not silent unmet.
@@ -577,10 +586,10 @@ describe("review tools", () => {
     });
 
     // 9. Rejects an empty criteria array (min(1))
-    it("returns a schema error for an empty criteria array", () => {
+    it("returns a schema error for an empty criteria array", async () => {
       stateManager.init("test-plan.md", makePhases());
-      handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
-      handleReviewSubmit(
+      await handleReviewStart({ epic_id: "1.1" }, stateManager, config, tempDir);
+      await handleReviewSubmit(
         { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
@@ -588,7 +597,7 @@ describe("review tools", () => {
         tempDir,
       );
 
-      const result = handleAcceptSubmit(
+      const result = await handleAcceptSubmit(
         {
           epic_id: "1.1",
           criteria: "[]",
@@ -611,20 +620,20 @@ describe("review tools", () => {
   // phase_advance
   // -----------------------------------------------------------------------
 
-  describe("phase_advance", () => {
+  describe("phase_advance", async () => {
     /**
      * Helper: drive an epic through the full review+accept pipeline.
      */
-    function completeEpic(epicId: string): void {
-      handleReviewStart({ epic_id: epicId }, stateManager, config, tempDir);
-      handleReviewSubmit(
+    async function completeEpic(epicId: string): Promise<void> {
+      await handleReviewStart({ epic_id: epicId }, stateManager, config, tempDir);
+      await handleReviewSubmit(
         { epic_id: epicId, submissions: JSON.stringify(passingSubmissions()) },
         stateManager,
         evidenceManager,
         config,
         tempDir,
       );
-      handleAcceptSubmit(
+      await handleAcceptSubmit(
         {
           epic_id: epicId,
           criteria: JSON.stringify(passingCriteria()),
@@ -638,11 +647,11 @@ describe("review tools", () => {
     }
 
     // 7. Transitions to next phase when all epics done
-    it("transitions to next phase when all epics in current phase are done", () => {
+    it("transitions to next phase when all epics in current phase are done", async () => {
       stateManager.init("test-plan.md", makePhases());
 
       // Complete the single epic in phase 1
-      completeEpic("1.1");
+      await completeEpic("1.1");
 
       const result = handlePhaseAdvance(stateManager);
 
@@ -664,7 +673,7 @@ describe("review tools", () => {
     });
 
     // 8. Rejects when epics incomplete
-    it("rejects when epics are incomplete", () => {
+    it("rejects when epics are incomplete", async () => {
       stateManager.init("test-plan.md", makePhases());
 
       const result = handlePhaseAdvance(stateManager);
@@ -676,7 +685,7 @@ describe("review tools", () => {
     });
 
     // 9. Reports cycle complete when no more phases
-    it("reports cycle complete when no more phases", () => {
+    it("reports cycle complete when no more phases", async () => {
       // Single-phase plan
       const singlePhase: PhaseState[] = [
         {
@@ -705,15 +714,59 @@ describe("review tools", () => {
       stateManager.init("test-plan.md", singlePhase);
 
       // Complete the epic
-      completeEpic("1.1");
+      await completeEpic("1.1");
 
-      const result = handlePhaseAdvance(stateManager);
+      const result = handlePhaseAdvance(
+        stateManager,
+        evidenceManager,
+        new ArchiveManager(tempDir),
+      );
 
       expect(result.isError).toBeUndefined();
       const text = extractText(result);
+      const archivePath = text.match(/^Archive: (.+)$/m)?.[1];
       expect(text).toContain("Phase 1 completed");
       expect(text).toContain("All phases complete");
       expect(text).toContain("cycle finished");
+      expect(archivePath).toBeDefined();
+      expect(stateManager.load()).toBeNull();
+      expect(
+        existsSync(join(tempDir, ".rigor", "evidence", "gate_9-task-1.1.json")),
+      ).toBe(false);
+      expect(
+        existsSync(join(archivePath!, "evidence", "gate_9-task-1.1.json")),
+      ).toBe(true);
+      expect(
+        JSON.parse(readFileSync(join(archivePath!, "state.json"), "utf-8")),
+      ).toMatchObject({ cycle_id: "test-plan" });
+      const planPath = join(tempDir, "next-plan.md");
+      writeFileSync(
+        planPath,
+        "# Next Cycle\n\n## Phase Overview\n\n| Phase | Milestone | Epics | Status |\n|-------|-----------|-------|--------|\n| 1 | Next | 1.1 | Detailed |\n\n---\n\n## Phase 1: Next\n\n### Epic 1.1: Next work\n\n**Goal:** Start another cycle\n**Scope:** tests\n**Dependencies:** none\n**Done when:** cycle starts\n**Status:** Pending\n",
+      );
+      expect(
+        handleCycleInit({ plan_path: planPath }, stateManager, tempDir).isError,
+      ).toBeUndefined();
+    });
+
+    it("retains active artifacts when archival fails", async () => {
+      const singlePhase = [makePhases()[0]];
+      stateManager.init("test-plan.md", singlePhase);
+      await completeEpic("1.1");
+      vi.spyOn(ArchiveManager.prototype, "archive").mockImplementation(() => {
+        throw new Error("archive storage unavailable");
+      });
+
+      const result = handlePhaseAdvance(
+        stateManager,
+        evidenceManager,
+        new ArchiveManager(tempDir),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("archive storage unavailable");
+      expect(stateManager.load()).not.toBeNull();
+      expect(evidenceManager.load("gate_9", "1.1")).not.toBeNull();
     });
   });
 });

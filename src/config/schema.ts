@@ -39,6 +39,8 @@ export interface Check {
   command: string;
   /** Optional metric extraction from command output. */
   metric?: Metric;
+  /** Optional command timeout in milliseconds. */
+  timeout_ms?: number;
 }
 
 export interface Gate0Config {

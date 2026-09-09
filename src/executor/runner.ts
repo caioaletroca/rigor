@@ -1,50 +1,30 @@
-/**
- * Shell command runner — executes commands and returns structured results.
- *
- * Uses `spawnSync` with `shell: true` so commands with pipes, redirects,
- * and other shell features work out of the box.  Never throws on non-zero
- * exit codes; the caller decides what constitutes failure.
- */
-
-import { spawnSync } from "node:child_process";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { spawn } from "node:child_process";
+import { platform } from "node:os";
 
 export interface CommandResult {
   command: string;
-  exit_code: number;
+  exit_code?: number;
   stdout: string;
   stderr: string;
   duration_ms: number;
   timed_out: boolean;
+  cancelled: boolean;
 }
 
 export interface RunOptions {
   cwd: string;
   timeout_ms?: number;
   env?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
-// ---------------------------------------------------------------------------
-// Defaults
-// ---------------------------------------------------------------------------
-
 const DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
-// ---------------------------------------------------------------------------
-// Runner
-// ---------------------------------------------------------------------------
-
-/**
- * Execute a shell command and return a structured result.
- *
- * - Empty commands short-circuit with `exit_code: 0`.
- * - Timeouts set `timed_out: true` and `exit_code: -1`.
- * - Non-zero exit codes are captured, never thrown.
- */
-export function runCommand(command: string, options: RunOptions): CommandResult {
+export async function runCommand(
+  command: string,
+  options: RunOptions,
+): Promise<CommandResult> {
   if (command === "") {
     return {
       command,
@@ -53,37 +33,93 @@ export function runCommand(command: string, options: RunOptions): CommandResult 
       stderr: "",
       duration_ms: 0,
       timed_out: false,
+      cancelled: false,
     };
   }
 
-  const timeout = options.timeout_ms ?? DEFAULT_TIMEOUT_MS;
-  const env = options.env
-    ? { ...process.env, ...options.env }
-    : process.env;
-
   const start = Date.now();
+  const env = options.env ? { ...process.env, ...options.env } : process.env;
+  const timeout = options.timeout_ms ?? DEFAULT_TIMEOUT_MS;
 
-  const result = spawnSync(command, {
-    shell: true,
-    cwd: options.cwd,
-    timeout,
-    env,
-    encoding: "utf-8",
-    // Cap buffer at 10 MB to avoid OOM on chatty commands.
-    maxBuffer: 10 * 1024 * 1024,
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      shell: true,
+      cwd: options.cwd,
+      env,
+      windowsHide: true,
+      detached: platform() !== "win32",
+    });
+    child.stdin?.end();
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let outputBytes = 0;
+    let timedOut = false;
+    let cancelled = false;
+    let terminating = false;
+    let settled = false;
+
+    const append = (chunks: Buffer[], chunk: Buffer) => {
+      const remaining = MAX_OUTPUT_BYTES - outputBytes;
+      if (remaining <= 0) return;
+      const limited = chunk.subarray(0, remaining);
+      outputBytes += limited.length;
+      chunks.push(limited);
+    };
+
+    const terminate = (reason: "timeout" | "cancelled") => {
+      if (settled || terminating) return;
+      terminating = true;
+      timedOut = reason === "timeout";
+      cancelled = reason === "cancelled";
+      clearTimeout(timeoutHandle);
+      if (platform() === "win32" && child.pid !== undefined) {
+        spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
+      } else if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+          setTimeout(() => {
+            if (!settled) {
+              try {
+                process.kill(-child.pid!, "SIGKILL");
+              } catch {
+                // The process group has already exited.
+              }
+            }
+          }, 1_000).unref();
+        } catch {
+          child.kill("SIGTERM");
+        }
+      }
+    };
+
+    const timeoutHandle = setTimeout(() => terminate("timeout"), timeout);
+    const onAbort = () => terminate("cancelled");
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      append(stdoutChunks, chunk);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      append(stderrChunks, chunk);
+    });
+    child.on("error", (error) => {
+      append(stderrChunks, Buffer.from(error.message));
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener("abort", onAbort);
+      resolve({
+        command,
+        exit_code: timedOut || cancelled ? undefined : (code ?? -1),
+        stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+        duration_ms: Date.now() - start,
+        timed_out: timedOut,
+        cancelled,
+      });
+    });
   });
-
-  const duration_ms = Date.now() - start;
-
-  // spawnSync sets `error.code === "ETIMEDOUT"` when the timeout fires.
-  const timed_out = result.error?.message?.includes("ETIMEDOUT") ?? false;
-
-  return {
-    command,
-    exit_code: timed_out ? -1 : (result.status ?? -1),
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    duration_ms,
-    timed_out,
-  };
 }

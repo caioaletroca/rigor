@@ -11,6 +11,17 @@ description: >-
 
 Execute a phased development cycle controlled by the Rigor MCP gate server. The server enforces deterministic quality gates -- you cannot self-certify passage. Every gate transition requires evidence produced by the server's shell execution, not your own judgment.
 
+## Execution Mode
+
+Before starting lifecycle work, ask the user to choose one session-scoped mode:
+
+1. **Stepwise** -- report each gate passage, failure, and milestone, then wait for the user to continue.
+2. **Continuous** -- continue task implementation, Gate 0 retries, reviews, and phase advancement without ordinary confirmation prompts. Report progress as work continues; do not pause after successful tasks or reviews.
+
+The mode is an orchestration preference only: never persist it in `.rigor/state.json` and never bypass an MCP gate. In either mode, stop for Gate 9 when configuration requires user approval; present the acceptance criteria and wait for actual approval before submitting `user_approved: true`.
+
+In Continuous mode, also stop and report when human direction is genuinely required: requirements or acceptance evidence are ambiguous, a rolling-wave phase has no elaborated tasks, recovery diagnosis cannot identify a safe action, a gate failure cannot be remediated safely, or the user explicitly interrupts execution. Do not ask for continuation merely because a task, review, or phase passed.
+
 ---
 
 ## HARD STOP -- UNDERSTAND THE RULES
@@ -104,6 +115,8 @@ Gate 0 exit criteria enforced by the server:
 - Configured lint command must pass
 - Custom `post_task` gates must pass (if configured)
 
+**Duplicate completion calls:** Within one server, a duplicate `task_complete` while Gate 0 is running returns the active attempt identity and polling guidance; it never reruns checks. Poll `cycle_status` for progress, then call `task_complete` again only after the task reaches a terminal state. A duplicate request for a terminal `done` or `failed` task with matching persisted Gate 0 evidence returns that evidence idempotently without rerunning checks.
+
 **If Gate 0 fails:** The task transitions to `failed` (it does not remain in "doing"). Read the evidence, fix the failing check, then call `task_start({ task_id })` again -- its entry criteria accept a `failed` task -- to move it back to "doing" and retry. Never fabricate evidence to force a pass.
 
 ---
@@ -141,8 +154,9 @@ The `submissions` parameter is a JSON array of `ReviewFindings` objects:
 
 Gate 8 checks: required reviewers present, critical/high finding counts within thresholds.
 
-**If Gate 8 fails:** Read the saved findings, remediate them, and wait for user
-confirmation before dispatching reviewers again. Do not call `review_start` a
+**If Gate 8 fails:** Read the saved findings and remediate them. In Stepwise mode,
+wait for the user before re-reviewing; in Continuous mode, re-review after safe
+remediation without asking for ordinary continuation. Do not call `review_start` a
 second time; submit the updated reviewer results directly with `review_submit`.
 
 ---
@@ -187,7 +201,7 @@ After all epics in the current phase pass Gates 8 and 9:
 phase_advance()
 ```
 
-The server validates all epics are "done", marks the phase as complete, and activates the next phase. If this is the last phase, the cycle is finished.
+The server validates all epics are "done", marks the phase as complete, and activates the next phase. If this is the last phase, it snapshots the completed state and evidence under `.rigor/history/`, validates the archive, clears active artifacts, and finishes the cycle. If archival fails, active artifacts remain for recovery.
 
 ---
 
@@ -216,6 +230,10 @@ cycle_diagnose()
 ```
 
 Returns cycle health (healthy/degraded/corrupt), stuck entities, failed tasks, validation errors, evidence audit, and actionable suggestions referencing the exact management tool and params to use. Read the report before taking action.
+
+**After a server restart:** Call `cycle_diagnose` before any management action. It reconciles a persisted terminal Gate 0 attempt with a `doing` task, marks an abandoned in-progress attempt as interrupted, and leaves a live in-process attempt untouched. Diagnostics list each task's latest Gate 0 outcome and compact prior-attempt outcomes. Follow only its outcome-specific suggestion: retry interrupted or failed work, take no action for a recovered pass, and reset evidence only when it reports inconsistent evidence. `cycle_status` is read-only; use it to inspect progress, not to recover state.
+
+**Task evidence cleanup:** Backward task resets and `reset_evidence` remove task-owned Gate 0 summaries and history, Gate 1, and post-task custom evidence. They preserve the parent epic's Gate 8 and Gate 9 review/acceptance evidence. Cycle reset and completed-cycle archival include nested Gate 0 attempt-history files.
 
 ### 2. Use management tools
 
@@ -277,6 +295,10 @@ After each gate passage or failure, report to the user:
 - Which task/epic passed or failed
 - Which checks passed/failed (from the evidence)
 - Current overall progress (tasks done / total in phase)
+
+In Stepwise mode, wait for user continuation after each ordinary milestone. In
+Continuous mode, treat these as progress updates and continue immediately; pause
+only at Gate 9 approval or a genuine blocker described in **Execution Mode**.
 
 After completing an epic (Gate 9 pass), show cumulative progress for the phase.
 

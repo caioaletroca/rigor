@@ -17,6 +17,7 @@ import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { loadConfig } from "../config/index.js";
 import type { EvidenceManager, GateEvidence } from "../evidence/index.js";
+import { ArchiveManager } from "../archive/manager.js";
 import { checkGate8Exit, checkGate9Exit, runCustomGates, Gate9Criteria } from "../gates/index.js";
 import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
 
@@ -39,12 +40,12 @@ export interface ReviewStartParams {
   epic_id: string;
 }
 
-export function handleReviewStart(
+export async function handleReviewStart(
   params: ReviewStartParams,
   stateManager: StateManager,
   config: RigorConfig | null,
   projectRoot: string,
-): CallToolResult {
+): Promise<CallToolResult> {
   // Reload config fresh from disk when not supplied (see gate.ts handlers).
   const cfg = config ?? loadConfig(projectRoot);
 
@@ -111,7 +112,7 @@ export function handleReviewStart(
   }
 
   // 4b. Run pre_review custom gates
-  const customResult = runCustomGates("pre_review", params.epic_id, cfg, projectRoot);
+  const customResult = await runCustomGates("pre_review", params.epic_id, cfg, projectRoot);
   if (!customResult.passed) {
     const lines: string[] = [];
     lines.push(`Epic ${params.epic_id} blocked by custom pre_review gate.`);
@@ -302,13 +303,13 @@ export interface AcceptSubmitParams {
   user_approved: boolean;
 }
 
-export function handleAcceptSubmit(
+export async function handleAcceptSubmit(
   params: AcceptSubmitParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   config: RigorConfig | null,
   projectRoot: string,
-): CallToolResult {
+): Promise<CallToolResult> {
   // Reload config fresh from disk when not supplied (see gate.ts handlers).
   const cfg = config ?? loadConfig(projectRoot);
 
@@ -386,7 +387,7 @@ export function handleAcceptSubmit(
 
   // 6b. Run post_accept custom gates (only if Gate 9 passed)
   if (gate9Result.passed) {
-    const customResult = runCustomGates("post_accept", params.epic_id, cfg, projectRoot);
+    const customResult = await runCustomGates("post_accept", params.epic_id, cfg, projectRoot);
     if (!customResult.passed) {
       // Save custom gate evidence
       const customEvidence: GateEvidence = {
@@ -463,6 +464,8 @@ export function handleAcceptSubmit(
 
 export function handlePhaseAdvance(
   stateManager: StateManager,
+  evidenceManager?: EvidenceManager,
+  archiveManager?: ArchiveManager,
 ): CallToolResult {
   // 1. Load state
   const state = stateManager.load();
@@ -536,12 +539,38 @@ export function handlePhaseAdvance(
     return textResult(lines.join("\n"));
   }
 
-  // 7. No next phase — cycle complete
-  const lines: string[] = [];
-  lines.push(`Phase ${currentPhase.id} completed.`);
-  lines.push("All phases complete — cycle finished.");
+  // 7. No next phase — archive the completed cycle before clearing active artifacts
+  if (!evidenceManager || !archiveManager) {
+    return textResult(
+      "Cycle completed, but archival dependencies are unavailable. Active artifacts were retained.",
+      true,
+    );
+  }
 
-  return textResult(lines.join("\n"));
+  try {
+    const completedState = stateManager.load()!;
+    const archive = archiveManager.archive(completedState);
+    evidenceManager.clearAll();
+    try {
+      stateManager.clear();
+    } catch (error) {
+      archiveManager.restoreEvidence(archive.path);
+      throw error;
+    }
+
+    const lines: string[] = [];
+    lines.push(`Phase ${currentPhase.id} completed.`);
+    lines.push("All phases complete — cycle finished.");
+    lines.push(`Archive: ${archive.path}`);
+    lines.push(`Archived evidence files: ${archive.evidenceCount}`);
+    return textResult(lines.join("\n"));
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return textResult(
+      `Cycle completed, but finalization failed. The completed archive was preserved; active cleanup may be incomplete. ${detail}`,
+      true,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +583,7 @@ export function registerReviewTools(
   evidenceManager: EvidenceManager,
   projectRoot: string,
 ): void {
+  const archiveManager = new ArchiveManager(projectRoot);
   // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
   // per invocation — config edits take effect without a server restart.
   server.tool(
@@ -610,7 +640,7 @@ export function registerReviewTools(
     "phase_advance",
     "Advance to the next phase — verifies all epics in current phase are done",
     async () => {
-      return handlePhaseAdvance(stateManager);
+      return handlePhaseAdvance(stateManager, evidenceManager, archiveManager);
     },
   );
 }

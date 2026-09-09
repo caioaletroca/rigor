@@ -15,6 +15,8 @@ import { StateManager } from "../state/index.js";
 import type { PhaseState, EpicState, TaskState } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { parsePlan } from "../plan/index.js";
+import { EvidenceManager } from "../evidence/index.js";
+import { isGate0AttemptActive, isTaskCompletionActive } from "./gate.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
 
 // ---------------------------------------------------------------------------
@@ -281,6 +283,8 @@ export function handleCycleReload(
 
 export function handleCycleStatus(
   stateManager: StateManager,
+  evidenceManager?: EvidenceManager,
+  projectRoot?: string,
 ): CallToolResult {
   const state = stateManager.load();
   if (state === null) {
@@ -293,20 +297,28 @@ export function handleCycleStatus(
     (p) => p.id === state.current_phase,
   );
 
-  // Find the first task with status "doing" across all phases
   let activeTask: { id: string; name: string; epicId: string } | null = null;
+  let liveTask: { id: string; name: string; epicId: string } | null = null;
   for (const phase of state.phases) {
     for (const epic of phase.epics) {
       for (const task of epic.tasks) {
-        if (task.status === "doing") {
-          activeTask = { id: task.id, name: task.name, epicId: epic.id };
-          break;
+        if (task.status !== "doing") continue;
+        const candidate = { id: task.id, name: task.name, epicId: epic.id };
+        activeTask ??= candidate;
+        const attempt = evidenceManager?.load("gate_0", task.id)?.gate_0_attempt;
+        if (
+          projectRoot &&
+          attempt &&
+          !attempt.finished_at &&
+          attempt.current_check &&
+          isGate0AttemptActive(projectRoot, task.id, attempt.id)
+        ) {
+          liveTask = candidate;
         }
       }
-      if (activeTask) break;
     }
-    if (activeTask) break;
   }
+  activeTask = liveTask ?? activeTask;
 
   // Progress for the current phase
   let tasksCompleted = 0;
@@ -351,6 +363,21 @@ export function handleCycleStatus(
 
   if (activeTask) {
     lines.push(`Active Task: ${activeTask.id} ${activeTask.name} (epic ${activeTask.epicId})`);
+    const attempt = evidenceManager?.load("gate_0", activeTask.id)?.gate_0_attempt;
+    if (attempt && !attempt.finished_at && attempt.current_check) {
+      if (projectRoot && isGate0AttemptActive(projectRoot, activeTask.id, attempt.id)) {
+        const elapsedMs = Date.now() - Date.parse(attempt.current_check.started_at);
+        const timeout = attempt.current_check.configured_timeout_ms === undefined
+          ? "not configured"
+          : `${attempt.current_check.configured_timeout_ms}ms`;
+        lines.push(`Gate 0: executing ${attempt.current_check.check_name} (${elapsedMs}ms elapsed, timeout: ${timeout})`);
+        lines.push(`Evidence: ${stateManager.getTask(activeTask.id).gate_0.evidence_path ?? "gate_0-task-" + activeTask.id + ".json"}`);
+      } else {
+        lines.push("Gate 0: stale unfinished attempt; task remains stuck.");
+      }
+    } else if (projectRoot && isTaskCompletionActive(projectRoot, activeTask.id)) {
+      lines.push("Gate 0: post_task custom gates executing.");
+    }
   } else {
     lines.push("Active Task: none");
   }
@@ -398,7 +425,7 @@ export function registerCycleTools(
     "cycle_status",
     "Show the current cycle status, progress, and active task",
     async () => {
-      return handleCycleStatus(stateManager);
+      return handleCycleStatus(stateManager, new EvidenceManager(projectRoot), projectRoot);
     },
   );
 }

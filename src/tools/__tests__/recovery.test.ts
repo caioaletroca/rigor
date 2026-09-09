@@ -28,6 +28,8 @@ import {
   handleCycleDiagnose,
 } from "../recovery.js";
 import type { CycleState } from "../../state/index.js";
+import { DEFAULTS } from "../../config/index.js";
+import type { RigorConfig } from "../../config/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -275,6 +277,19 @@ describe("recovery tools", () => {
       expect(text).toContain("Only \"failed\" tasks can be retried");
     });
 
+    it("clears nested attempt history during cycle reset", () => {
+      const state = makeCycleState();
+      writeState(tempDir, state);
+      evidenceManager.saveTerminalGate0Attempt({
+        gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+        gate_0_attempt: { version: 1, id: "attempt-1", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "failed" },
+      });
+
+      const text = extractText(handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir));
+      expect(text).toContain("2 evidence file(s) deleted");
+      expect(readdirSync(join(tempDir, ".rigor", "evidence"))).toHaveLength(0);
+    });
+
     it("clears gate_0 evidence and returns previous failure reason", () => {
       // Set up a failed task with evidence
       const state = makeCycleState();
@@ -295,7 +310,15 @@ describe("recovery tools", () => {
             detail: "No lint errors",
           },
         ],
+        gate_0_attempt: {
+          version: 1,
+          id: "failed-attempt",
+          started_at: "2026-09-08T00:00:00.000Z",
+          finished_at: "2026-09-08T00:01:00.000Z",
+          outcome: "failed",
+        },
       });
+      evidenceManager.saveTerminalGate0Attempt(evidenceManager.load("gate_0", "1.1.1")!);
 
       state.phases[0].epics[0].tasks[0].status = "failed";
       state.phases[0].epics[0].tasks[0].gate_0 = {
@@ -317,8 +340,9 @@ describe("recovery tools", () => {
       expect(text).toContain("tests: 2 tests failed");
       expect(text).toContain("task_start");
 
-      // Verify evidence file was deleted
+      // Verify current evidence was deleted but immutable terminal history remains.
       expect(existsSync(evidencePath)).toBe(false);
+      expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "failed-attempt"))).toBe(true);
 
       // Verify gate_0 was reset in state
       const updatedState = stateManager.load();
@@ -404,7 +428,229 @@ describe("recovery tools", () => {
       expect(text).toContain("First task");
     });
 
-    it("reports corrupt status when validation errors exist", () => {
+    it("reports an unfinished persisted Gate 0 attempt as stuck when it is not in-process", () => {
+      const state = makeCycleState();
+      state.phases[0].epics[0].tasks[0].status = "doing";
+      writeState(tempDir, state);
+      evidenceManager.save({
+        gate: "gate_0",
+        entity_id: "1.1.1",
+        passed: false,
+        timestamp: new Date().toISOString(),
+        checks: [],
+        gate_0_attempt: {
+          version: 1,
+          id: "attempt-123",
+          started_at: new Date().toISOString(),
+          current_check: {
+            check_name: "tests",
+            command: "npm test",
+            started_at: new Date(Date.now() - 100).toISOString(),
+            configured_timeout_ms: 5000,
+          },
+        },
+      });
+
+       const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+       expect(text).not.toContain("Executing Gate 0 attempts:");
+       expect(text).toContain("Recovery:");
+       expect(text).toContain("interrupted");
+       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+       expect(text).not.toContain("Stuck entities:");
+       expect(stateManager.getTask("1.1.1").status).toBe("failed");
+        expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
+          outcome: "interrupted",
+          finished_at: expect.any(String),
+        });
+        expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "attempt-123"))).toBe(true);
+      });
+
+      it("reconciles terminal Gate 0 evidence left with a doing task idempotently", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "doing";
+        writeState(tempDir, state);
+        evidenceManager.save({
+          gate: "gate_0", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "passed" },
+        });
+
+        handleCycleDiagnose(stateManager, evidenceManager, tempDir);
+        const updatedAt = stateManager.load()?.updated_at;
+        handleCycleDiagnose(stateManager, evidenceManager, tempDir);
+
+        expect(stateManager.getTask("1.1.1").status).toBe("done");
+        expect(stateManager.load()?.updated_at).toBe(updatedAt);
+      });
+
+      it("fails an interrupted post_task boundary without rerunning custom gates", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "doing";
+        writeState(tempDir, state);
+        evidenceManager.save({
+          gate: "gate_0", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "passed" },
+        });
+        const config: RigorConfig = {
+          ...DEFAULTS,
+          gates: {
+            ...DEFAULTS.gates,
+            custom_gates: [{ name: "post-task", command: "exit 0", position: "post_task" }],
+          },
+        };
+
+        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir, config));
+
+        expect(text).toContain("post_task_unproven");
+        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+        expect(text).not.toContain("Terminal Gate 0 evidence mismatches:");
+        expect(text).not.toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+        expect(stateManager.getTask("1.1.1").status).toBe("failed");
+        expect(stateManager.getTask("1.1.1").gate_0.passed).toBe(false);
+        expect(evidenceManager.load("custom_post_task", "1.1.1")).toBeNull();
+      });
+
+      it("does not restore historical evidence after a retry starts without current evidence", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "failed";
+        writeState(tempDir, state);
+        evidenceManager.saveTerminalGate0Attempt({
+          gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: "2026-09-08T00:01:00.000Z", checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-failed", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "failed" },
+        });
+
+        handleTaskRetry({ task_id: "1.1.1" }, stateManager, evidenceManager, tempDir);
+        stateManager.transition("1.1.1", "doing");
+
+        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+
+        expect(text).not.toContain("Recovery:");
+        expect(stateManager.getTask("1.1.1").status).toBe("doing");
+        expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
+        expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "attempt-failed"))).toBe(true);
+      });
+
+      it("marks a crashed retry interrupted without restoring older terminal history", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "failed";
+        writeState(tempDir, state);
+        evidenceManager.saveTerminalGate0Attempt({
+          gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: "2026-09-08T00:01:00.000Z", checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-failed", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "failed" },
+        });
+
+        handleTaskRetry({ task_id: "1.1.1" }, stateManager, evidenceManager, tempDir);
+        stateManager.transition("1.1.1", "doing");
+        evidenceManager.save({
+          gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: "2026-09-08T00:02:00.000Z", checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-retry", started_at: "2026-09-08T00:02:00.000Z" },
+        });
+
+        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+
+        expect(text).toContain("interrupted");
+        expect(stateManager.getTask("1.1.1").status).toBe("failed");
+        expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
+          id: "attempt-retry",
+          outcome: "interrupted",
+          finished_at: expect.any(String),
+        });
+        expect(evidenceManager.load("gate_0", "1.1.1")?.passed).toBe(false);
+        expect(evidenceManager.load("gate_0", "1.1.1")?.checks).toContainEqual(expect.objectContaining({
+          detail: expect.stringContaining("interrupted"),
+        }));
+        expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "attempt-failed"))).toBe(true);
+        expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "attempt-retry"))).toBe(true);
+        handleTaskRetry({ task_id: "1.1.1" }, stateManager, evidenceManager, tempDir);
+        expect(evidenceManager.taskEvidenceSummary("1.1.1")).toEqual({
+          latest: undefined,
+          prior: ["interrupted", "failed"],
+        });
+      });
+
+
+      it.each(["failed", "timed_out", "cancelled", "execution_error"] as const)("reconciles %s terminal evidence from doing to failed", (outcome) => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "doing";
+        writeState(tempDir, state);
+        evidenceManager.save({
+          gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome },
+        });
+
+        handleCycleDiagnose(stateManager, evidenceManager, tempDir);
+
+        expect(stateManager.getTask("1.1.1").status).toBe("failed");
+      });
+
+      it("reports terminal evidence mismatched with a non-doing task without mutation", () => {
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "done";
+        writeState(tempDir, state);
+        const evidence = {
+          gate: "gate_0" as const, entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1 as const, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "timed_out" as const },
+        };
+        evidenceManager.save(evidence);
+        const evidencePath = evidenceManager.pathFor("gate_0", "1.1.1");
+        const before = JSON.stringify(evidenceManager.load("gate_0", "1.1.1"));
+
+        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+
+        expect(text).toContain("Terminal Gate 0 evidence mismatches:");
+        expect(text).toContain("timed_out evidence conflicts with task status");
+        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+        expect(stateManager.getTask("1.1.1").status).toBe("done");
+        expect(JSON.stringify(evidenceManager.load("gate_0", "1.1.1"))).toBe(before);
+        expect(existsSync(evidencePath)).toBe(true);
+      });
+
+      it("reports a successful recovered attempt as requiring no action", () => {
+        const state = makeCycleState();
+       state.phases[0].epics[0].tasks[0].status = "doing";
+       writeState(tempDir, state);
+       evidenceManager.save({
+         gate: "gate_0", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [],
+         gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "passed" },
+       });
+
+       const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+       expect(text).toContain("terminal_passed");
+       expect(text).toContain("Reconciled to done; no action required.");
+       expect(text).not.toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+     });
+
+      it("summarizes latest and prior Gate 0 attempts", () => {
+        const state = makeCycleState();
+        writeState(tempDir, state);
+        evidenceManager.saveTerminalGate0Attempt({
+          gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-1", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "failed" },
+        });
+        evidenceManager.saveTerminalGate0Attempt({
+          gate: "gate_0", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "attempt-2", started_at: "2026-09-08T00:02:00.000Z", finished_at: "2026-09-08T00:03:00.000Z", outcome: "passed" },
+        });
+
+        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+        expect(text).toContain("Gate 0 attempt history:");
+        expect(text).toContain("latest passed; prior failed");
+      });
+
+      it("reports inconsistent evidence with the minimal repair action", () => {
+       const state = makeCycleState();
+       state.phases[0].epics[0].tasks[0].status = "doing";
+       writeState(tempDir, state);
+       evidenceManager.save({
+         gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+         gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "passed" },
+       });
+
+       const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+       expect(text).toContain("inconsistent");
+       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+     });
+
+     it("reports corrupt status when validation errors exist", () => {
       // Create a state with an invalid current_phase
       const state = makeCycleState();
       state.current_phase = 999;
@@ -987,7 +1233,7 @@ describe("recovery tools", () => {
         );
 
         const text = extractText(result);
-        expect(text).toContain("none");
+        expect(text).toContain("0 file(s)");
       });
 
       it("deletes all evidence without changing status on confirm", () => {
@@ -1002,6 +1248,12 @@ describe("recovery tools", () => {
           timestamp: new Date().toISOString(),
           checks: [],
         });
+        evidenceManager.save({ gate: "gate_1", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [] });
+        evidenceManager.save({ gate: "custom_post_task", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [] });
+        evidenceManager.saveTerminalGate0Attempt({
+          gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "reset-attempt", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "failed" },
+        });
 
         const result = handleTaskManage(
           { task_id: "1.1.1", action: "reset_evidence", confirm: true },
@@ -1012,9 +1264,12 @@ describe("recovery tools", () => {
 
         expect(result.isError).toBeUndefined();
         const text = extractText(result);
-        expect(text).toContain("1 file(s) deleted");
+        expect(text).toContain("4 file(s) deleted");
         expect(text).toContain("Status unchanged (done)");
         expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
+        expect(evidenceManager.load("gate_1", "1.1.1")).toBeNull();
+        expect(evidenceManager.load("custom_post_task", "1.1.1")).toBeNull();
+        expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "reset-attempt"))).toBe(false);
         expect(stateManager.getTask("1.1.1").status).toBe("done");
       });
     });
@@ -1258,6 +1513,14 @@ describe("recovery tools", () => {
           timestamp: new Date().toISOString(),
           checks: [],
         });
+        evidenceManager.save({ gate: "gate_1", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [] });
+        evidenceManager.save({ gate: "custom_post_task", entity_id: "1.1.2", passed: false, timestamp: new Date().toISOString(), checks: [] });
+        evidenceManager.saveTerminalGate0Attempt({
+          gate: "gate_0", entity_id: "1.1.1", passed: true, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "epic-reset-attempt", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "passed" },
+        });
+        evidenceManager.save({ gate: "gate_8", entity_id: "1.1", passed: true, timestamp: new Date().toISOString(), checks: [] });
+        evidenceManager.save({ gate: "gate_9", entity_id: "1.1", passed: true, timestamp: new Date().toISOString(), checks: [] });
 
         const result = handleEpicManage(
           { epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: true },
@@ -1269,11 +1532,16 @@ describe("recovery tools", () => {
         expect(result.isError).toBeUndefined();
         const text = extractText(result);
         expect(text).toContain('reset to "pending"');
-        expect(text).toContain("2 evidence file(s) deleted");
+        expect(text).toContain("5 evidence file(s) deleted");
         expect(stateManager.getTask("1.1.1").status).toBe("pending");
         expect(stateManager.getTask("1.1.2").status).toBe("pending");
         expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
         expect(evidenceManager.load("gate_0", "1.1.2")).toBeNull();
+        expect(evidenceManager.load("gate_1", "1.1.1")).toBeNull();
+        expect(evidenceManager.load("custom_post_task", "1.1.2")).toBeNull();
+        expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "epic-reset-attempt"))).toBe(false);
+        expect(evidenceManager.load("gate_8", "1.1")).not.toBeNull();
+        expect(evidenceManager.load("gate_9", "1.1")).not.toBeNull();
       });
     });
 

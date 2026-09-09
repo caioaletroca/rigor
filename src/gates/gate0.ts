@@ -25,6 +25,20 @@ export interface Gate0Result {
   coverage?: number;
 }
 
+export interface Gate0Progress {
+  check_name: string;
+  command: string;
+  configured_timeout_ms?: number;
+}
+
+export interface Gate0Options {
+  onCheckStart?: (progress: Gate0Progress) => void;
+}
+
+function formatDuration(durationMs: number | undefined): string {
+  return durationMs === undefined ? "the configured timeout" : `${durationMs}ms`;
+}
+
 // ---------------------------------------------------------------------------
 // Core check
 // ---------------------------------------------------------------------------
@@ -43,6 +57,7 @@ export async function checkGate0Exit(
   _taskId: string,
   config: RigorConfig,
   projectRoot: string,
+  options: Gate0Options = {},
 ): Promise<Gate0Result> {
   const checks: CheckResult[] = [];
   let parsedCoverage: number | undefined;
@@ -66,7 +81,31 @@ export async function checkGate0Exit(
     }
 
     ranAnyCommand = true;
-    const result = runCommand(check.command, { cwd: projectRoot });
+    options.onCheckStart?.({
+      check_name: check.name,
+      command: check.command,
+      configured_timeout_ms: check.timeout_ms,
+    });
+    const result = await runCommand(check.command, {
+      cwd: projectRoot,
+      timeout_ms: check.timeout_ms,
+    });
+
+    if (result.timed_out || result.cancelled) {
+      checks.push({
+        name: check.name,
+        passed: false,
+        detail: result.timed_out
+          ? `${capitalize(check.name)} timed out after ${formatDuration(check.timeout_ms)}`
+          : `${capitalize(check.name)} was cancelled`,
+        command: check.command,
+        duration_ms: result.duration_ms,
+        configured_timeout_ms: check.timeout_ms,
+        timed_out: result.timed_out,
+        cancelled: result.cancelled,
+      });
+      continue;
+    }
 
     // Exit code 127 = command not found — provide a clear, actionable message.
     if (result.exit_code === 127) {
@@ -173,7 +212,7 @@ export async function checkGate0Exit(
   // -----------------------------------------------------------------------
 
   if (requireTestFiles) {
-    checks.push(evaluateTestFiles(projectRoot));
+    checks.push(await evaluateTestFiles(projectRoot, options));
   }
 
   // -----------------------------------------------------------------------
@@ -232,8 +271,15 @@ function testStem(path: string): string {
  * changeset, matched by basename stem. Modified files are not required to add
  * a test. Skips gracefully when git is unavailable / not a repo.
  */
-export function evaluateTestFiles(projectRoot: string): CheckResult {
-  const result = runCommand("git status --porcelain", { cwd: projectRoot });
+export async function evaluateTestFiles(
+  projectRoot: string,
+  options: Gate0Options = {},
+): Promise<CheckResult> {
+  options.onCheckStart?.({
+    check_name: "test_files",
+    command: "git status --porcelain",
+  });
+  const result = await runCommand("git status --porcelain", { cwd: projectRoot });
 
   if (result.exit_code !== 0) {
     return {
