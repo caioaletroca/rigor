@@ -18,16 +18,14 @@ import { EvidenceManager } from "../evidence/index.js";
 import { isGate0AttemptActive, isTaskCompletionActive } from "./gate.js";
 import { ProjectContextRegistry, resolveProjectRoot as resolveCanonicalProjectRoot } from "../context.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
+import { responseResult } from "./response.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
 
 function textResult(text: string, isError?: boolean): CallToolResult {
-  return {
-    content: [{ type: "text", text }],
-    ...(isError ? { isError: true } : {}),
-  };
+  return responseResult(text, { error: isError });
 }
 
 // ---------------------------------------------------------------------------

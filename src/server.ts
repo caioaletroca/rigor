@@ -44,7 +44,7 @@ export interface ServerContext {
  * This factory is separated from the transport layer so tests can
  * exercise tool registration without stdio.
  */
-export function createServer(projectRoot: string): ServerContext {
+export function createServer(projectRoot: string, sharedRegistry?: ProjectContextRegistry): ServerContext {
   const config = loadConfig(projectRoot);
 
   // Build sync layer if enabled
@@ -58,7 +58,7 @@ export function createServer(projectRoot: string): ServerContext {
     );
   }
 
-  const registry = new ProjectContextRegistry(projectRoot, syncManager);
+  const registry = sharedRegistry ?? new ProjectContextRegistry(projectRoot, syncManager);
   const stateManager = registry.getByRoot(projectRoot).stateManager;
   const evidenceManager = registry.getByRoot(projectRoot).evidenceManager;
 

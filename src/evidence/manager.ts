@@ -16,7 +16,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, normalize, resolve, relative, isAbsolute } from "node:path";
+import { realpathSync } from "node:fs";
 import type { ReviewFindings } from "../gates/gate8.js";
 
 // ---------------------------------------------------------------------------
@@ -69,14 +70,37 @@ export interface Gate0Attempt {
   outcome?: Gate0AttemptOutcome;
 }
 
+export interface EvidenceContext {
+  project_root: string;
+  cycle_id?: string;
+  task_id?: string;
+  attempt_id?: string;
+}
+
 export interface GateEvidence {
   gate: string;
   entity_id: string;
   passed: boolean;
   timestamp: string;
   checks: CheckResult[];
+  context?: EvidenceContext;
   review_submissions?: ReviewFindings[];
   gate_0_attempt?: Gate0Attempt;
+}
+
+export interface EvidenceAuditEntry {
+  path: string;
+  valid: boolean;
+  reason?: string;
+  context?: EvidenceContext;
+}
+
+export interface EvidenceAudit {
+  project_root: string;
+  total: number;
+  valid: number;
+  invalid: number;
+  entries: EvidenceAuditEntry[];
 }
 
 export type Gate0AttemptClassification =
@@ -127,9 +151,16 @@ const EVIDENCE_DIR = "evidence";
 
 export class EvidenceManager {
   private readonly evidenceDir: string;
+  private readonly projectRoot: string;
 
   constructor(projectRoot: string) {
-    this.evidenceDir = join(projectRoot, RIGOR_DIR, EVIDENCE_DIR);
+    const absolute = normalize(resolve(projectRoot));
+    try {
+      this.projectRoot = normalize(realpathSync(absolute));
+    } catch {
+      this.projectRoot = absolute;
+    }
+    this.evidenceDir = join(this.projectRoot, RIGOR_DIR, EVIDENCE_DIR);
 
     if (!existsSync(this.evidenceDir)) {
       mkdirSync(this.evidenceDir, { recursive: true });
@@ -146,7 +177,11 @@ export class EvidenceManager {
    */
   save(evidence: GateEvidence): string {
     const filePath = this.pathFor(evidence.gate, evidence.entity_id);
-    this.write(filePath, evidence);
+    const contextualEvidence: GateEvidence = {
+      ...evidence,
+      context: { ...evidence.context, project_root: this.projectRoot },
+    };
+    this.write(filePath, contextualEvidence);
     return filePath;
   }
 
@@ -180,17 +215,83 @@ export class EvidenceManager {
     return this.pathFor("gate_0", evidence.entity_id);
   }
 
+  audit(): EvidenceAudit {
+    const entries: EvidenceAuditEntry[] = [];
+    for (const file of this.evidenceFiles()) {
+      const path = join(this.evidenceDir, file);
+      try {
+        const evidence = JSON.parse(readFileSync(path, "utf-8")) as GateEvidence;
+        const validation = this.validate(evidence, file);
+        entries.push({
+          path: file,
+          valid: validation.valid,
+          ...(validation.valid ? {} : { reason: validation.reason }),
+          ...(evidence.context ? { context: evidence.context } : {}),
+        });
+      } catch {
+        entries.push({ path: file, valid: false, reason: "Evidence is not valid JSON." });
+      }
+    }
+    return {
+      project_root: this.projectRoot,
+      total: entries.length,
+      valid: entries.filter((entry) => entry.valid).length,
+      invalid: entries.filter((entry) => !entry.valid).length,
+      entries,
+    };
+  }
+
+  private evidenceFiles(directory = this.evidenceDir, prefix = ""): string[] {
+    try {
+      return readdirSync(directory).flatMap((file) => {
+        const path = join(directory, file);
+        const relativePath = prefix ? join(prefix, file) : file;
+        try {
+          return lstatSync(path).isDirectory() ? this.evidenceFiles(path, relativePath) : file.endsWith(".json") ? [relativePath] : [];
+        } catch {
+          return [];
+        }
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private validate(evidence: GateEvidence, file: string): { valid: boolean; reason?: string } {
+    if (!evidence || typeof evidence !== "object" || typeof evidence.gate !== "string" || typeof evidence.entity_id !== "string" || !Array.isArray(evidence.checks)) {
+      return { valid: false, reason: "Evidence schema is invalid." };
+    }
+    if (evidence.context?.project_root !== this.projectRoot) return { valid: false, reason: "Evidence context project_root does not match the active project." };
+    const expected = file.startsWith("gate_0-task-") && file.includes("/") ? null : `${evidence.gate}-task-${evidence.entity_id}.json`;
+    if (expected && normalize(file) !== normalize(expected)) return { valid: false, reason: "Evidence path does not match its identity." };
+    return { valid: true };
+  }
+
   pathFor(gate: string, entityId: string): string {
+    this.validatePathSegment("gate", gate);
+    this.validatePathSegment("entity_id", entityId);
     return join(this.evidenceDir, `${gate}-task-${entityId}.json`);
   }
 
   attemptPathFor(entityId: string, attemptId: string): string {
+    this.validatePathSegment("entity_id", entityId);
+    this.validatePathSegment("attempt_id", attemptId);
     return join(this.evidenceDir, `gate_0-task-${entityId}`, `${attemptId}.json`);
+  }
+
+  private validatePathSegment(name: string, value: string): void {
+    if (!value || value === "." || value === ".." || value.includes("/") || value.includes("\\") || value.includes("..")) {
+      throw new Error(`Invalid ${name}: nested or traversal paths are rejected.`);
+    }
   }
 
   private write(filePath: string, evidence: GateEvidence): void {
     const tmpPath = `${filePath}.tmp`;
-    writeFileSync(tmpPath, JSON.stringify(evidence, null, 2), "utf-8");
+    const contextualEvidence: GateEvidence = {
+      ...evidence,
+      context: { ...evidence.context, project_root: this.projectRoot },
+    };
+    writeFileSync(tmpPath, JSON.stringify(contextualEvidence, null, 2), "utf-8");
     renameSync(tmpPath, filePath);
   }
 

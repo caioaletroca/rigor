@@ -166,6 +166,11 @@ describe("EvidenceManager", () => {
     expect(result).toBeNull();
   });
 
+  it("rejects nested evidence paths", () => {
+    expect(() => manager.pathFor("gate_0", "nested/task")).toThrow(/nested or traversal/);
+    expect(() => manager.attemptPathFor("1.1.1", "nested/attempt")).toThrow(/nested or traversal/);
+  });
+
   // -----------------------------------------------------------------------
   // 4. creates .rigor/evidence/ directory on construction
   // -----------------------------------------------------------------------

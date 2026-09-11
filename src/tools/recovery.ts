@@ -31,16 +31,14 @@ import { DEFAULTS } from "../config/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { isGate0AttemptActive, withProjectMutationLock } from "./gate.js";
 import type { ProjectContextRegistry } from "../context.js";
+import { responseResult } from "./response.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
 
 function textResult(text: string, isError?: boolean): CallToolResult {
-  return {
-    content: [{ type: "text", text }],
-    ...(isError ? { isError: true } : {}),
-  };
+  return responseResult(text, { error: isError });
 }
 
 // ---------------------------------------------------------------------------
@@ -1130,7 +1128,9 @@ export function handleCycleDiagnose(
     }
   }
 
-  // Evidence audit with actionable suggestions
+  const evidenceAudit = evidenceManager.audit();
+  lines.push("");
+  lines.push(`Evidence audit: ${JSON.stringify(evidenceAudit)}`);
   if (missingEvidence.length > 0) {
     lines.push("");
     lines.push(`Evidence audit: ${missingEvidence.length} missing`);
