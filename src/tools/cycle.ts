@@ -431,15 +431,23 @@ export function registerCycleTools(
     },
   );
 
-  server.tool(
+  server.registerTool(
     "cycle_status",
-    "Show the current cycle status, progress, and active task",
-    async () => {
-      const context = registry?.getByRoot(stateManager.load()?.project_root ?? projectRoot);
+    {
+      description: "Show the current cycle status, progress, and active task",
+      inputSchema: z
+        .object({
+          project_root: z.string().optional().describe("Absolute Git repository root; defaults to the server --project-root"),
+        })
+        .default({}),
+    },
+    async (params) => {
+      const root = params?.project_root ?? stateManager.load()?.project_root ?? projectRoot;
+      const context = registry?.getByRoot(root);
       return handleCycleStatus(
         context?.stateManager ?? stateManager,
-        context?.evidenceManager ?? new EvidenceManager(projectRoot),
-        context?.project_root ?? projectRoot,
+        context?.evidenceManager ?? new EvidenceManager(root),
+        context?.project_root ?? root,
       );
     },
   );

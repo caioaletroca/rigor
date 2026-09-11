@@ -1157,13 +1157,18 @@ export function registerRecoveryTools(
   config: RigorConfig,
   registry?: ProjectContextRegistry,
 ): void {
-  const context = () => registry?.getByRoot(stateManager.load()?.project_root ?? projectRoot);
+  const context = (requestRoot?: string) =>
+    registry?.getByRoot(requestRoot ?? stateManager.load()?.project_root ?? projectRoot);
+  const projectRootParam = z
+    .string()
+    .optional()
+    .describe("Absolute Git repository root; defaults to the server --project-root");
   server.tool(
     "cycle_reset",
     "Preview or reset the current cycle — deletes state and evidence files",
-    { confirm: z.boolean().describe("Set to true to actually delete; false for preview") },
+    { confirm: z.boolean().describe("Set to true to actually delete; false for preview"), project_root: projectRootParam },
     async (params) => {
-      const ctx = context();
+      const ctx = context(params.project_root);
        return handleCycleReset(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -1176,9 +1181,10 @@ export function registerRecoveryTools(
       action: z.enum(["force_status", "skip", "retry", "reset_evidence"]).describe("Action to perform"),
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      const ctx = context();
+      const ctx = context(params.project_root);
        return handleTaskManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -1192,9 +1198,10 @@ export function registerRecoveryTools(
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       cascade: z.boolean().default(false).describe("Also apply action to child tasks (force_status, skip)"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      const ctx = context();
+      const ctx = context(params.project_root);
        return handleEpicManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -1207,18 +1214,22 @@ export function registerRecoveryTools(
       action: z.enum(["force_status", "skip"]).describe("Action to perform"),
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      const ctx = context();
+      const ctx = context(params.project_root);
        return handlePhaseManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
-  server.tool(
+  server.registerTool(
     "cycle_diagnose",
-    "Run diagnostics on the current cycle — validation, stuck detection, evidence audit",
-    async () => {
-      const ctx = context();
+    {
+      description: "Run diagnostics on the current cycle — validation, stuck detection, evidence audit",
+      inputSchema: z.object({ project_root: projectRootParam }).default({}),
+    },
+    async (params) => {
+      const ctx = context(params?.project_root);
        return handleCycleDiagnose(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot, ctx?.config ?? config);
     },
   );
