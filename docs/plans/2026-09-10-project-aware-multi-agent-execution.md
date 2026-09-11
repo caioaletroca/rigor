@@ -245,6 +245,26 @@
 **Done when:** every diagnostic includes project root/cycle/task/attempt identity where applicable; command output is bounded/redacted; timeout and cancellation recommendations are actionable; no cross-project or stale-context claims remain.
 **Status:** Pending
 
+#### Task 4.1.1: Add structured diagnostics and safe failure responses
+
+- [ ] Done
+
+**Context:** Operators need consistent project, cycle, task, and attempt identity in diagnostics without secret leakage.
+
+**Implementation vision:** Normalize lifecycle and recovery response schemas, include structured context and actionable timeout/cancellation guidance, and ensure bounded/redacted diagnostics are exposed consistently.
+
+**Verification:** Run `npm run build` and focused diagnostics/response tests, then the full test suite.
+
+#### Task 4.1.2: Harden observability and evidence audits
+
+- [ ] Done
+
+**Context:** Multi-project recovery requires evidence audits and logs that cannot claim stale or cross-project context.
+
+**Implementation vision:** Add structured audit output, validate context identity in evidence, and cover failure UX, redaction, and cross-project audit isolation with integration tests.
+
+**Verification:** Run `npm run build` and diagnostics/evidence integration tests plus the full test suite.
+
 ### Epic 4.2: Cross-client and multi-project acceptance validation
 
 **Goal:** Rigor is validated under simultaneous OpenCode/Claude/Hermes-style clients and multiple project roots.
@@ -252,6 +272,26 @@
 **Dependencies:** Epic 4.1
 **Done when:** two projects and multiple agents can initialize cycles, run gates, inspect status, recover interrupted attempts, and complete independent tasks without collisions; compatibility and performance budgets are documented.
 **Status:** Pending
+
+#### Task 4.2.1: Build cross-client multi-project integration harness
+
+- [ ] Done
+
+**Context:** Final validation must exercise multiple client-style sessions against independent project contexts.
+
+**Implementation vision:** Add a transport-level harness for concurrent OpenCode/Claude/Hermes-style request patterns, fixture repositories, and independent lifecycle/gate/recovery flows.
+
+**Verification:** Run `npm run build` and the transport integration harness plus the full test suite.
+
+#### Task 4.2.2: Validate compatibility and performance budgets
+
+- [ ] Done
+
+**Context:** Release readiness requires documented compatibility, concurrency, and performance expectations.
+
+**Implementation vision:** Measure representative multi-project operations, validate no cross-project collisions, document budgets and release checks, and add final acceptance coverage.
+
+**Verification:** Run `npm run build` and final acceptance tests plus the full test suite.
 
 ---
 
