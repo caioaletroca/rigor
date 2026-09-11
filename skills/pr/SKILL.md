@@ -4,9 +4,9 @@ description: >-
   Open a GitHub Pull Request with automatic base branch detection (3 probes),
   scope allowlist enforcement, PR template filling, precondition verification,
   and post-create base branch verification with retargeting. Use when the
-  branch is pushed and the user wants to open a PR. Skip when working tree is
-  dirty or branch has not been pushed -- tell the user to use rigor:commit
-  first.
+  user wants to open a PR. Skip when the working tree is dirty; if the branch
+  is not pushed, ask through the host's formal question mechanism and offer to
+  push it automatically.
 ---
 
 Open a GitHub Pull Request: detect base branch, enforce scope policy, verify preconditions, fill the PR template, draft the title and body, confirm with the user, create the PR, verify the base branch post-creation, and return the PR URL.
