@@ -16,11 +16,11 @@ Execute a phased development cycle controlled by the Rigor MCP gate server. The 
 Before starting lifecycle work, ask the user to choose one session-scoped mode:
 
 1. **Stepwise** -- report each gate passage, failure, and milestone, then wait for the user to continue.
-2. **Continuous** -- continue task implementation, Gate 0 retries, reviews, and phase advancement without ordinary confirmation prompts. Report progress as work continues; do not pause after successful tasks or reviews.
+2. **Continuous** -- continue task implementation, Gate 0 retries, Gate 8 remediation and resubmission, and phase advancement without ordinary confirmation prompts. Report progress as work continues; do not pause after successful tasks, failed reviews, remediations, or phase transitions.
 
 The mode is an orchestration preference only: never persist it in `.rigor/state.json` and never bypass an MCP gate. In either mode, stop for Gate 9 when configuration requires user approval; present the acceptance criteria and wait for actual approval before submitting `user_approved: true`.
 
-In Continuous mode, also stop and report when human direction is genuinely required: requirements or acceptance evidence are ambiguous, a rolling-wave phase has no elaborated tasks, recovery diagnosis cannot identify a safe action, a gate failure cannot be remediated safely, or the user explicitly interrupts execution. Do not ask for continuation merely because a task, review, or phase passed.
+In Continuous mode, Gate 8 failure is not a user-confirmation point. Read the findings, implement the safest compliant remediation, rerun required verification, and resubmit the review directly. Stop only when human direction is genuinely required: requirements or acceptance evidence are ambiguous, a rolling-wave phase has no elaborated tasks, recovery diagnosis cannot identify a safe action, a gate failure cannot be remediated safely, or there are two or more materially different viable implementation approaches whose choice affects requirements, compatibility, security, or architecture. Present those alternatives and ask the user to choose. Also stop if the user explicitly interrupts execution. Do not ask for continuation merely because a task, review, remediation, or phase passed or failed.
 
 ---
 
@@ -155,9 +155,15 @@ The `submissions` parameter is a JSON array of `ReviewFindings` objects:
 Gate 8 checks: required reviewers present, critical/high finding counts within thresholds.
 
 **If Gate 8 fails:** Read the saved findings and remediate them. In Stepwise mode,
-wait for the user before re-reviewing; in Continuous mode, re-review after safe
-remediation without asking for ordinary continuation. Do not call `review_start` a
-second time; submit the updated reviewer results directly with `review_submit`.
+wait for the user before re-reviewing. In Continuous mode, remediation and
+resubmission are automatic: implement the safest compliant fix, run the required
+verification, and submit the updated reviewer results directly with `review_submit`
+without asking for continuation. Do not call `review_start` a second time.
+
+If the findings admit two or more materially different viable fixes and the choice
+affects requirements, compatibility, security, or architecture, stop and present
+the alternatives for user selection before editing. Otherwise choose the minimal
+safe remediation and continue automatically.
 
 ---
 
@@ -287,6 +293,7 @@ Only use this when the cycle is unrecoverable. Requires explicit confirmation.
 | Invent review submissions with no real review | Defeats the purpose of Gate 8 |
 | Set `user_approved: true` without asking the user | Gate 9 user approval requires real human input |
 | Ignore gate failure messages | They contain the exact checks that failed; read them |
+| Ask the user whether to continue after a Gate 8 failure in Continuous mode | Gate 8 remediation and resubmission are part of the automatic cycle; continue unless materially different solutions require a decision |
 | Skip `cycle_diagnose` and go straight to `cycle_reset` | You may lose work that was recoverable |
 
 ---
