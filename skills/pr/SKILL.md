@@ -27,7 +27,7 @@ MUST read `.rigor/config.yaml` in Step 2 to determine whether scope is required.
 
 ## Step 1 -- Detect Base Branch
 
-Three probes, applied in precedence order -- first match wins.
+Three probes are run, then precedence is applied to the results.
 
 ```bash
 # Probe A -- GitHub API default (fallback: git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
@@ -104,7 +104,7 @@ State the policy source and chosen scope to the user before proceeding.
 
 ## Step 3 -- Verify Preconditions
 
-All three checks MUST pass before proceeding. If any fails, STOP and tell the user.
+The clean-tree check MUST pass before proceeding. If it fails, stop and tell the user. An unpushed branch is recoverable through the formal push-approval flow below; after pushing, all remote checks MUST pass before proceeding.
 
 ### 3.1 -- Clean Working Tree
 
