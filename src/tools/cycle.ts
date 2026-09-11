@@ -6,8 +6,7 @@
  * without spinning up a real MCP transport.
  */
 
-import { resolve, isAbsolute, dirname, join } from "node:path";
-import { existsSync } from "node:fs";
+import { resolve, isAbsolute } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -17,17 +16,16 @@ import type { RigorConfig } from "../config/index.js";
 import { parsePlan } from "../plan/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import { isGate0AttemptActive, isTaskCompletionActive } from "./gate.js";
+import { ProjectContextRegistry, resolveProjectRoot as resolveCanonicalProjectRoot } from "../context.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
+import { responseResult } from "./response.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
 
 function textResult(text: string, isError?: boolean): CallToolResult {
-  return {
-    content: [{ type: "text", text }],
-    ...(isError ? { isError: true } : {}),
-  };
+  return responseResult(text, { error: isError });
 }
 
 // ---------------------------------------------------------------------------
@@ -39,21 +37,6 @@ function textResult(text: string, isError?: boolean): CallToolResult {
  * returning the first directory that contains one. Returns `null` when no
  * repository root is found before reaching the filesystem root.
  */
-function findGitRoot(startDir: string): string | null {
-  let dir = startDir;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    if (existsSync(join(dir, ".git"))) {
-      return dir;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) {
-      return null;
-    }
-    dir = parent;
-  }
-}
-
 /**
  * Resolve the project root to anchor `.rigor/` state against.
  *
@@ -64,10 +47,10 @@ function findGitRoot(startDir: string): string | null {
  * the explicit server root authoritative whenever it is the only signal.
  */
 function resolveProjectRoot(planPath: string, serverRoot: string): string {
-  if (!isAbsolute(planPath)) {
-    return serverRoot;
-  }
-  return findGitRoot(dirname(planPath)) ?? serverRoot;
+  return resolveCanonicalProjectRoot({
+    plan_path: planPath,
+    fallback_root: serverRoot,
+  }).project_root;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,24 +91,32 @@ function phaseToState(parsed: ParsedPhase): PhaseState {
 
 export interface CycleInitParams {
   plan_path: string;
+  project_root?: string;
 }
 
 export function handleCycleInit(
   params: CycleInitParams,
   stateManager: StateManager,
   projectRoot: string,
+  registry?: ProjectContextRegistry,
 ): CallToolResult {
+  const requestRoot = params.project_root ?? projectRoot;
   const resolvedPath = isAbsolute(params.plan_path)
     ? params.plan_path
-    : resolve(projectRoot, params.plan_path);
+    : resolve(requestRoot, params.plan_path);
 
   // Prefer the plan's git root when an absolute plan path points outside the
   // server's configured root. State/evidence then land under the correct
   // repository even if `--project-root` was wrong. When they agree (or no repo
   // is found), the server-provided StateManager is used unchanged.
-  const effectiveRoot = resolveProjectRoot(resolvedPath, projectRoot);
+  const effectiveRoot = resolveCanonicalProjectRoot({
+    project_root: params.project_root,
+    plan_path: resolvedPath,
+    fallback_root: projectRoot,
+  }).project_root;
   const usingDerivedRoot = effectiveRoot !== projectRoot;
-  const sm = usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager;
+  const context = registry?.getByRoot(effectiveRoot);
+  const sm = context?.stateManager ?? (usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager);
 
   const existing = sm.load();
   if (existing !== null) {
@@ -139,7 +130,7 @@ export function handleCycleInit(
 
   const phases = plan.phases.map(phaseToState);
 
-  const state = sm.init(resolvedPath, phases);
+  const state = sm.init(resolvedPath, phases, effectiveRoot);
 
   let epicCount = 0;
   let taskCount = 0;
@@ -151,6 +142,7 @@ export function handleCycleInit(
   }
 
   const summary: Record<string, unknown> = {
+    project_root: effectiveRoot,
     cycle_id: state.cycle_id,
     plan_path: state.plan_path,
     phases: state.phases.length,
@@ -162,9 +154,7 @@ export function handleCycleInit(
     summary.project_root = effectiveRoot;
     summary.warning =
       `Server --project-root (${projectRoot}) differs from the plan's git root ` +
-      `(${effectiveRoot}). State and evidence were written under the git root. ` +
-      `cycle_status/task_* still read the server root — restart the server with ` +
-      `--project-root ${effectiveRoot} to align them.`;
+      `(${effectiveRoot}). State and evidence were written under the git root.`;
   }
 
   return textResult(JSON.stringify(summary, null, 2));
@@ -175,8 +165,8 @@ export function handleCycleInit(
 // ---------------------------------------------------------------------------
 
 export interface CycleReloadParams {
-  /** Optional plan path override. Defaults to the cycle's stored plan_path. */
   plan_path?: string;
+  project_root?: string;
 }
 
 /**
@@ -190,28 +180,37 @@ export function handleCycleReload(
   params: CycleReloadParams,
   stateManager: StateManager,
   projectRoot: string,
+  registry?: ProjectContextRegistry,
 ): CallToolResult {
   // Mirror cycle_init: when an absolute plan_path override points outside the
   // server root, target that plan's git root. Without an override (or with a
   // relative one), the server root stays authoritative and behavior is
   // unchanged.
-  const effectiveRoot =
-    params.plan_path && isAbsolute(params.plan_path)
-      ? resolveProjectRoot(params.plan_path, projectRoot)
-      : projectRoot;
+  const loadedState = stateManager.load();
+  const loadedRoot = loadedState?.project_root;
+  const requestRoot = params.project_root ?? loadedRoot ?? projectRoot;
+  const planPath = params.plan_path
+    ? isAbsolute(params.plan_path) ? params.plan_path : resolve(requestRoot, params.plan_path)
+    : loadedState?.plan_path;
+  if (!planPath) return textResult("No active cycle. Run cycle_init first.", true);
+  const effectiveRoot = params.project_root
+    ? resolveCanonicalProjectRoot({
+        project_root: params.project_root,
+        plan_path: planPath,
+        fallback_root: requestRoot,
+      }).project_root
+    : loadedRoot ?? projectRoot;
+  if (loadedRoot && effectiveRoot !== loadedRoot) {
+    return textResult(`Invalid reload project_root: active cycle belongs to "${loadedRoot}"; use that root.`, true);
+  }
   const usingDerivedRoot = effectiveRoot !== projectRoot;
-  const sm = usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager;
+  const context = registry?.getByRoot(effectiveRoot);
+  const sm = context?.stateManager ?? (usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager);
 
   const state = sm.load();
   if (state === null) {
     return textResult("No active cycle. Run cycle_init first.", true);
   }
-
-  const planPath = params.plan_path
-    ? isAbsolute(params.plan_path)
-      ? params.plan_path
-      : resolve(projectRoot, params.plan_path)
-    : state.plan_path;
 
   let plan;
   try {
@@ -258,6 +257,7 @@ export function handleCycleReload(
   if (params.plan_path) {
     state.plan_path = planPath;
   }
+  state.project_root = effectiveRoot;
 
   sm.save(state);
 
@@ -337,6 +337,7 @@ export function handleCycleStatus(
   const lines: string[] = [];
 
   lines.push(`Cycle: ${state.cycle_id}`);
+  lines.push(`Project Root: ${state.project_root ?? projectRoot ?? "unknown"}`);
   lines.push(`Plan: ${state.plan_path}`);
   lines.push("");
 
@@ -397,13 +398,19 @@ export function registerCycleTools(
   stateManager: StateManager,
   _config: RigorConfig,
   projectRoot: string,
+  registry?: ProjectContextRegistry,
 ): void {
   server.tool(
     "cycle_init",
     "Initialize a new development cycle from a plan.md file",
-    { plan_path: z.string().describe("Relative or absolute path to the plan.md file") },
+    {
+      plan_path: z.string().describe("Absolute plan path, or relative to project_root or the legacy server --project-root fallback"),
+      project_root: z.string().optional().describe("Absolute Git repository root; takes precedence over the server --project-root fallback"),
+    },
     async (params) => {
-      return handleCycleInit(params, stateManager, projectRoot);
+      const root = params.project_root ?? projectRoot;
+      const context = registry?.getByRoot(root);
+      return handleCycleInit(params, context?.stateManager ?? stateManager, root, registry);
     },
   );
 
@@ -411,13 +418,16 @@ export function registerCycleTools(
     "cycle_reload",
     "Re-parse the plan and merge new phases/epics/tasks into the running cycle without losing progress (rolling-wave elaboration)",
     {
-      plan_path: z
-        .string()
-        .optional()
-        .describe("Optional plan path override; defaults to the cycle's stored plan_path"),
+       plan_path: z
+         .string()
+         .optional()
+         .describe("Absolute plan path, or relative to project_root; defaults to the stored plan_path"),
+       project_root: z.string().optional().describe("Absolute Git repository root; overrides the server default and anchors relative plan_path"),
     },
     async (params) => {
-      return handleCycleReload(params, stateManager, projectRoot);
+      const root = params.project_root ?? projectRoot;
+      const context = registry?.getByRoot(root);
+      return handleCycleReload(params, context?.stateManager ?? stateManager, root, registry);
     },
   );
 
@@ -425,7 +435,12 @@ export function registerCycleTools(
     "cycle_status",
     "Show the current cycle status, progress, and active task",
     async () => {
-      return handleCycleStatus(stateManager, new EvidenceManager(projectRoot), projectRoot);
+      const context = registry?.getByRoot(stateManager.load()?.project_root ?? projectRoot);
+      return handleCycleStatus(
+        context?.stateManager ?? stateManager,
+        context?.evidenceManager ?? new EvidenceManager(projectRoot),
+        context?.project_root ?? projectRoot,
+      );
     },
   );
 }

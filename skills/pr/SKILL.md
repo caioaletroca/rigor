@@ -4,9 +4,9 @@ description: >-
   Open a GitHub Pull Request with automatic base branch detection (3 probes),
   scope allowlist enforcement, PR template filling, precondition verification,
   and post-create base branch verification with retargeting. Use when the
-  branch is pushed and the user wants to open a PR. Skip when working tree is
-  dirty or branch has not been pushed -- tell the user to use rigor:commit
-  first.
+  user wants to open a PR. Skip when the working tree is dirty; if the branch
+  is not pushed, ask through the host's formal question mechanism and offer to
+  push it automatically.
 ---
 
 Open a GitHub Pull Request: detect base branch, enforce scope policy, verify preconditions, fill the PR template, draft the title and body, confirm with the user, create the PR, verify the base branch post-creation, and return the PR URL.
@@ -27,7 +27,7 @@ MUST read `.rigor/config.yaml` in Step 2 to determine whether scope is required.
 
 ## Step 1 -- Detect Base Branch
 
-Three probes, applied in precedence order -- first match wins.
+Three probes are run, then precedence is applied to the results.
 
 ```bash
 # Probe A -- GitHub API default (fallback: git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
@@ -42,9 +42,9 @@ git ls-remote --heads origin develop
 | Priority | Source | Rule |
 |----------|--------|------|
 | **1 -- highest** | PR template | Explicit branch name in `.github/pull_request_template.md` -- overrides everything |
-| **2** | develop + user | Probe C finds `develop` AND differs from Probe A -- confirm with user which target |
+| **2** | develop + user | Probe C finds `develop` AND differs from Probe A -- use the formal host question mechanism to choose the target |
 | **3 -- fallback** | GitHub API | Use value from Probe A |
-| **4** | Neither | STOP -- confirm with the user |
+| **4** | Neither | STOP after using the formal host question mechanism to choose or provide the target |
 
 **Why not develop-first:** a repo may have a stale `develop` branch while the real PR target is `main`. The GitHub API is the authoritative source; `develop` existence triggers a confirmation step instead of a silent assumption.
 
@@ -104,7 +104,7 @@ State the policy source and chosen scope to the user before proceeding.
 
 ## Step 3 -- Verify Preconditions
 
-All three checks MUST pass before proceeding. If any fails, STOP and tell the user.
+The clean-tree check MUST pass before proceeding. If it fails, stop and tell the user. An unpushed branch is recoverable through the formal push-approval flow below; after pushing, all remote checks MUST pass before proceeding.
 
 ### 3.1 -- Clean Working Tree
 
@@ -120,11 +120,13 @@ If output is non-empty, STOP. Tell the user to commit or stash changes first. Su
 git ls-remote --heads origin "$(git branch --show-current)"
 ```
 
-If the branch does not exist on the remote, STOP. Tell the user to push first:
+If the branch does not exist on the remote, use the host's formal user-question mechanism to ask whether to push it automatically. If approved, run:
 
 ```bash
 git push -u origin "$(git branch --show-current)"
 ```
+
+If the user declines, stop and tell them to push before opening the PR. Re-run the branch and ahead-of-remote checks after pushing.
 
 ### 3.3 -- No Local Commits Ahead of Remote
 
@@ -219,7 +221,7 @@ Command that will run:
 Approve? [Create PR / Edit / Cancel]
 ```
 
-MUST wait for explicit user approval. Do NOT create the PR until approved.
+Use the host's formal user-question mechanism to obtain explicit approval. In OpenCode, use the `question` tool with `Create PR`, `Edit`, and `Cancel` options; in Claude Code, use its native user-question mechanism. Do NOT create the PR until approved.
 
 ---
 
@@ -336,7 +338,7 @@ gh pr create \
 | "I know the base branch, I can skip detection" | Any repo can change its default. Detection takes 2 seconds and prevents targeting the wrong branch. | **MUST detect with 3 probes in Step 1** |
 | "I will skip the post-create base verification" | `gh pr create --base` can silently pick the wrong base in some edge cases. Verification catches this. | **MUST verify base in Step 9** |
 | "The working tree has changes but they are unrelated" | Unrelated changes can leak into the PR diff if not committed or stashed. | **MUST require clean tree in Step 3.1** |
-| "The branch is not pushed but I can push and create in one step" | Pushing and PR creation are separate concerns. Push failure should not leave a half-created PR. | **MUST verify branch is pushed in Step 3.2** |
+| "The branch is not pushed but I can push and create in one step" | Pushing and PR creation are separate concerns. Push failure should not leave a half-created PR. | **Ask through the formal question mechanism, push only after approval, then verify the branch in Step 3.2** |
 | "I will omit the scope since the PR is small" | When `require_scope` is `true`, scope is mandatory regardless of PR size. | **MUST include scope from allowlist** |
 | "This scope is not in the allowlist but it makes sense" | Invented scopes fail automated PR validation checks. | **MUST use only allowlist scopes** |
 | "The template has sections that do not apply" | The template exists for consistency. Fill every section -- write "N/A" if truly not applicable. | **MUST fill every template section** |

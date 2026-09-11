@@ -9,8 +9,8 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { StateManager } from "../state/index.js";
-import { EntityNotFoundError } from "../state/index.js";
+import type { StateManager, TaskLease } from "../state/index.js";
+import { EntityNotFoundError, isValidTransition } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
@@ -21,6 +21,7 @@ import {
   runCustomGates,
 } from "../gates/index.js";
 import { runCommand } from "../executor/index.js";
+import type { ProjectContextRegistry } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -34,6 +35,22 @@ function textResult(text: string, isError?: boolean): CallToolResult {
 }
 
 const activeTaskCompletions = new Map<string, string>();
+const projectMutationQueues = new Map<string, Promise<void>>();
+
+export async function withProjectMutationLock<T>(projectRoot: string, operation: () => Promise<T>): Promise<T> {
+  const previous = projectMutationQueues.get(projectRoot) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const hasPrevious = projectMutationQueues.has(projectRoot);
+  projectMutationQueues.set(projectRoot, current);
+  if (hasPrevious) await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (projectMutationQueues.get(projectRoot) === current) projectMutationQueues.delete(projectRoot);
+  }
+}
 
 function completionKey(projectRoot: string, taskId: string): string {
   return `${projectRoot}\u0000${taskId}`;
@@ -84,9 +101,22 @@ function terminalCompletionResult(
 
 export interface TaskStartParams {
   task_id: string;
+  owner_id?: string;
+  takeover?: boolean;
+  lease_ms?: number;
+  project_root?: string;
 }
 
 export async function handleTaskStart(
+  params: TaskStartParams,
+  stateManager: StateManager,
+  config: RigorConfig | null,
+  projectRoot: string,
+): Promise<CallToolResult> {
+  return withProjectMutationLock(projectRoot, () => handleTaskStartUnlocked(params, stateManager, config, projectRoot));
+}
+
+async function handleTaskStartUnlocked(
   params: TaskStartParams,
   stateManager: StateManager,
   config: RigorConfig | null,
@@ -116,8 +146,18 @@ export async function handleTaskStart(
     throw error;
   }
 
-  // 3. Entry criteria: task must be pending or failed
-  if (task.status !== "pending" && task.status !== "failed") {
+  const now = Date.now();
+  const leaseTimestamp = task.lease ? Date.parse(task.lease.lease_expires_at) : undefined;
+  if (task.lease && !Number.isFinite(leaseTimestamp)) {
+    return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
+  }
+  const activeLease = task.lease && leaseTimestamp! > now;
+  if (activeLease && task.lease!.owner_id !== (params.owner_id ?? "legacy")) {
+    return textResult(`Task "${params.task_id}" is owned by "${task.lease!.owner_id}" until ${task.lease!.lease_expires_at}.`, true);
+  }
+
+  const expiredTakeover = Boolean(params.takeover && task.status === "doing" && task.lease && !activeLease);
+  if (task.status !== "pending" && task.status !== "failed" && !expiredTakeover) {
     return textResult(
       `Task "${params.task_id}" is in "${task.status}" status. ` +
         `Only "pending" or "failed" tasks can be started.`,
@@ -190,8 +230,27 @@ export async function handleTaskStart(
     }
   }
 
-  // 6. Transition to "doing"
-  stateManager.transition(params.task_id, "doing");
+  // 6. Transition to "doing" and issue the lease in one persisted state update
+  const attemptId = crypto.randomUUID();
+  const lease: TaskLease = {
+    owner_id: (params.owner_id ?? "legacy"),
+    attempt_id: attemptId,
+    lease_expires_at: new Date(Date.now() + (params.lease_ms ?? 300000)).toISOString(),
+    ...(task.lease && !activeLease ? { takeover_history: [...(task.lease.takeover_history ?? []), { ...task.lease, taken_over_at: new Date().toISOString() }] } : {}),
+  };
+  const leasedState = stateManager.load();
+  if (leasedState) {
+    for (const phase of leasedState.phases) for (const epic of phase.epics) for (const currentTask of epic.tasks) {
+      if (currentTask.id === params.task_id) {
+        if (!isValidTransition(currentTask.status, "doing")) {
+          return textResult(`Task "${params.task_id}" changed before its lease could be issued.`, true);
+        }
+        currentTask.status = "doing";
+        currentTask.lease = lease;
+      }
+    }
+    stateManager.save(leasedState);
+  }
 
   const lines: string[] = [];
   lines.push(`Task ${params.task_id} started: ${task.name}`);
@@ -210,6 +269,9 @@ export async function handleTaskStart(
 
 export interface TaskCompleteParams {
   task_id: string;
+  owner_id?: string;
+  attempt_id?: string;
+  project_root?: string;
 }
 
 export async function handleTaskComplete(
@@ -218,7 +280,17 @@ export async function handleTaskComplete(
   config: RigorConfig | null,
   projectRoot: string,
 ): Promise<CallToolResult> {
-  // Reload config fresh from disk when not explicitly supplied (see handleTaskStart).
+  const activeAttemptId = activeTaskCompletions.get(completionKey(projectRoot, params.task_id));
+  if (activeAttemptId) return Promise.resolve(activeCompletionResult(params.task_id, activeAttemptId));
+  return withProjectMutationLock(projectRoot, () => handleTaskCompleteUnlocked(params, stateManager, config, projectRoot));
+}
+
+async function handleTaskCompleteUnlocked(
+  params: TaskCompleteParams,
+  stateManager: StateManager,
+  config: RigorConfig | null,
+  projectRoot: string,
+): Promise<CallToolResult> {
   const cfg = config ?? loadConfig(projectRoot);
 
   // 1. Load state, verify cycle exists
@@ -264,6 +336,17 @@ export async function handleTaskComplete(
     );
   }
 
+  const legacyCompletion = params.owner_id === undefined && params.attempt_id === undefined;
+  if (!legacyCompletion && (params.owner_id === undefined || params.attempt_id === undefined || !task.lease || task.lease.owner_id !== params.owner_id || task.lease.attempt_id !== params.attempt_id)) {
+    return textResult(`Task "${params.task_id}" is not owned by owner "${(params.owner_id ?? "legacy")}" with attempt "${(params.attempt_id ?? task.lease?.attempt_id ?? "legacy")}".`, true);
+  }
+  if (task.lease && !Number.isFinite(Date.parse(task.lease.lease_expires_at))) {
+    return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
+  }
+  if (task.lease && Date.parse(task.lease.lease_expires_at) <= Date.now() && !legacyCompletion) {
+    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Start it with explicit takeover.`, true);
+  }
+
   const key = completionKey(projectRoot, params.task_id);
   const activeAttemptId = activeTaskCompletions.get(key);
   if (activeAttemptId) {
@@ -280,8 +363,8 @@ export async function handleTaskComplete(
 
   // 3. Persist an in-progress attempt before running checks so interrupted work is auditable.
   const startedAt = new Date().toISOString();
-  const attemptId = crypto.randomUUID();
-  activeTaskCompletions.set(key, attemptId);
+    const attemptId = params.attempt_id ?? task.lease?.attempt_id ?? crypto.randomUUID();
+    activeTaskCompletions.set(key, attemptId);
   try {
     const inProgressEvidence: GateEvidence = {
       gate: "gate_0",
@@ -289,7 +372,9 @@ export async function handleTaskComplete(
       passed: false,
       timestamp: startedAt,
       checks: [],
-      gate_0_attempt: { version: 1, id: attemptId, started_at: startedAt },
+      gate_0_attempt: { version: 1, id: attemptId,
+             owner_id: (params.owner_id ?? "legacy"),
+             started_at: startedAt },
     };
     const inProgressEvidencePath = evidenceManager.save(inProgressEvidence);
     const inProgressState = stateManager.load();
@@ -313,21 +398,21 @@ export async function handleTaskComplete(
     let evidencePath: string;
     try {
       gate0Result = await checkGate0Exit(params.task_id, cfg, projectRoot, {
-      onCheckStart: (progress) => {
-        evidenceManager.save({
-          ...inProgressEvidence,
-          gate_0_attempt: {
-            version: 1,
-            id: attemptId,
-            started_at: startedAt,
-            current_check: {
-              ...progress,
-              started_at: new Date().toISOString(),
+        onCheckStart: (progress) => {
+          evidenceManager.save({
+            ...inProgressEvidence,
+            gate_0_attempt: {
+              version: 1,
+              id: attemptId,
+              started_at: startedAt,
+              current_check: {
+                ...progress,
+                started_at: new Date().toISOString(),
+              },
             },
-          },
-        });
-      },
-    });
+          });
+        },
+      });
     const outcome = gate0Result.passed
       ? "passed"
       : gate0Result.checks.some((check) => check.timed_out)
@@ -550,24 +635,28 @@ export function registerGateTools(
   server: McpServer,
   stateManager: StateManager,
   projectRoot: string,
+  registry?: ProjectContextRegistry,
 ): void {
+  const context = (root: string) => registry?.getByRoot(root);
   // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
   // per invocation — config edits take effect without a server restart.
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
-    async (params) => {
-      return handleTaskStart(params, stateManager, null, projectRoot);
+ { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), takeover: z.boolean().optional(), lease_ms: z.number().int().positive().optional(), project_root: z.string().optional() },
+     async (params) => {
+       const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+       return handleTaskStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
   server.tool(
     "task_complete",
     "Complete a task — runs Gate 0 exit checks (tests, coverage, lint), saves evidence",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
-    async (params) => {
-      return handleTaskComplete(params, stateManager, null, projectRoot);
+ { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: z.string().optional() },
+     async (params) => {
+       const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+       return handleTaskComplete(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 }

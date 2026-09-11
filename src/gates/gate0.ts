@@ -103,6 +103,15 @@ export async function checkGate0Exit(
         configured_timeout_ms: check.timeout_ms,
         timed_out: result.timed_out,
         cancelled: result.cancelled,
+        attempt_id: result.attempt_id,
+        started_at: result.started_at,
+        finished_at: result.finished_at,
+        termination_reason: result.termination_reason,
+        signal: result.signal,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        stdout_truncated: result.stdout_truncated,
+        stderr_truncated: result.stderr_truncated,
       });
       continue;
     }
@@ -131,6 +140,18 @@ export async function checkGate0Exit(
       command: check.command,
       exit_code: result.exit_code,
       duration_ms: result.duration_ms,
+      configured_timeout_ms: result.configured_timeout_ms,
+      timed_out: result.timed_out,
+      cancelled: result.cancelled,
+      attempt_id: result.attempt_id,
+      started_at: result.started_at,
+      finished_at: result.finished_at,
+      termination_reason: result.termination_reason,
+      signal: result.signal,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      stdout_truncated: result.stdout_truncated,
+      stderr_truncated: result.stderr_truncated,
     });
 
     // -----------------------------------------------------------------
