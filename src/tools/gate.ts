@@ -242,7 +242,15 @@ async function handleTaskStartUnlocked(
   if (leasedState) {
     for (const phase of leasedState.phases) for (const epic of phase.epics) for (const currentTask of epic.tasks) {
       if (currentTask.id === params.task_id) {
-        if (!isValidTransition(currentTask.status, "doing")) {
+        const currentLeaseExpiresAt = currentTask.lease
+          ? Date.parse(currentTask.lease.lease_expires_at)
+          : undefined;
+        const transitionAllowed = expiredTakeover
+          ? currentTask.status === "doing" &&
+            Number.isFinite(currentLeaseExpiresAt) &&
+            currentLeaseExpiresAt! <= Date.now()
+          : isValidTransition(currentTask.status, "doing");
+        if (!transitionAllowed) {
           return textResult(`Task "${params.task_id}" changed before its lease could be issued.`, true);
         }
         currentTask.status = "doing";
