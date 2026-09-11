@@ -42,9 +42,9 @@ git ls-remote --heads origin develop
 | Priority | Source | Rule |
 |----------|--------|------|
 | **1 -- highest** | PR template | Explicit branch name in `.github/pull_request_template.md` -- overrides everything |
-| **2** | develop + user | Probe C finds `develop` AND differs from Probe A -- confirm with user which target |
+| **2** | develop + user | Probe C finds `develop` AND differs from Probe A -- use the formal host question mechanism to choose the target |
 | **3 -- fallback** | GitHub API | Use value from Probe A |
-| **4** | Neither | STOP -- confirm with the user |
+| **4** | Neither | STOP after using the formal host question mechanism to choose or provide the target |
 
 **Why not develop-first:** a repo may have a stale `develop` branch while the real PR target is `main`. The GitHub API is the authoritative source; `develop` existence triggers a confirmation step instead of a silent assumption.
 
