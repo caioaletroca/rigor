@@ -164,6 +164,73 @@ describe("gate tools", async () => {
       expect(text).toContain("Only");
     });
 
+    it("grants a new lease when taking over an expired lease", async () => {
+      await handleTaskStart(
+        { task_id: "1.1.2", owner_id: "owner-a" },
+        stateManager,
+        config,
+        tempDir,
+      );
+      const originalLease = stateManager.getTask("1.1.2").lease!;
+
+      const state = stateManager.load()!;
+      const expiring = state.phases[0].epics[0].tasks.find((t) => t.id === "1.1.2")!;
+      expiring.lease!.lease_expires_at = new Date(Date.now() - 1000).toISOString();
+      stateManager.save(state);
+
+      const result = await handleTaskStart(
+        { task_id: "1.1.2", owner_id: "owner-b", takeover: true },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(extractText(result)).toContain("Task 1.1.2 started");
+
+      const task = stateManager.getTask("1.1.2");
+      expect(task.status).toBe("doing");
+      expect(task.lease?.owner_id).toBe("owner-b");
+      expect(task.lease?.attempt_id).not.toBe(originalLease.attempt_id);
+      expect(Date.parse(task.lease!.lease_expires_at)).toBeGreaterThan(Date.now());
+      expect(task.lease?.takeover_history).toHaveLength(1);
+      expect(task.lease?.takeover_history?.[0].owner_id).toBe("owner-a");
+      expect(task.lease?.takeover_history?.[0].taken_over_at).toBeDefined();
+    });
+
+    it("rejects a competing takeover after the first takeover issues a live lease", async () => {
+      await handleTaskStart(
+        { task_id: "1.1.2", owner_id: "owner-a" },
+        stateManager,
+        config,
+        tempDir,
+      );
+      const state = stateManager.load()!;
+      const expiring = state.phases[0].epics[0].tasks.find((t) => t.id === "1.1.2")!;
+      expiring.lease!.lease_expires_at = new Date(Date.now() - 1000).toISOString();
+      stateManager.save(state);
+
+      const [first, second] = await Promise.all([
+        handleTaskStart(
+          { task_id: "1.1.2", owner_id: "owner-b", takeover: true },
+          stateManager,
+          config,
+          tempDir,
+        ),
+        handleTaskStart(
+          { task_id: "1.1.2", owner_id: "owner-c", takeover: true },
+          stateManager,
+          config,
+          tempDir,
+        ),
+      ]);
+
+      expect(first.isError).toBeUndefined();
+      expect(second.isError).toBe(true);
+      expect(extractText(second)).toContain('owned by "owner-b"');
+      expect(stateManager.getTask("1.1.2").lease?.owner_id).toBe("owner-b");
+    });
+
     // 3. Rejects when no cycle exists
     it("returns error when no cycle exists", async () => {
       // Create a fresh state manager with no state
