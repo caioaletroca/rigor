@@ -39,6 +39,8 @@ describe("multi-project server isolation", () => {
     const tools = (serverContext.server as unknown as { _registeredTools: Record<string, { handler: (params?: unknown) => Promise<unknown> }> })._registeredTools;
     const init = (params: unknown) => tools.cycle_init.handler(params);
     const reload = (params: unknown) => tools.cycle_reload.handler(params);
+    const status = (params: unknown) => tools.cycle_status.handler(params);
+    const diagnose = (params: unknown) => tools.cycle_diagnose.handler(params);
 
     const first = await init({ plan_path: "plan.md" });
     const second = await init({ plan_path: "plan.md", project_root: projectB });
@@ -52,6 +54,50 @@ describe("multi-project server isolation", () => {
 
     const reloaded = await reload({ project_root: projectB, plan_path: "plan.md" });
     expect((reloaded as { isError?: boolean }).isError).toBeUndefined();
+
+    const statusB = await status({ project_root: projectB });
+    expect(text(statusB as { content: Array<{ type: string; text?: string }> })).toContain(projectB);
+
+    const statusA = await status({ project_root: projectA });
+    expect(text(statusA as { content: Array<{ type: string; text?: string }> })).toContain(projectA);
+
+    const diagnosedB = await diagnose({ project_root: projectB });
+    expect(text(diagnosedB as { content: Array<{ type: string; text?: string }> })).not.toContain("No active cycle");
+  });
+
+  it("routes registered lifecycle tools to a non-default project after init", async () => {
+    const serverRoot = makeProject("server-root");
+    const worktree = makeProject("worktree");
+    roots.push(serverRoot, worktree);
+
+    const serverContext = createServer(serverRoot);
+    const tools = (serverContext.server as unknown as { _registeredTools: Record<string, { handler: (params?: unknown) => Promise<unknown> }> })._registeredTools;
+
+    await tools.cycle_init.handler({ plan_path: "plan.md", project_root: worktree });
+
+    const status = await tools.cycle_status.handler({ project_root: worktree });
+    const statusText = text(status as { content: Array<{ type: string; text?: string }> });
+    expect(statusText).not.toContain("No active cycle");
+    expect(statusText).toContain(worktree);
+
+    const diagnosed = await tools.cycle_diagnose.handler({ project_root: worktree });
+    expect(text(diagnosed as { content: Array<{ type: string; text?: string }> })).not.toContain("No active cycle");
+
+    const managed = await tools.task_manage.handler({
+      task_id: "1.1.1",
+      action: "force_status",
+      target_status: "done",
+      confirm: true,
+      project_root: worktree,
+    });
+    expect((managed as { isError?: boolean }).isError).toBeUndefined();
+    expect(serverContext.registry.getByRoot(worktree).stateManager.getTask("1.1.1").status).toBe("done");
+
+    const review = await tools.review_start.handler({ epic_id: "1.1", project_root: worktree });
+    expect(text(review as { content: Array<{ type: string; text?: string }> })).not.toContain("No active cycle");
+
+    const serverStatus = await tools.cycle_status.handler({ project_root: serverRoot });
+    expect(text(serverStatus as { content: Array<{ type: string; text?: string }> })).toContain("No active cycle");
   });
 
   it("supports legacy fallback calls and rejects invalid or ambiguous relative paths", async () => {
