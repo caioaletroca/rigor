@@ -9,6 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { SyncManager } from "../sync/index.js";
 import type { SyncResult } from "../sync/index.js";
+import type { ProjectContextRegistry } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -166,14 +167,18 @@ export function handleSyncEnable(
 export function registerSyncTools(
   server: McpServer,
   syncManager?: SyncManager,
+  registry?: ProjectContextRegistry,
+  projectRoot?: string,
 ): void {
-  server.tool("sync_status", {}, () => {
-    return handleSyncStatus(syncManager);
+  server.tool("sync_status", { project_root: z.string().optional().describe("Canonical project root for this request") }, (params) => {
+    const manager = params.project_root && registry ? registry.getByRoot(params.project_root).syncManager : syncManager;
+    return handleSyncStatus(manager);
   });
 
   server.tool(
     "sync_retry",
     {
+      project_root: z.string().optional().describe("Canonical project root for this request"),
       provider: z.string().describe("Name of the provider to retry events for"),
       count: z
         .number()
@@ -184,25 +189,29 @@ export function registerSyncTools(
         .describe("Number of recent events to retry (default: 5)"),
     },
     async (params) => {
-      return handleSyncRetry(params, syncManager);
+      const manager = params.project_root && registry ? registry.getByRoot(params.project_root).syncManager : syncManager;
+      return handleSyncRetry(params, manager);
     },
   );
 
   server.tool(
     "sync_replay",
     {
+      project_root: z.string().optional().describe("Canonical project root for this request"),
       provider: z
         .string()
         .describe("Name of the provider to replay all events to"),
     },
     async (params) => {
-      return handleSyncReplay(params, syncManager);
+      const manager = params.project_root && registry ? registry.getByRoot(params.project_root).syncManager : syncManager;
+      return handleSyncReplay(params, manager);
     },
   );
 
   server.tool(
     "sync_enable",
     {
+      project_root: z.string().optional().describe("Canonical project root for this request"),
       provider: z
         .string()
         .describe(
@@ -210,7 +219,8 @@ export function registerSyncTools(
         ),
     },
     (params) => {
-      return handleSyncEnable(params, syncManager);
+      const manager = params.project_root && registry ? registry.getByRoot(params.project_root).syncManager : syncManager;
+      return handleSyncEnable(params, manager);
     },
   );
 }

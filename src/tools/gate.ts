@@ -21,6 +21,7 @@ import {
   runCustomGates,
 } from "../gates/index.js";
 import { runCommand } from "../executor/index.js";
+import type { ProjectContextRegistry } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -84,6 +85,7 @@ function terminalCompletionResult(
 
 export interface TaskStartParams {
   task_id: string;
+  project_root?: string;
 }
 
 export async function handleTaskStart(
@@ -210,6 +212,7 @@ export async function handleTaskStart(
 
 export interface TaskCompleteParams {
   task_id: string;
+  project_root?: string;
 }
 
 export async function handleTaskComplete(
@@ -550,24 +553,28 @@ export function registerGateTools(
   server: McpServer,
   stateManager: StateManager,
   projectRoot: string,
+  registry?: ProjectContextRegistry,
 ): void {
+  const context = (root: string) => registry?.getByRoot(root);
   // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
   // per invocation — config edits take effect without a server restart.
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
-    async (params) => {
-      return handleTaskStart(params, stateManager, null, projectRoot);
+{ task_id: z.string().describe("Task id (e.g. 1.1.1)"), project_root: z.string().optional() },
+     async (params) => {
+       const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+       return handleTaskStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
   server.tool(
     "task_complete",
     "Complete a task — runs Gate 0 exit checks (tests, coverage, lint), saves evidence",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)") },
-    async (params) => {
-      return handleTaskComplete(params, stateManager, null, projectRoot);
+{ task_id: z.string().describe("Task id (e.g. 1.1.1)"), project_root: z.string().optional() },
+     async (params) => {
+       const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+       return handleTaskComplete(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 }

@@ -101,6 +101,7 @@ export interface PhaseState {
 export interface CycleState {
   cycle_id: string;
   plan_path: string;
+  project_root?: string;
   current_phase: number;
   created_at: string;
   updated_at: string;

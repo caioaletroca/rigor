@@ -30,6 +30,7 @@ import type { EvidenceManager } from "../evidence/index.js";
 import { DEFAULTS } from "../config/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { isGate0AttemptActive } from "./gate.js";
+import type { ProjectContextRegistry } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -1120,13 +1121,16 @@ export function registerRecoveryTools(
   evidenceManager: EvidenceManager,
   projectRoot: string,
   config: RigorConfig,
+  registry?: ProjectContextRegistry,
 ): void {
+  const context = () => registry?.getByRoot(stateManager.load()?.project_root ?? projectRoot);
   server.tool(
     "cycle_reset",
     "Preview or reset the current cycle — deletes state and evidence files",
     { confirm: z.boolean().describe("Set to true to actually delete; false for preview") },
     async (params) => {
-      return handleCycleReset(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context();
+       return handleCycleReset(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -1140,7 +1144,8 @@ export function registerRecoveryTools(
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
     },
     async (params) => {
-      return handleTaskManage(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context();
+       return handleTaskManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -1155,7 +1160,8 @@ export function registerRecoveryTools(
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
     },
     async (params) => {
-      return handleEpicManage(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context();
+       return handleEpicManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -1169,7 +1175,8 @@ export function registerRecoveryTools(
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
     },
     async (params) => {
-      return handlePhaseManage(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context();
+       return handlePhaseManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -1177,7 +1184,8 @@ export function registerRecoveryTools(
     "cycle_diagnose",
     "Run diagnostics on the current cycle — validation, stuck detection, evidence audit",
     async () => {
-      return handleCycleDiagnose(stateManager, evidenceManager, projectRoot, config);
+      const ctx = context();
+       return handleCycleDiagnose(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot, ctx?.config ?? config);
     },
   );
 }

@@ -46,8 +46,12 @@ export async function runCustomGates(
       timeout_ms: gate.timeout_ms,
     });
 
-    const passed = result.exit_code === 0;
-    const detail = result.timed_out
+    const passed = result.exit_code === 0 && result.termination_reason !== "spawn_error" && result.termination_reason !== "output_limit";
+    const detail = result.termination_reason === "output_limit"
+      ? `Custom gate "${gate.name}" exceeded the output limit`
+      : result.termination_reason === "spawn_error"
+        ? `Custom gate "${gate.name}" could not be spawned`
+        : result.timed_out
       ? `Custom gate "${gate.name}" timed out`
       : result.cancelled
         ? `Custom gate "${gate.name}" was cancelled`
@@ -59,11 +63,21 @@ export async function runCustomGates(
       name: `custom:${gate.name}`,
       passed,
       detail,
-      command: gate.command,
+      command: result.command,
       exit_code: result.exit_code,
       duration_ms: result.duration_ms,
+      configured_timeout_ms: result.configured_timeout_ms,
       timed_out: result.timed_out,
       cancelled: result.cancelled,
+      attempt_id: result.attempt_id,
+      started_at: result.started_at,
+      finished_at: result.finished_at,
+      termination_reason: result.termination_reason,
+      signal: result.signal,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      stdout_truncated: result.stdout_truncated,
+      stderr_truncated: result.stderr_truncated,
     });
 
     // Short-circuit: first failure stops remaining gates.

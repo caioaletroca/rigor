@@ -20,6 +20,7 @@ import type { EvidenceManager, GateEvidence } from "../evidence/index.js";
 import { ArchiveManager } from "../archive/manager.js";
 import { checkGate8Exit, checkGate9Exit, runCustomGates, Gate9Criteria } from "../gates/index.js";
 import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
+import type { ProjectContextRegistry } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -582,7 +583,9 @@ export function registerReviewTools(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   projectRoot: string,
+  registry?: ProjectContextRegistry,
 ): void {
+  const context = () => registry?.getByRoot(stateManager.load()?.project_root ?? projectRoot);
   const archiveManager = new ArchiveManager(projectRoot);
   // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
   // per invocation — config edits take effect without a server restart.
@@ -591,7 +594,8 @@ export function registerReviewTools(
     "Start code review for an epic — verifies all tasks are done and passed Gate 0",
     { epic_id: z.string().describe("Epic id (e.g. 1.1)") },
     async (params) => {
-      return handleReviewStart(params, stateManager, null, projectRoot);
+      const ctx = context();
+       return handleReviewStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -605,7 +609,8 @@ export function registerReviewTools(
         .describe("JSON array of ReviewFindings objects"),
     },
     async (params) => {
-      return handleReviewSubmit(params, stateManager, evidenceManager, null, projectRoot);
+      const ctx = context();
+       return handleReviewSubmit(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -614,7 +619,7 @@ export function registerReviewTools(
     "Start acceptance for an epic — verifies Gate 8 passed",
     { epic_id: z.string().describe("Epic id (e.g. 1.1)") },
     async (params) => {
-      return handleAcceptStart(params, stateManager);
+      return handleAcceptStart(params, context()?.stateManager ?? stateManager);
     },
   );
 
@@ -632,7 +637,8 @@ export function registerReviewTools(
         .describe("Whether the user has approved the epic"),
     },
     async (params) => {
-      return handleAcceptSubmit(params, stateManager, evidenceManager, null, projectRoot);
+      const ctx = context();
+       return handleAcceptSubmit(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -640,7 +646,8 @@ export function registerReviewTools(
     "phase_advance",
     "Advance to the next phase — verifies all epics in current phase are done",
     async () => {
-      return handlePhaseAdvance(stateManager, evidenceManager, archiveManager);
+      const ctx = context();
+       return handlePhaseAdvance(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx ? new ArchiveManager(ctx.project_root) : archiveManager);
     },
   );
 }

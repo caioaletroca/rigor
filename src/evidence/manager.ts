@@ -33,6 +33,15 @@ export interface CheckResult {
   configured_timeout_ms?: number;
   timed_out?: boolean;
   cancelled?: boolean;
+  attempt_id?: string;
+  started_at?: string;
+  finished_at?: string;
+  termination_reason?: string;
+  signal?: string;
+  stdout?: string;
+  stderr?: string;
+  stdout_truncated?: boolean;
+  stderr_truncated?: boolean;
 }
 
 export type Gate0AttemptOutcome =

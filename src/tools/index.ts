@@ -4,6 +4,8 @@
 
 export { registerCycleTools } from "./cycle.js";
 export type { CycleInitParams } from "./cycle.js";
+export { ProjectContextRegistry, resolveProjectRoot } from "../context.js";
+export type { ProjectRootResolution, RequestContext } from "../context.js";
 export { handleCycleInit, handleCycleStatus } from "./cycle.js";
 
 export { registerGateTools } from "./gate.js";
