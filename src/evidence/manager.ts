@@ -62,6 +62,7 @@ export interface Gate0AttemptProgress {
 export interface Gate0Attempt {
   version: 1;
   id: string;
+  owner_id?: string;
   started_at: string;
   current_check?: Gate0AttemptProgress;
   finished_at?: string;
@@ -79,20 +80,31 @@ export interface GateEvidence {
 }
 
 export type Gate0AttemptClassification =
+  | "active"
   | "live"
+  | "stale"
   | "interrupted"
   | "terminal_passed"
   | "terminal_failed"
+  | "failed"
   | "inconsistent";
 
 export function classifyGate0Attempt(
   evidence: GateEvidence | null,
   taskStatus: string,
   isActive: boolean,
+  staleAfterMs = Number.POSITIVE_INFINITY,
+  now = Date.now(),
 ): Gate0AttemptClassification | null {
   const attempt = evidence?.gate_0_attempt;
   if (!attempt) return null;
-  if (!attempt.finished_at) return isActive ? "live" : "interrupted";
+  const startedAt = Date.parse(attempt.started_at);
+  if (!Number.isFinite(startedAt)) return "inconsistent";
+  if (attempt.finished_at && !Number.isFinite(Date.parse(attempt.finished_at))) return "inconsistent";
+  if (!attempt.finished_at) {
+    if (isActive) return "live";
+    return now - startedAt >= staleAfterMs ? "stale" : "interrupted";
+  }
   if (!attempt.outcome || (attempt.outcome === "passed") !== evidence.passed) {
     return "inconsistent";
   }
@@ -149,12 +161,23 @@ export class EvidenceManager {
     }
 
     const attemptPath = this.attemptPathFor(evidence.entity_id, attempt.id);
-    if (existsSync(attemptPath)) {
-      throw new Error(`Gate 0 attempt history already exists: ${attempt.id}`);
-    }
     mkdirSync(join(this.evidenceDir, `gate_0-task-${evidence.entity_id}`), { recursive: true });
-    this.write(attemptPath, evidence);
-    return this.save(evidence);
+    if (!existsSync(attemptPath)) this.write(attemptPath, evidence);
+    const current = this.load("gate_0", evidence.entity_id);
+    if (!current) {
+      this.write(this.pathFor("gate_0", evidence.entity_id), evidence);
+    } else if (current.gate_0_attempt?.id === attempt.id) {
+      this.write(this.pathFor("gate_0", evidence.entity_id), evidence);
+    } else {
+      const currentFinishedAt = current.gate_0_attempt?.finished_at ?? current.gate_0_attempt?.started_at ?? "";
+      const attemptFinishedAt = attempt.finished_at ?? attempt.started_at ?? "";
+      if (attemptFinishedAt > currentFinishedAt) {
+        this.write(this.pathFor("gate_0", evidence.entity_id), evidence);
+      } else {
+        throw new Error(`Terminal Gate 0 attempt ${attempt.id} is not newer than the canonical attempt.`);
+      }
+    }
+    return this.pathFor("gate_0", evidence.entity_id);
   }
 
   pathFor(gate: string, entityId: string): string {

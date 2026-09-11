@@ -102,9 +102,10 @@ export function handleCycleInit(
   projectRoot: string,
   registry?: ProjectContextRegistry,
 ): CallToolResult {
+  const requestRoot = params.project_root ?? projectRoot;
   const resolvedPath = isAbsolute(params.plan_path)
     ? params.plan_path
-    : resolve(projectRoot, params.plan_path);
+    : resolve(requestRoot, params.plan_path);
 
   // Prefer the plan's git root when an absolute plan path points outside the
   // server's configured root. State/evidence then land under the correct
@@ -166,8 +167,8 @@ export function handleCycleInit(
 // ---------------------------------------------------------------------------
 
 export interface CycleReloadParams {
-  /** Optional plan path override. Defaults to the cycle's stored plan_path. */
   plan_path?: string;
+  project_root?: string;
 }
 
 /**
@@ -187,11 +188,23 @@ export function handleCycleReload(
   // server root, target that plan's git root. Without an override (or with a
   // relative one), the server root stays authoritative and behavior is
   // unchanged.
-  const loadedRoot = stateManager.load()?.project_root;
-  const effectiveRoot =
-    params.plan_path && isAbsolute(params.plan_path)
-      ? resolveProjectRoot(params.plan_path, projectRoot)
-      : loadedRoot ?? projectRoot;
+  const loadedState = stateManager.load();
+  const loadedRoot = loadedState?.project_root;
+  const requestRoot = params.project_root ?? loadedRoot ?? projectRoot;
+  const planPath = params.plan_path
+    ? isAbsolute(params.plan_path) ? params.plan_path : resolve(requestRoot, params.plan_path)
+    : loadedState?.plan_path;
+  if (!planPath) return textResult("No active cycle. Run cycle_init first.", true);
+  const effectiveRoot = params.project_root
+    ? resolveCanonicalProjectRoot({
+        project_root: params.project_root,
+        plan_path: planPath,
+        fallback_root: requestRoot,
+      }).project_root
+    : loadedRoot ?? projectRoot;
+  if (loadedRoot && effectiveRoot !== loadedRoot) {
+    return textResult(`Invalid reload project_root: active cycle belongs to "${loadedRoot}"; use that root.`, true);
+  }
   const usingDerivedRoot = effectiveRoot !== projectRoot;
   const context = registry?.getByRoot(effectiveRoot);
   const sm = context?.stateManager ?? (usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager);
@@ -200,12 +213,6 @@ export function handleCycleReload(
   if (state === null) {
     return textResult("No active cycle. Run cycle_init first.", true);
   }
-
-  const planPath = params.plan_path
-    ? isAbsolute(params.plan_path)
-      ? params.plan_path
-      : resolve(projectRoot, params.plan_path)
-    : state.plan_path;
 
   let plan;
   try {
@@ -399,8 +406,8 @@ export function registerCycleTools(
     "cycle_init",
     "Initialize a new development cycle from a plan.md file",
     {
-      plan_path: z.string().describe("Relative or absolute path to the plan.md file"),
-      project_root: z.string().optional().describe("Canonical project root for this request"),
+      plan_path: z.string().describe("Absolute plan path, or relative to project_root or the legacy server --project-root fallback"),
+      project_root: z.string().optional().describe("Absolute Git repository root; takes precedence over the server --project-root fallback"),
     },
     async (params) => {
       const root = params.project_root ?? projectRoot;
@@ -413,11 +420,11 @@ export function registerCycleTools(
     "cycle_reload",
     "Re-parse the plan and merge new phases/epics/tasks into the running cycle without losing progress (rolling-wave elaboration)",
     {
-      plan_path: z
-        .string()
-        .optional()
-        .describe("Optional plan path override; defaults to the cycle's stored plan_path"),
-      project_root: z.string().optional().describe("Canonical project root for this request"),
+       plan_path: z
+         .string()
+         .optional()
+         .describe("Absolute plan path, or relative to project_root; defaults to the stored plan_path"),
+       project_root: z.string().optional().describe("Absolute Git repository root; overrides the server default and anchors relative plan_path"),
     },
     async (params) => {
       const root = params.project_root ?? projectRoot;

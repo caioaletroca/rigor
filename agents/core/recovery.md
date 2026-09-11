@@ -25,7 +25,10 @@ Call `cycle_diagnose` to get the current state of the cycle. This returns:
 - Stuck entities (tasks, epics, phases that cannot progress)
 - Missing evidence (gates that lack required validation data)
 - Validation errors (state machine violations, missing dependencies)
+- Gate 0 attempt identity, latest outcome, prior outcomes, and actionable recovery recommendations
 - Current position in the cycle (which phase/epic/task is active)
+
+After a restart or reconnect, diagnose before any management action. Live in-process attempts are left untouched. Inactive unfinished attempts are classified as interrupted, while attempts older than the stale threshold are classified as stale; both are finalized as interrupted and moved to `failed`. Follow the recommendation in the report: retry interrupted, stale, or failed tasks; take no action after a recovered pass; reset evidence only for inconsistent evidence.
 
 Read the diagnostic output carefully before taking any action.
 

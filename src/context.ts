@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { dirname, isAbsolute, normalize, resolve, join } from "node:path";
+import { dirname, isAbsolute, normalize, resolve, join, relative } from "node:path";
 import { realpathSync } from "node:fs";
 import { StateManager } from "./state/index.js";
 import { EvidenceManager } from "./evidence/index.js";
@@ -38,7 +38,15 @@ export function resolveProjectRoot(options: {
   plan_path?: string;
   fallback_root: string;
 }): ProjectRootResolution {
+  if (!isAbsolute(options.fallback_root)) {
+    throw new Error(`Invalid fallback root "${options.fallback_root}": expected an absolute path.`);
+  }
   const fallback = canonicalize(options.fallback_root);
+  if (options.project_root && !isAbsolute(options.project_root)) {
+    throw new Error(
+      `Ambiguous project_root "${options.project_root}": use an absolute path or provide a Git-rooted request context.`,
+    );
+  }
   if (options.project_root) {
     const explicit = canonicalize(options.project_root);
     if (!existsSync(explicit) || !statSync(explicit).isDirectory()) {
@@ -47,11 +55,28 @@ export function resolveProjectRoot(options: {
     if (!existsSync(join(explicit, ".git"))) {
       throw new Error("Invalid project_root: expected a Git repository root.");
     }
+    if (options.plan_path && isAbsolute(options.plan_path)) {
+      const plan = canonicalize(options.plan_path);
+      const pathFromRoot = relative(explicit, plan);
+      if (pathFromRoot.startsWith("..") || isAbsolute(pathFromRoot)) {
+        throw new Error(`Invalid plan_path "${options.plan_path}": it must be inside project_root "${explicit}".`);
+      }
+    }
     return { project_root: explicit, source: "explicit" };
   }
-  if (options.plan_path && isAbsolute(options.plan_path)) {
+  if (options.plan_path) {
+    if (!isAbsolute(options.plan_path)) {
+      throw new Error(
+        `Ambiguous plan_path "${options.plan_path}": use an absolute path or provide project_root to resolve it.`,
+      );
+    }
     const planRoot = findGitRoot(dirname(normalize(options.plan_path)));
     if (planRoot) return { project_root: planRoot, source: "plan" };
+    return {
+      project_root: fallback,
+      source: "fallback",
+      warning: `Plan path "${options.plan_path}" is not inside a Git repository; using the server fallback root.`,
+    };
   }
   return {
     project_root: fallback,
@@ -77,9 +102,13 @@ export class ProjectContextRegistry {
   ) {}
 
   get(options: Parameters<typeof resolveProjectRoot>[0]): RequestContext {
+    const fallbackRoot = options.fallback_root ?? this.defaultRoot ?? process.cwd();
     const resolution = resolveProjectRoot({
       ...options,
-      fallback_root: options.fallback_root ?? this.defaultRoot ?? process.cwd(),
+      project_root: options.project_root && !isAbsolute(options.project_root)
+        ? resolve(fallbackRoot, options.project_root)
+        : options.project_root,
+      fallback_root: fallbackRoot,
     });
     const config = loadConfig(resolution.project_root);
     const existing = this.contexts.get(resolution.project_root);

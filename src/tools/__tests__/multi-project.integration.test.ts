@@ -30,6 +30,47 @@ describe("multi-project server isolation", () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
+  it("switches projects through registered cycle tools in one server session", async () => {
+    const projectA = makeProject("switch-a");
+    const projectB = makeProject("switch-b");
+    roots.push(projectA, projectB);
+
+    const serverContext = createServer(projectA);
+    const tools = (serverContext.server as unknown as { _registeredTools: Record<string, { handler: (params?: unknown) => Promise<unknown> }> })._registeredTools;
+    const init = (params: unknown) => tools.cycle_init.handler(params);
+    const reload = (params: unknown) => tools.cycle_reload.handler(params);
+
+    const first = await init({ plan_path: "plan.md" });
+    const second = await init({ plan_path: "plan.md", project_root: projectB });
+    const firstSummary = JSON.parse(text(first as { content: Array<{ type: string; text?: string }> }));
+    const secondSummary = JSON.parse(text(second as { content: Array<{ type: string; text?: string }> }));
+
+    expect(firstSummary.project_root).toBe(projectA);
+    expect(secondSummary.project_root).toBe(projectB);
+    expect(firstSummary.cycle_id).toBeDefined();
+    expect(secondSummary.cycle_id).toBeDefined();
+
+    const reloaded = await reload({ project_root: projectB, plan_path: "plan.md" });
+    expect((reloaded as { isError?: boolean }).isError).toBeUndefined();
+  });
+
+  it("supports legacy fallback calls and rejects invalid or ambiguous relative paths", async () => {
+    const project = makeProject("compatibility");
+    roots.push(project);
+    const serverContext = createServer(project);
+    const tools = (serverContext.server as unknown as { _registeredTools: Record<string, { handler: (params?: unknown) => Promise<unknown> }> })._registeredTools;
+
+    const legacy = await tools.cycle_init.handler({ plan_path: "plan.md" });
+    const summary = JSON.parse(text(legacy as { content: Array<{ type: string; text?: string }> }));
+    expect(summary.project_root).toBe(project);
+    expect(summary.cycle_id).toBeDefined();
+
+    const invalid = await tools.cycle_init.handler({ plan_path: "missing/plan.md", project_root: project });
+    expect((invalid as { isError?: boolean }).isError).toBe(true);
+
+    await expect(tools.cycle_reload.handler({ plan_path: "plan.md", project_root: "relative-project" })).rejects.toThrow(/Invalid project_root/);
+  });
+
   it("isolates concurrent cycle, task, gate, evidence, and recovery operations", async () => {
     const projectA = makeProject("project-a");
     const projectB = makeProject("project-b");

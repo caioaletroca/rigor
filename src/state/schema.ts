@@ -76,11 +76,26 @@ export interface GateEvidence {
 // Entity types
 // ---------------------------------------------------------------------------
 
+export interface TaskLease {
+  owner_id: string;
+  attempt_id: string;
+  lease_expires_at: string;
+  takeover_history?: TaskLeaseHistory[];
+}
+
+export interface TaskLeaseHistory {
+  owner_id: string;
+  attempt_id: string;
+  lease_expires_at: string;
+  taken_over_at: string;
+}
+
 export interface TaskState {
   id: string;
   name: string;
   status: Status;
   gate_0: Gate0Evidence;
+  lease?: TaskLease;
 }
 
 export interface EpicState {

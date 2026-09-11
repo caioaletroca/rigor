@@ -3,6 +3,7 @@ export type {
   Gate0Evidence,
   GateEvidence,
   TaskState,
+  TaskLease,
   EpicState,
   PhaseState,
   CycleState,

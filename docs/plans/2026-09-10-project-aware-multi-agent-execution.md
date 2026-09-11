@@ -153,6 +153,26 @@
 **Done when:** legacy single-root invocation behaves as before; explicit per-request root/plan parameters are documented and validated; server restart is not required to switch projects; ambiguous relative paths produce actionable errors.
 **Status:** Pending
 
+#### Task 2.2.1: Preserve legacy CLI behavior and add explicit request context schemas
+
+- [ ] Done
+
+**Context:** Phase 2.1 adds per-request project routing, while existing clients still rely on the server's `--project-root` fallback.
+
+**Implementation vision:** Validate and document explicit project-root and plan-path precedence, preserve legacy single-root calls, and make ambiguous relative paths return actionable errors without requiring a server restart.
+
+**Verification:** Run `npm run build` and focused CLI/tool schema compatibility tests, then the full test suite.
+
+#### Task 2.2.2: Add client migration and multi-session compatibility coverage
+
+- [ ] Done
+
+**Context:** Compatibility behavior must be proven across legacy fallback and explicit per-request project selection.
+
+**Implementation vision:** Add integration coverage for switching projects in one server session, legacy calls using the configured root, invalid and ambiguous relative paths, and structured context fields in lifecycle responses.
+
+**Verification:** Run `npm run build` and the compatibility integration tests plus the full test suite.
+
 ---
 
 ## Phase 3: Concurrent-Agent Ownership and Recovery
@@ -165,6 +185,26 @@
 **Done when:** task starts issue owner/attempt IDs with expiry; a different owner cannot complete/reset/retry an active attempt without explicit takeover; stale leases are recoverable; simultaneous starts are serialized; evidence records owner and attempt identity.
 **Status:** Pending
 
+#### Task 3.1.1: Add per-task leases and attempt ownership
+
+- [ ] Done
+
+**Context:** Multiple agents can currently start or complete the same task through one project context without durable ownership.
+
+**Implementation vision:** Extend task state and tool schemas with owner and attempt identity, issue expiring leases atomically, reject conflicting completion/retry/reset operations, and support explicit takeover of stale leases. Persist ownership in evidence and expose it in lifecycle responses.
+
+**Verification:** Run `npm run build` and focused lease/concurrency tests, then the full test suite.
+
+#### Task 3.1.2: Serialize task operations and recover stale leases
+
+- [ ] Done
+
+**Context:** Per-root state isolation does not by itself prevent concurrent read-modify-write races within one project.
+
+**Implementation vision:** Serialize task mutations per project, make simultaneous starts deterministic, implement stale-lease recovery, and add integration tests for competing owners and takeover behavior.
+
+**Verification:** Run `npm run build` and concurrency/recovery tests plus the full test suite.
+
 ### Epic 3.2: Interrupted-attempt reconciliation and history
 
 **Goal:** Process crashes, MCP disconnects, and client restarts reconcile in-progress attempts without erasing historical failures.
@@ -172,6 +212,26 @@
 **Dependencies:** Epic 3.1
 **Done when:** terminal attempts are reconciled idempotently; in-progress attempts become explicitly interrupted after a documented threshold; retry creates a new attempt while preserving prior evidence; diagnosis distinguishes active, stale, interrupted, and failed work.
 **Status:** Pending
+
+#### Task 3.2.1: Reconcile interrupted attempts and preserve history
+
+- [ ] Done
+
+**Context:** Process restarts and client disconnects can leave in-progress gate attempts without a durable, actionable terminal classification.
+
+**Implementation vision:** Extend diagnostics and evidence indexing to distinguish active, stale, interrupted, and failed attempts; reconcile terminal attempts idempotently; preserve prior evidence when retrying.
+
+**Verification:** Run `npm run build` and focused recovery/history tests, then the full test suite.
+
+#### Task 3.2.2: Document retry and interruption recovery semantics
+
+- [ ] Done
+
+**Context:** Operators and cycle automation need deterministic guidance for interrupted work and historical attempts.
+
+**Implementation vision:** Update cycle/recovery skill guidance and add tests for retry-created attempt history, stale interruption thresholds, and recovery recommendations.
+
+**Verification:** Run `npm run build` and recovery integration tests plus the full test suite.
 
 ---
 

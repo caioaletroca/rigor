@@ -19,8 +19,28 @@ describe("project context", () => {
 
   it("reuses contexts by canonical root", () => {
     const registry = new ProjectContextRegistry();
-    const first = registry.get({ project_root: ".", fallback_root: tmpdir() });
+    const first = registry.get({ project_root: process.cwd(), fallback_root: tmpdir() });
     const second = registry.get({ project_root: first.project_root, fallback_root: tmpdir() });
     expect(second).toBe(first);
+  });
+
+  it("rejects ambiguous relative plan paths", () => {
+    expect(() => resolveProjectRoot({ plan_path: "plans/plan.md", fallback_root: tmpdir() })).toThrow(
+      /Ambiguous plan_path.*absolute path.*project_root/,
+    );
+  });
+
+  it("rejects an absolute plan outside an explicit project root", () => {
+    const explicit = mkdtempSync(join(tmpdir(), "rigor-explicit-"));
+    const planRoot = mkdtempSync(join(tmpdir(), "rigor-plan-"));
+    mkdirSync(join(explicit, ".git"));
+    mkdirSync(join(planRoot, ".git"));
+    expect(() => resolveProjectRoot({
+      project_root: explicit,
+      plan_path: join(planRoot, "plan.md"),
+      fallback_root: tmpdir(),
+    })).toThrow(/must be inside project_root/);
+    rmSync(explicit, { recursive: true, force: true });
+    rmSync(planRoot, { recursive: true, force: true });
   });
 });

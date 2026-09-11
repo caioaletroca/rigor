@@ -465,7 +465,40 @@ describe("recovery tools", () => {
         expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "attempt-123"))).toBe(true);
       });
 
-      it("reconciles terminal Gate 0 evidence left with a doing task idempotently", () => {
+       it("classifies an inactive recent attempt as interrupted before the stale threshold", () => {
+         const state = makeCycleState();
+         state.phases[0].epics[0].tasks[0].status = "doing";
+         writeState(tempDir, state);
+         evidenceManager.save({
+           gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+           gate_0_attempt: { version: 1, id: "recent-attempt", started_at: new Date(Date.now() - 1000).toISOString() },
+         });
+
+         const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+
+         expect(text).toContain("interrupted");
+         expect(text).not.toContain("stale");
+         expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+       });
+
+       it("classifies an inactive old attempt as stale and recommends retry", () => {
+         const state = makeCycleState();
+         state.phases[0].epics[0].tasks[0].status = "doing";
+         writeState(tempDir, state);
+         evidenceManager.save({
+           gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+           gate_0_attempt: { version: 1, id: "stale-attempt", started_at: new Date(Date.now() - 6 * 60 * 1000).toISOString() },
+         });
+
+         const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+
+         expect(text).toContain("stale");
+         expect(text).toContain("interrupted");
+         expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+         expect(stateManager.getTask("1.1.1").status).toBe("failed");
+       });
+
+       it("reconciles terminal Gate 0 evidence left with a doing task idempotently", () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "doing";
         writeState(tempDir, state);
