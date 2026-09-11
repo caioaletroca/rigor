@@ -13,12 +13,12 @@ Execute a phased development cycle controlled by the Rigor MCP gate server. The 
 
 ## Execution Mode
 
-Before starting lifecycle work, ask the user to choose one session-scoped mode:
+Before starting lifecycle work, use the host's formal user-question mechanism when available to ask the user to choose one session-scoped mode:
 
 1. **Stepwise** -- report each gate passage, failure, and milestone, then wait for the user to continue.
 2. **Continuous** -- continue task implementation, Gate 0 retries, Gate 8 remediation and resubmission, and phase advancement without ordinary confirmation prompts. Report progress as work continues; do not pause after successful tasks, failed reviews, remediations, or phase transitions.
 
-The mode is an orchestration preference only: never persist it in `.rigor/state.json` and never bypass an MCP gate. In either mode, stop for Gate 9 when configuration requires user approval; present the acceptance criteria and wait for actual approval before submitting `user_approved: true`.
+The mode is an orchestration preference only: never persist it in `.rigor/state.json` and never bypass an MCP gate. In either mode, stop for Gate 9 when configuration requires user approval; present the acceptance criteria through the host's formal user-question mechanism and wait for actual approval before submitting `user_approved: true`. Never infer approval from a free-form continuation message or silently set `user_approved: true`.
 
 In Continuous mode, Gate 8 failure is not a user-confirmation point. Read the findings, implement the safest compliant remediation, rerun required verification, and resubmit the review directly. Stop only when human direction is genuinely required: requirements or acceptance evidence are ambiguous, a rolling-wave phase has no elaborated tasks, recovery diagnosis cannot identify a safe action, a gate failure cannot be remediated safely, or there are two or more materially different viable implementation approaches whose choice affects requirements, compatibility, security, or architecture. Present those alternatives and ask the user to choose. Also stop if the user explicitly interrupts execution. Do not ask for continuation merely because a task, review, remediation, or phase passed or failed.
 
@@ -161,9 +161,10 @@ verification, and submit the updated reviewer results directly with `review_subm
 without asking for continuation. Do not call `review_start` a second time.
 
 If the findings admit two or more materially different viable fixes and the choice
-affects requirements, compatibility, security, or architecture, stop and present
-the alternatives for user selection before editing. Otherwise choose the minimal
-safe remediation and continue automatically.
+affects requirements, compatibility, security, or architecture, use the host's
+formal user-question mechanism to present the alternatives and wait for selection
+before editing. Otherwise choose the minimal safe remediation and continue
+automatically.
 
 ---
 
