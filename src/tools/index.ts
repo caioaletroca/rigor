@@ -36,7 +36,7 @@ export type {
   TaskManageParams,
   EpicManageParams,
   PhaseManageParams,
-} from "./recovery.js";
+} from "../services/recovery-lifecycle.js";
 export {
   handleCycleReset,
   handleTaskRetry,
@@ -44,7 +44,7 @@ export {
   handleEpicManage,
   handlePhaseManage,
   handleCycleDiagnose,
-} from "./recovery.js";
+} from "../services/recovery-lifecycle.js";
 
 export { registerSyncTools, handleSyncStatus, handleSyncRetry, handleSyncReplay, handleSyncEnable } from "./sync.js";
 export type { SyncRetryParams, SyncReplayParams, SyncEnableParams } from "./sync.js";

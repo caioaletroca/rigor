@@ -49,7 +49,7 @@ const {
 const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../../services/task-lifecycle.js");
 const { registerGateTools } = await import("../gate.js");
 const { handleCycleStatus } = await import("../cycle.js");
-const { handleCycleDiagnose, handleCycleReset, handleTaskRetry } = await import("../recovery.js");
+const { handleCycleDiagnose, handleCycleReset, handleTaskRetry } = await import("../../services/recovery-lifecycle.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
