@@ -122,6 +122,47 @@ describe("cycle tools", () => {
       expect(text).toContain("cycle already exists");
     });
 
+    it("treats re-init with a relative path to the same plan as same-plan", () => {
+      const planName = "my-plan.md";
+      cpSync(SAMPLE_PLAN, join(tempDir, planName));
+
+      handleCycleInit({ plan_path: planName }, stateManager, tempDir, TEST_CONFIG);
+
+      const result = handleCycleInit(
+        { plan_path: join(tempDir, planName) },
+        stateManager,
+        tempDir,
+        TEST_CONFIG,
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain("cycle already exists");
+      expect(text).toContain("cycle_reset");
+    });
+
+    it("rejects a foreign plan without recommending cycle_reset", () => {
+      handleCycleInit({ plan_path: SAMPLE_PLAN }, stateManager, tempDir, TEST_CONFIG);
+      const existing = stateManager.load();
+
+      const otherPlanName = "other-plan.md";
+      cpSync(SAMPLE_PLAN, join(tempDir, otherPlanName));
+
+      const result = handleCycleInit(
+        { plan_path: otherPlanName },
+        stateManager,
+        tempDir,
+        TEST_CONFIG,
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain(existing!.cycle_id);
+      expect(text).toContain(existing!.plan_path);
+      expect(text).not.toContain("cycle_reset");
+      expect(text).toContain("rigor:worktree");
+    });
+
     it("throws on invalid plan path", () => {
       const params: CycleInitParams = { plan_path: "/nonexistent/plan.md" };
 

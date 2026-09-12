@@ -24,44 +24,46 @@ Execute a phased development cycle controlled by the Rigor MCP gate server. The 
 
 ## Lifecycle Sequence
 
+Every lifecycle tool call must pass the active isolated worktree's absolute `project_root`; never rely on the MCP server default, which may point at another checkout. Use the same root for initialization, tasks, reviews, acceptance, reload, reset, and management calls. `cycle_status` and `cycle_diagnose` are currently server-root-bound, so use them only when the server is configured for this worktree.
+
 ```
-cycle_init(plan_path)
+cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/worktree" })
   |
   v
 for each task in phase:
-  task_start(task_id)    -- Gate entry: validates order, custom pre_task gates, Gate 1
+  task_start(task_id, project_root)    -- Gate entry: validates order, custom pre_task gates, Gate 1
     |
     v
   [implement the task]
     |
     v
-  task_complete(task_id) -- Gate 0: runs tests, coverage, lint, custom post_task gates
+  task_complete(task_id, project_root) -- Gate 0: runs tests, coverage, lint, custom post_task gates
   |
   v
 for each epic in phase:
-  review_start(epic_id)  -- Validates all tasks done, custom pre_review gates
+  review_start(epic_id, project_root)  -- Validates all tasks done, custom pre_review gates
     |
     v
-  review_submit(epic_id, submissions) -- Gate 8: reviewer checks
+  review_submit(epic_id, submissions, project_root) -- Gate 8: reviewer checks
     |
     v
-  accept_start(epic_id)  -- Validates Gate 8 passed
+  accept_start(epic_id, project_root)  -- Validates Gate 8 passed
     |
     v
-  accept_submit(epic_id, criteria, user_approved) -- Gate 9: acceptance
+  accept_submit(epic_id, criteria, user_approved, project_root) -- Gate 9: acceptance
   |
   v
-phase_advance()          -- All epics done, advance to next phase
+phase_advance(project_root)          -- All epics done, advance to next phase
 ```
 
 ---
 
 ## Step 1 -- Initialize the Cycle
 
-Call `cycle_init` with the path to the plan file:
+Call `cycle_init` with the path to the plan file and the active worktree's absolute `project_root`:
 
 ```
-cycle_init({ plan_path: "docs/plans/my-plan.md" })
+cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/worktree" })
 ```
 
 The server parses the plan, creates initial state, and returns the cycle summary. If a cycle already exists, it returns an error -- use `cycle_reset` first.

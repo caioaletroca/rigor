@@ -6,7 +6,7 @@
  * without spinning up a real MCP transport.
  */
 
-import { resolve, isAbsolute } from "node:path";
+import { resolve } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -122,12 +122,18 @@ export function handleCycleInit(
     );
   }
 
-  const resolvedPath = isAbsolute(params.plan_path)
-    ? params.plan_path
-    : resolve(projectRoot, params.plan_path);
+  const resolvedPath = resolve(projectRoot, params.plan_path);
 
   const existing = stateManager.load();
   if (existing !== null) {
+    const existingPlanPath = resolve(projectRoot, existing.plan_path);
+    if (existingPlanPath !== resolvedPath) {
+      return textResult(
+        `This worktree already belongs to cycle "${existing.cycle_id}" using plan "${existing.plan_path}". Initialize the other plan in a separate worktree. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
+    }
+
     return textResult(
       "A cycle already exists. Use cycle_reset to start over.",
       true,
