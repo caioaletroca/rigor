@@ -60,13 +60,27 @@ phase_advance(project_root)          -- All epics done, advance to next phase
 
 ## Step 1 -- Initialize the Cycle
 
+### Preconditions
+
+Before calling `cycle_init`, verify that the current checkout is a linked Git worktree on a non-base feature branch. Confirm the worktree path and branch with Git, and confirm that the plan belongs to this checkout. If the checkout is not isolated, hand off to `rigor:worktree` before continuing. Do not initialize a cycle from a detached HEAD, the repository's base branch, or a non-worktree checkout.
+
+| Rejection | Remediation |
+|-----------|-------------|
+| Detached HEAD | Check out or create the intended feature branch, then verify it is a linked worktree. |
+| Base branch | Create or switch to a non-base feature branch in a linked worktree; do not initialize on the base branch. |
+| Not a linked worktree | Hand off to `rigor:worktree` and continue from the created worktree. |
+| Foreign cycle | Stop and use the cycle belonging to the active worktree; do not reset, overwrite, or adopt a cycle from another checkout. |
+| Any precondition failure rationalized as temporary or harmless | Treat the rejection as blocking, remediate it, and re-run every precondition check before calling `cycle_init`. |
+
+Never call `cycle_reset` for a foreign cycle. `cycle_reset` may only be used for an unrecoverable cycle that belongs to the active worktree, after diagnosis and explicit confirmation.
+
 Call `cycle_init` with the path to the plan file and the active worktree's absolute `project_root`:
 
 ```
 cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/worktree" })
 ```
 
-The server parses the plan, creates initial state, and returns the cycle summary. If a cycle already exists, it returns an error -- use `cycle_reset` first.
+The server parses the plan, creates initial state, and returns the cycle summary. If a cycle already exists for this worktree, diagnose it and use `cycle_reset` only as a last resort; never reset a foreign cycle.
 
 After init, call `cycle_status` to see the full state and confirm Phase 1 tasks are ready.
 
