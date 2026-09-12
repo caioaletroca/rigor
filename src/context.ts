@@ -96,10 +96,7 @@ export interface RequestContext {
 export class ProjectContextRegistry {
   private readonly contexts = new Map<string, RequestContext>();
 
-  constructor(
-    private readonly defaultRoot?: string,
-    private readonly syncManager?: SyncManager,
-  ) {}
+  constructor(private readonly defaultRoot?: string) {}
 
   get(options: Parameters<typeof resolveProjectRoot>[0]): RequestContext {
     const fallbackRoot = options.fallback_root ?? this.defaultRoot ?? process.cwd();

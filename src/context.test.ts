@@ -1,9 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { ProjectContextRegistry, resolveProjectRoot } from "./context.js";
+import { createServer } from "./server.js";
+
+function makeProject(): string {
+  const root = mkdtempSync(join(tmpdir(), "rigor-context-"));
+  mkdirSync(join(root, ".git"));
+  mkdirSync(join(root, ".rigor"));
+  writeFileSync(join(root, ".rigor", "config.yaml"), "sync:\n  enabled: true\n");
+  return root;
+}
+
+function phases() {
+  return [{
+    id: 1,
+    status: "pending" as const,
+    epics: [{
+      id: "1.1",
+      name: "Epic",
+      status: "pending" as const,
+      tasks: [{ id: "1.1.1", name: "Task", status: "pending" as const, gate_0: { passed: false } }],
+      gate_8: { passed: false },
+      gate_9: { passed: false },
+    }],
+  }];
+}
 
 describe("project context", () => {
   it("discovers the nearest git root from an absolute plan path", () => {
@@ -17,11 +40,40 @@ describe("project context", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("reuses contexts by canonical root", () => {
+  it("reuses context and sync manager for canonical root aliases", () => {
+    const root = makeProject();
     const registry = new ProjectContextRegistry();
-    const first = registry.get({ project_root: process.cwd(), fallback_root: tmpdir() });
-    const second = registry.get({ project_root: first.project_root, fallback_root: tmpdir() });
+    const first = registry.get({ project_root: root, fallback_root: tmpdir() });
+    const second = registry.get({ project_root: join(root, "."), fallback_root: tmpdir() });
     expect(second).toBe(first);
+    expect(second.syncManager).toBe(first.syncManager);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("creates isolated managers for different roots and wires lifecycle sync", () => {
+    const firstRoot = makeProject();
+    const secondRoot = makeProject();
+    const registry = new ProjectContextRegistry();
+    const first = registry.getByRoot(firstRoot);
+    const second = registry.getByRoot(secondRoot);
+    expect(second).not.toBe(first);
+    expect(second.stateManager).not.toBe(first.stateManager);
+    expect(second.syncManager).not.toBe(first.syncManager);
+    first.stateManager.init("plan.md", phases());
+    expect(first.syncManager?.getEventCount()).toBe(1);
+    expect(second.syncManager?.getEventCount()).toBe(0);
+    rmSync(firstRoot, { recursive: true, force: true });
+    rmSync(secondRoot, { recursive: true, force: true });
+  });
+
+  it("uses the default context sync manager for server tools", () => {
+    const root = makeProject();
+    const server = createServer(root);
+    const context = server.registry.getByRoot(root);
+    expect(server.stateManager).toBe(context.stateManager);
+    expect(server.evidenceManager).toBe(context.evidenceManager);
+    expect(server.syncManager).toBe(context.syncManager);
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("rejects ambiguous relative plan paths", () => {
