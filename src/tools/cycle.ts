@@ -12,6 +12,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { StateManager, PhaseState, EpicState, TaskState } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
+import { inspectWorkspace, WorkspaceInspectionError } from "../workspace/index.js";
 import { parsePlan } from "../plan/index.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
 
@@ -64,13 +65,63 @@ function phaseToState(parsed: ParsedPhase): PhaseState {
 
 export interface CycleInitParams {
   plan_path: string;
+  allow_shared_workspace?: boolean;
 }
+
+const WORKTREE_REMEDIATION =
+  "Run rigor:worktree to create an isolated worktree and feature branch, then re-run cycle_init from it.";
 
 export function handleCycleInit(
   params: CycleInitParams,
   stateManager: StateManager,
   projectRoot: string,
+  config: RigorConfig,
 ): CallToolResult {
+  if (
+    !params.allow_shared_workspace &&
+    (config.workspace.require_worktree || config.workspace.require_feature_branch)
+  ) {
+    let workspace;
+    try {
+      workspace = inspectWorkspace(projectRoot);
+    } catch (err) {
+      if (err instanceof WorkspaceInspectionError) {
+        return textResult(err.message, true);
+      }
+      throw err;
+    }
+
+    if (workspace.detached) {
+      return textResult(
+        `A cycle cannot be anchored to a detached HEAD. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
+    }
+
+    if (
+      config.workspace.require_feature_branch &&
+      workspace.branch !== null &&
+      config.workspace.base_branches.includes(workspace.branch)
+    ) {
+      return textResult(
+        `Branch '${workspace.branch}' is an integration branch, not an agent workspace. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
+    }
+
+    if (config.workspace.require_worktree && !workspace.is_linked_worktree) {
+      return textResult(
+        `A cycle must run in a dedicated worktree, not the main checkout. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
+    }
+  } else if (!config.workspace.allow_override) {
+    return textResult(
+      "allow_shared_workspace is disabled by project config (workspace.allow_override is false).",
+      true,
+    );
+  }
+
   const resolvedPath = isAbsolute(params.plan_path)
     ? params.plan_path
     : resolve(projectRoot, params.plan_path);
@@ -208,9 +259,12 @@ export function registerCycleTools(
   server.tool(
     "cycle_init",
     "Initialize a new development cycle from a plan.md file",
-    { plan_path: z.string().describe("Relative or absolute path to the plan.md file") },
+    {
+      plan_path: z.string().describe("Relative or absolute path to the plan.md file"),
+      allow_shared_workspace: z.boolean().optional(),
+    },
     async (params) => {
-      return handleCycleInit(params, stateManager, projectRoot);
+      return handleCycleInit(params, stateManager, projectRoot, _config);
     },
   );
 

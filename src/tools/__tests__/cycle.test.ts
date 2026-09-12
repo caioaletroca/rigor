@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
 import { handleCycleInit, handleCycleStatus } from "../cycle.js";
 import type { CycleInitParams } from "../cycle.js";
+import { DEFAULTS } from "../../config/index.js";
 
 // ---------------------------------------------------------------------------
 // Fixture path
@@ -26,6 +27,15 @@ const FIXTURE_DIR = join(
   "fixtures",
 );
 const SAMPLE_PLAN = join(FIXTURE_DIR, "sample-plan.md");
+const TEST_CONFIG = {
+  ...DEFAULTS,
+  workspace: {
+    ...DEFAULTS.workspace,
+    require_worktree: false,
+    require_feature_branch: false,
+    allow_override: true,
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -65,7 +75,7 @@ describe("cycle tools", () => {
   describe("cycle_init", () => {
     it("creates state from plan and returns success with counts", () => {
       const params: CycleInitParams = { plan_path: SAMPLE_PLAN };
-      const result = handleCycleInit(params, stateManager, tempDir);
+      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBeUndefined();
 
@@ -90,7 +100,7 @@ describe("cycle tools", () => {
       cpSync(SAMPLE_PLAN, join(tempDir, planName));
 
       const params: CycleInitParams = { plan_path: planName };
-      const result = handleCycleInit(params, stateManager, tempDir);
+      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBeUndefined();
 
@@ -102,10 +112,10 @@ describe("cycle tools", () => {
     it("rejects when a cycle already exists", () => {
       // Init first cycle
       const params: CycleInitParams = { plan_path: SAMPLE_PLAN };
-      handleCycleInit(params, stateManager, tempDir);
+      handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       // Try to init again
-      const result = handleCycleInit(params, stateManager, tempDir);
+      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBe(true);
       const text = extractText(result);
@@ -116,13 +126,13 @@ describe("cycle tools", () => {
       const params: CycleInitParams = { plan_path: "/nonexistent/plan.md" };
 
       expect(() =>
-        handleCycleInit(params, stateManager, tempDir),
+        handleCycleInit(params, stateManager, tempDir, TEST_CONFIG),
       ).toThrow();
     });
 
     it("maps task done checkbox to done status", () => {
       const params: CycleInitParams = { plan_path: SAMPLE_PLAN };
-      handleCycleInit(params, stateManager, tempDir);
+      handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       const state = stateManager.load();
       // Task 1.1.1 has [x] Done in sample-plan.md
@@ -150,7 +160,7 @@ describe("cycle tools", () => {
     });
 
     it("returns correct summary for a fresh cycle", () => {
-      handleCycleInit({ plan_path: SAMPLE_PLAN }, stateManager, tempDir);
+      handleCycleInit({ plan_path: SAMPLE_PLAN }, stateManager, tempDir, TEST_CONFIG);
 
       const result = handleCycleStatus(stateManager);
       const text = extractText(result);
@@ -169,7 +179,7 @@ describe("cycle tools", () => {
     });
 
     it("shows progress and active task for mid-progress cycle", () => {
-      handleCycleInit({ plan_path: SAMPLE_PLAN }, stateManager, tempDir);
+      handleCycleInit({ plan_path: SAMPLE_PLAN }, stateManager, tempDir, TEST_CONFIG);
 
       // Transition task 1.1.2 to "doing"
       stateManager.transition("1.1.2", "doing");
