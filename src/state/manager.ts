@@ -13,6 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join, basename } from "node:path";
 import { isValidTransition, ALL_STATUSES, TASK_LEASE_DURATION_MS } from "./schema.js";
 import { EntityNotFoundError, InvalidTransitionError } from "./errors.js";
@@ -143,6 +144,7 @@ export class StateManager {
 
     // Fire cycle_initialized sync event
     this.emitSyncEvent({
+      event_id: randomUUID(),
       type: "cycle_initialized",
       entity_type: "cycle",
       entity_id: state.cycle_id,
@@ -190,6 +192,7 @@ export class StateManager {
     const eventType = transitionToEventType(entityType, toStatus);
     if (eventType) {
       this.emitSyncEvent({
+        event_id: randomUUID(),
         type: eventType,
         entity_type: entityType,
         entity_id: entityId,

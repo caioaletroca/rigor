@@ -25,6 +25,7 @@ class TestProvider extends BaseProvider {
 
 function makeEvent(): SyncEvent {
   return {
+    event_id: crypto.randomUUID(),
     type: "task_started",
     entity_type: "task",
     entity_id: "1.1.1",

@@ -25,6 +25,7 @@ function makeEvent(
   overrides: Partial<SyncEvent> = {},
 ): SyncEvent {
   return {
+    event_id: crypto.randomUUID(),
     type,
     entity_type: "task",
     entity_id: "1.1.1",

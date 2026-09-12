@@ -15,6 +15,7 @@ import type {
 
 function makeEvent(type: SyncEventType): SyncEvent {
   return {
+    event_id: crypto.randomUUID(),
     type,
     entity_type: "task",
     entity_id: "1.1.1",
@@ -62,6 +63,7 @@ describe("SyncEvent construction", () => {
 
   it("supports optional previous_status, new_status, and metadata", () => {
     const event: SyncEvent = {
+      event_id: crypto.randomUUID(),
       type: "task_started",
       entity_type: "task",
       entity_id: "1.1.1",

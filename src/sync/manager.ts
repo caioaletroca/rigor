@@ -18,6 +18,7 @@ import {
   mkdirSync,
   appendFileSync,
   readFileSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { shouldDispatch } from "./schema.js";
@@ -30,6 +31,7 @@ import type { SyncEvent, SyncProvider, SyncResult } from "./schema.js";
 const RIGOR_DIR = ".rigor";
 const SYNC_DIR = "sync";
 const JOURNAL_FILE = "events.jsonl";
+const DELIVERY_FILE = "deliveries.json";
 
 /** Default per-provider timeout in milliseconds. */
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -40,6 +42,11 @@ const DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 5;
 // ---------------------------------------------------------------------------
 // Health types
 // ---------------------------------------------------------------------------
+
+interface DeliveryOutcome {
+  success: boolean;
+  updated_at: string;
+}
 
 export interface ProviderHealth {
   name: string;
@@ -60,7 +67,9 @@ export interface ProviderHealth {
 export class SyncManager {
   private readonly syncDir: string;
   private readonly journalPath: string;
+  private readonly deliveryPath: string;
   private readonly circuitBreakerThreshold: number;
+  private readonly deliveries: Map<string, DeliveryOutcome>;
 
   /** Per-provider health state. */
   private readonly health: Map<
@@ -88,6 +97,8 @@ export class SyncManager {
   ) {
     this.syncDir = join(projectRoot, RIGOR_DIR, SYNC_DIR);
     this.journalPath = join(this.syncDir, JOURNAL_FILE);
+    this.deliveryPath = join(this.syncDir, DELIVERY_FILE);
+    this.deliveries = this.loadDeliveries();
     this.circuitBreakerThreshold =
       circuitBreakerThreshold ?? DEFAULT_CIRCUIT_BREAKER_THRESHOLD;
 
@@ -171,7 +182,9 @@ export class SyncManager {
     }
 
     const events = this.getJournalEvents();
-    const eventsToRetry = events.slice(-count);
+    const eventsToRetry = events
+      .filter((event) => this.deliveries.get(this.deliveryKey(providerName, event.event_id))?.success === false)
+      .slice(-count);
 
     const results: SyncResult[] = [];
     for (const event of eventsToRetry) {
@@ -313,6 +326,35 @@ export class SyncManager {
   // Internal
   // -----------------------------------------------------------------------
 
+  private deliveryKey(providerName: string, eventId: string): string {
+    return `${providerName}:${eventId}`;
+  }
+
+  private loadDeliveries(): Map<string, DeliveryOutcome> {
+    if (!existsSync(this.deliveryPath)) {
+      return new Map();
+    }
+
+    const content = readFileSync(this.deliveryPath, "utf-8").trim();
+    if (content === "") {
+      return new Map();
+    }
+
+    return new Map(Object.entries(JSON.parse(content) as Record<string, DeliveryOutcome>));
+  }
+
+  private recordDelivery(providerName: string, eventId: string, success: boolean): void {
+    this.deliveries.set(this.deliveryKey(providerName, eventId), {
+      success,
+      updated_at: new Date().toISOString(),
+    });
+    writeFileSync(
+      this.deliveryPath,
+      JSON.stringify(Object.fromEntries(this.deliveries), null, 2) + "\n",
+      "utf-8",
+    );
+  }
+
   /** Append event as a JSON line to the journal file. */
   private journal(event: SyncEvent): void {
     const line = JSON.stringify(event) + "\n";
@@ -334,11 +376,13 @@ export class SyncManager {
 
       this.recordSuccess(provider.name);
 
-      return {
+      const result = {
         provider: provider.name,
         success: true,
         duration_ms: Date.now() - start,
       };
+      this.recordDelivery(provider.name, event.event_id, result.success);
+      return result;
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : String(error);
@@ -348,12 +392,14 @@ export class SyncManager {
 
       this.recordFailure(provider.name, message);
 
-      return {
+      const result = {
         provider: provider.name,
         success: false,
         error: message,
         duration_ms: Date.now() - start,
       };
+      this.recordDelivery(provider.name, event.event_id, result.success);
+      return result;
     }
   }
 
