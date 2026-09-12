@@ -22,6 +22,7 @@ import { ArchiveManager } from "../archive/manager.js";
 import { checkGate8Exit, checkGate9Exit, runCustomGates, Gate9Criteria } from "../gates/index.js";
 import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
 import type { ProjectContextRegistry } from "../context.js";
+import { withProjectMutationLock } from "../lifecycle/index.js";
 import { responseResult } from "./response.js";
 
 function textResult(text: string, isError?: boolean): CallToolResult {
@@ -68,7 +69,7 @@ export async function handleReviewStart(
   if (epic.tasks.length === 0) {
     return textResult(
       `Epic "${params.epic_id}" has no tasks — cannot review an epic with no implemented work. ` +
-        `Elaborate its tasks into the plan (and re-init the cycle) before review.`,
+        `Elaborate its tasks into the plan and run cycle_reload before review.`,
       true,
     );
   }
@@ -144,6 +145,16 @@ export interface ReviewSubmitParams {
 }
 
 export function handleReviewSubmit(
+  params: ReviewSubmitParams,
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
+  config: RigorConfig | null,
+  projectRoot: string,
+): Promise<CallToolResult> {
+  return withProjectMutationLock(projectRoot, async () => handleReviewSubmitUnlocked(params, stateManager, evidenceManager, config, projectRoot));
+}
+
+function handleReviewSubmitUnlocked(
   params: ReviewSubmitParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
@@ -310,6 +321,16 @@ export async function handleAcceptSubmit(
   config: RigorConfig | null,
   projectRoot: string,
 ): Promise<CallToolResult> {
+  return withProjectMutationLock(projectRoot, () => handleAcceptSubmitUnlocked(params, stateManager, evidenceManager, config, projectRoot));
+}
+
+async function handleAcceptSubmitUnlocked(
+  params: AcceptSubmitParams,
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
+  config: RigorConfig | null,
+  projectRoot: string,
+): Promise<CallToolResult> {
   // Reload config fresh from disk when not supplied (see gate.ts handlers).
   const cfg = config ?? loadConfig(projectRoot);
 
@@ -463,6 +484,16 @@ export async function handleAcceptSubmit(
 // ---------------------------------------------------------------------------
 
 export function handlePhaseAdvance(
+  stateManager: StateManager,
+  evidenceManager?: EvidenceManager,
+  archiveManager?: ArchiveManager,
+  projectRoot = stateManager.load()?.project_root,
+): Promise<CallToolResult> {
+  if (!projectRoot) return Promise.resolve(handlePhaseAdvanceUnlocked(stateManager, evidenceManager, archiveManager));
+  return withProjectMutationLock(projectRoot, async () => handlePhaseAdvanceUnlocked(stateManager, evidenceManager, archiveManager));
+}
+
+function handlePhaseAdvanceUnlocked(
   stateManager: StateManager,
   evidenceManager?: EvidenceManager,
   archiveManager?: ArchiveManager,
@@ -657,7 +688,7 @@ export function registerReviewTools(
     },
     async (params) => {
       const ctx = context(params?.project_root);
-       return handlePhaseAdvance(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx ? new ArchiveManager(ctx.project_root) : archiveManager);
+       return handlePhaseAdvance(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx ? new ArchiveManager(ctx.project_root) : archiveManager, ctx?.project_root ?? projectRoot);
     },
   );
 }

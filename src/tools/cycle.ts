@@ -20,6 +20,7 @@ import { isGate0AttemptActive, isTaskCompletionActive } from "./gate.js";
 import { ProjectContextRegistry, resolveProjectRoot as resolveCanonicalProjectRoot } from "../context.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
 import { responseResult } from "./response.js";
+import { withProjectMutationLock } from "../lifecycle/index.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -100,6 +101,19 @@ const WORKTREE_REMEDIATION =
   "Run rigor:worktree to create an isolated worktree and feature branch, then re-run cycle_init from it.";
 
 export function handleCycleInit(
+  params: CycleInitParams,
+  stateManager: StateManager,
+  projectRoot: string,
+  configOrRegistry?: RigorConfig | ProjectContextRegistry,
+  registry?: ProjectContextRegistry,
+): Promise<CallToolResult> {
+  const requestRoot = params.project_root ?? projectRoot;
+  const resolvedPath = isAbsolute(params.plan_path) ? params.plan_path : resolve(requestRoot, params.plan_path);
+  const effectiveRoot = resolveProjectRoot(resolvedPath, requestRoot);
+  return withProjectMutationLock(effectiveRoot, async () => handleCycleInitUnlocked(params, stateManager, projectRoot, configOrRegistry, registry));
+}
+
+function handleCycleInitUnlocked(
   params: CycleInitParams,
   stateManager: StateManager,
   projectRoot: string,
@@ -243,6 +257,20 @@ export interface CycleReloadParams {
  * evidence untouched; entities removed from the plan are left in place.
  */
 export function handleCycleReload(
+  params: CycleReloadParams,
+  stateManager: StateManager,
+  projectRoot: string,
+  registry?: ProjectContextRegistry,
+): Promise<CallToolResult> {
+  const loadedRoot = stateManager.load()?.project_root;
+  const requestRoot = params.project_root ?? loadedRoot ?? projectRoot;
+  const effectiveRoot = params.project_root
+    ? resolveCanonicalProjectRoot({ project_root: params.project_root, fallback_root: requestRoot }).project_root
+    : loadedRoot ?? projectRoot;
+  return withProjectMutationLock(effectiveRoot, async () => handleCycleReloadUnlocked(params, stateManager, projectRoot, registry));
+}
+
+function handleCycleReloadUnlocked(
   params: CycleReloadParams,
   stateManager: StateManager,
   projectRoot: string,

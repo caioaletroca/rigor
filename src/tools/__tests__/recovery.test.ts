@@ -130,9 +130,9 @@ describe("recovery tools", () => {
   // cycle_reset
   // -----------------------------------------------------------------------
 
-  describe("cycle_reset", () => {
-    it("returns error when no active cycle exists", () => {
-      const result = handleCycleReset(
+  describe("cycle_reset", async () => {
+    it("returns error when no active cycle exists", async () => {
+      const result = await handleCycleReset(
         { confirm: false },
         stateManager,
         evidenceManager,
@@ -144,7 +144,7 @@ describe("recovery tools", () => {
       expect(text).toContain("No active cycle");
     });
 
-    it("returns preview with progress summary when confirm is false", () => {
+    it("returns preview with progress summary when confirm is false", async () => {
       // Create state with 1 done task, 1 pending task
       const state = makeCycleState();
       state.phases[0].epics[0].tasks[0].status = "done";
@@ -164,7 +164,7 @@ describe("recovery tools", () => {
       };
       evidenceManager.save(evidence);
 
-      const result = handleCycleReset(
+      const result = await handleCycleReset(
         { confirm: false },
         stateManager,
         evidenceManager,
@@ -184,7 +184,7 @@ describe("recovery tools", () => {
       expect(stateManager.load()).not.toBeNull();
     });
 
-    it("deletes state and evidence when confirm is true", () => {
+    it("deletes state and evidence when confirm is true", async () => {
       const state = makeCycleState();
       writeState(tempDir, state);
 
@@ -204,7 +204,7 @@ describe("recovery tools", () => {
         checks: [],
       });
 
-      const result = handleCycleReset(
+      const result = await handleCycleReset(
         { confirm: true },
         stateManager,
         evidenceManager,
@@ -230,8 +230,8 @@ describe("recovery tools", () => {
   // handleTaskRetry (internal helper, also used by task_manage retry action)
   // -----------------------------------------------------------------------
 
-  describe("handleTaskRetry", () => {
-    it("returns error when no active cycle exists", () => {
+  describe("handleTaskRetry", async () => {
+    it("returns error when no active cycle exists", async () => {
       const result = handleTaskRetry(
         { task_id: "1.1.1" },
         stateManager,
@@ -244,7 +244,7 @@ describe("recovery tools", () => {
       expect(text).toContain("No active cycle");
     });
 
-    it("returns error when task is not found", () => {
+    it("returns error when task is not found", async () => {
       const state = makeCycleState();
       writeState(tempDir, state);
 
@@ -260,7 +260,7 @@ describe("recovery tools", () => {
       expect(text).toContain("not found");
     });
 
-    it("rejects task not in failed status", () => {
+    it("rejects task not in failed status", async () => {
       const state = makeCycleState();
       writeState(tempDir, state);
 
@@ -277,7 +277,7 @@ describe("recovery tools", () => {
       expect(text).toContain("Only \"failed\" tasks can be retried");
     });
 
-    it("clears nested attempt history during cycle reset", () => {
+    it("clears nested attempt history during cycle reset", async () => {
       const state = makeCycleState();
       writeState(tempDir, state);
       evidenceManager.saveTerminalGate0Attempt({
@@ -285,12 +285,12 @@ describe("recovery tools", () => {
         gate_0_attempt: { version: 1, id: "attempt-1", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "failed" },
       });
 
-      const text = extractText(handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir));
+      const text = extractText(await handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir));
       expect(text).toContain("2 evidence file(s) deleted");
       expect(readdirSync(join(tempDir, ".rigor", "evidence"))).toHaveLength(0);
     });
 
-    it("clears gate_0 evidence and returns previous failure reason", () => {
+    it("clears gate_0 evidence and returns previous failure reason", async () => {
       // Set up a failed task with evidence
       const state = makeCycleState();
       const evidencePath = evidenceManager.save({
@@ -351,7 +351,7 @@ describe("recovery tools", () => {
       expect(task?.gate_0.evidence_path).toBeUndefined();
     });
 
-    it("handles failed task with no prior evidence gracefully", () => {
+    it("handles failed task with no prior evidence gracefully", async () => {
       const state = makeCycleState();
       state.phases[0].epics[0].tasks[0].status = "failed";
       writeState(tempDir, state);
@@ -380,9 +380,9 @@ describe("recovery tools", () => {
   // cycle_diagnose
   // -----------------------------------------------------------------------
 
-  describe("cycle_diagnose", () => {
-    it("returns no active cycle when no state exists", () => {
-      const result = handleCycleDiagnose(
+  describe("cycle_diagnose", async () => {
+    it("returns no active cycle when no state exists", async () => {
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -392,11 +392,11 @@ describe("recovery tools", () => {
       expect(text).toContain("No active cycle");
     });
 
-    it("reports healthy status when all is valid", () => {
+    it("reports healthy status when all is valid", async () => {
       const state = makeCycleState();
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -409,13 +409,13 @@ describe("recovery tools", () => {
       expect(text).toContain("0/1 epics");
     });
 
-    it("reports degraded status when stuck entities exist", () => {
+    it("reports degraded status when stuck entities exist", async () => {
       const state = makeCycleState();
       // A task stuck in "doing"
       state.phases[0].epics[0].tasks[0].status = "doing";
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -428,7 +428,7 @@ describe("recovery tools", () => {
       expect(text).toContain("First task");
     });
 
-    it("reports an unfinished persisted Gate 0 attempt as stuck when it is not in-process", () => {
+    it("reports an unfinished persisted Gate 0 attempt as stuck when it is not in-process", async () => {
       const state = makeCycleState();
       state.phases[0].epics[0].tasks[0].status = "doing";
       writeState(tempDir, state);
@@ -451,7 +451,7 @@ describe("recovery tools", () => {
         },
       });
 
-       const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+       const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
        expect(text).not.toContain("Executing Gate 0 attempts:");
        expect(text).toContain("Recovery:");
        expect(text).toContain("interrupted");
@@ -465,7 +465,7 @@ describe("recovery tools", () => {
         expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "attempt-123"))).toBe(true);
       });
 
-       it("classifies an inactive recent attempt as interrupted before the stale threshold", () => {
+       it("classifies an inactive recent attempt as interrupted before the stale threshold", async () => {
          const state = makeCycleState();
          state.phases[0].epics[0].tasks[0].status = "doing";
          writeState(tempDir, state);
@@ -474,14 +474,14 @@ describe("recovery tools", () => {
            gate_0_attempt: { version: 1, id: "recent-attempt", started_at: new Date(Date.now() - 1000).toISOString() },
          });
 
-         const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+         const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
          expect(text).toContain("interrupted");
          expect(text).not.toContain("stale");
          expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
        });
 
-       it("classifies an inactive old attempt as stale and recommends retry", () => {
+       it("classifies an inactive old attempt as stale and recommends retry", async () => {
          const state = makeCycleState();
          state.phases[0].epics[0].tasks[0].status = "doing";
          writeState(tempDir, state);
@@ -490,7 +490,7 @@ describe("recovery tools", () => {
            gate_0_attempt: { version: 1, id: "stale-attempt", started_at: new Date(Date.now() - 6 * 60 * 1000).toISOString() },
          });
 
-         const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+         const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
          expect(text).toContain("stale");
          expect(text).toContain("interrupted");
@@ -498,7 +498,7 @@ describe("recovery tools", () => {
          expect(stateManager.getTask("1.1.1").status).toBe("failed");
        });
 
-       it("reconciles terminal Gate 0 evidence left with a doing task idempotently", () => {
+       it("reconciles terminal Gate 0 evidence left with a doing task idempotently", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "doing";
         writeState(tempDir, state);
@@ -507,15 +507,15 @@ describe("recovery tools", () => {
           gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "passed" },
         });
 
-        handleCycleDiagnose(stateManager, evidenceManager, tempDir);
+        await handleCycleDiagnose(stateManager, evidenceManager, tempDir);
         const updatedAt = stateManager.load()?.updated_at;
-        handleCycleDiagnose(stateManager, evidenceManager, tempDir);
+        await handleCycleDiagnose(stateManager, evidenceManager, tempDir);
 
         expect(stateManager.getTask("1.1.1").status).toBe("done");
         expect(stateManager.load()?.updated_at).toBe(updatedAt);
       });
 
-      it("fails an interrupted post_task boundary without rerunning custom gates", () => {
+      it("fails an interrupted post_task boundary without rerunning custom gates", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "doing";
         writeState(tempDir, state);
@@ -531,7 +531,7 @@ describe("recovery tools", () => {
           },
         };
 
-        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir, config));
+        const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir, config));
 
         expect(text).toContain("post_task_unproven");
         expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
@@ -542,7 +542,7 @@ describe("recovery tools", () => {
         expect(evidenceManager.load("custom_post_task", "1.1.1")).toBeNull();
       });
 
-      it("does not restore historical evidence after a retry starts without current evidence", () => {
+      it("does not restore historical evidence after a retry starts without current evidence", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "failed";
         writeState(tempDir, state);
@@ -554,7 +554,7 @@ describe("recovery tools", () => {
         handleTaskRetry({ task_id: "1.1.1" }, stateManager, evidenceManager, tempDir);
         stateManager.transition("1.1.1", "doing");
 
-        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+        const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
         expect(text).not.toContain("Recovery:");
         expect(stateManager.getTask("1.1.1").status).toBe("doing");
@@ -562,7 +562,7 @@ describe("recovery tools", () => {
         expect(existsSync(evidenceManager.attemptPathFor("1.1.1", "attempt-failed"))).toBe(true);
       });
 
-      it("marks a crashed retry interrupted without restoring older terminal history", () => {
+      it("marks a crashed retry interrupted without restoring older terminal history", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "failed";
         writeState(tempDir, state);
@@ -578,7 +578,7 @@ describe("recovery tools", () => {
           gate_0_attempt: { version: 1, id: "attempt-retry", started_at: "2026-09-08T00:02:00.000Z" },
         });
 
-        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+        const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
         expect(text).toContain("interrupted");
         expect(stateManager.getTask("1.1.1").status).toBe("failed");
@@ -601,7 +601,7 @@ describe("recovery tools", () => {
       });
 
 
-      it.each(["failed", "timed_out", "cancelled", "execution_error"] as const)("reconciles %s terminal evidence from doing to failed", (outcome) => {
+      it.each(["failed", "timed_out", "cancelled", "execution_error"] as const)("reconciles %s terminal evidence from doing to failed", async (outcome) => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "doing";
         writeState(tempDir, state);
@@ -610,12 +610,12 @@ describe("recovery tools", () => {
           gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome },
         });
 
-        handleCycleDiagnose(stateManager, evidenceManager, tempDir);
+        await handleCycleDiagnose(stateManager, evidenceManager, tempDir);
 
         expect(stateManager.getTask("1.1.1").status).toBe("failed");
       });
 
-      it("reports terminal evidence mismatched with a non-doing task without mutation", () => {
+      it("reports terminal evidence mismatched with a non-doing task without mutation", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "done";
         writeState(tempDir, state);
@@ -627,7 +627,7 @@ describe("recovery tools", () => {
         const evidencePath = evidenceManager.pathFor("gate_0", "1.1.1");
         const before = JSON.stringify(evidenceManager.load("gate_0", "1.1.1"));
 
-        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+        const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
         expect(text).toContain("Terminal Gate 0 evidence mismatches:");
         expect(text).toContain("timed_out evidence conflicts with task status");
@@ -637,7 +637,7 @@ describe("recovery tools", () => {
         expect(existsSync(evidencePath)).toBe(true);
       });
 
-      it("reports a successful recovered attempt as requiring no action", () => {
+      it("reports a successful recovered attempt as requiring no action", async () => {
         const state = makeCycleState();
        state.phases[0].epics[0].tasks[0].status = "doing";
        writeState(tempDir, state);
@@ -646,13 +646,13 @@ describe("recovery tools", () => {
          gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "passed" },
        });
 
-       const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+       const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
        expect(text).toContain("terminal_passed");
        expect(text).toContain("Reconciled to done; no action required.");
        expect(text).not.toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
      });
 
-      it("summarizes latest and prior Gate 0 attempts", () => {
+      it("summarizes latest and prior Gate 0 attempts", async () => {
         const state = makeCycleState();
         writeState(tempDir, state);
         evidenceManager.saveTerminalGate0Attempt({
@@ -664,12 +664,12 @@ describe("recovery tools", () => {
           gate_0_attempt: { version: 1, id: "attempt-2", started_at: "2026-09-08T00:02:00.000Z", finished_at: "2026-09-08T00:03:00.000Z", outcome: "passed" },
         });
 
-        const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+        const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
         expect(text).toContain("Gate 0 attempt history:");
         expect(text).toContain("latest passed; prior failed");
       });
 
-      it("reports inconsistent evidence with the minimal repair action", () => {
+      it("reports inconsistent evidence with the minimal repair action", async () => {
        const state = makeCycleState();
        state.phases[0].epics[0].tasks[0].status = "doing";
        writeState(tempDir, state);
@@ -678,18 +678,18 @@ describe("recovery tools", () => {
          gate_0_attempt: { version: 1, id: "attempt-123", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), outcome: "passed" },
        });
 
-       const text = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+       const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
        expect(text).toContain("inconsistent");
        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
      });
 
-     it("reports corrupt status when validation errors exist", () => {
+     it("reports corrupt status when validation errors exist", async () => {
       // Create a state with an invalid current_phase
       const state = makeCycleState();
       state.current_phase = 999;
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -701,14 +701,14 @@ describe("recovery tools", () => {
       expect(text).toContain("current_phase");
     });
 
-    it("detects missing evidence for done tasks", () => {
+    it("detects missing evidence for done tasks", async () => {
       const state = makeCycleState();
       // Mark task as done but don't create evidence
       state.phases[0].epics[0].tasks[0].status = "done";
       state.phases[0].epics[0].tasks[0].gate_0 = { passed: true };
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -719,7 +719,7 @@ describe("recovery tools", () => {
       expect(text).toContain("Task 1.1.1: missing gate_0 evidence");
     });
 
-    it("detects missing evidence for done epics", () => {
+    it("detects missing evidence for done epics", async () => {
       const state = makeCycleState();
       // Mark epic and all its tasks as done
       state.phases[0].epics[0].status = "done";
@@ -740,7 +740,7 @@ describe("recovery tools", () => {
       writeState(tempDir, state);
 
       // No gate_8 or gate_9 evidence files exist on disk
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -752,12 +752,12 @@ describe("recovery tools", () => {
       expect(text).toContain("Epic 1.1: missing gate_9 evidence");
     });
 
-    it("suggests task_manage for stuck tasks", () => {
+    it("suggests task_manage for stuck tasks", async () => {
       const state = makeCycleState();
       state.phases[0].epics[0].tasks[0].status = "doing";
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -769,12 +769,12 @@ describe("recovery tools", () => {
       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
     });
 
-    it("suggests task_manage retry for failed tasks", () => {
+    it("suggests task_manage retry for failed tasks", async () => {
       const state = makeCycleState();
       state.phases[0].epics[0].tasks[0].status = "failed";
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -785,12 +785,12 @@ describe("recovery tools", () => {
       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
     });
 
-    it("suggests epic_manage for stuck epics", () => {
+    it("suggests epic_manage for stuck epics", async () => {
       const state = makeCycleState();
       state.phases[0].epics[0].status = "doing";
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -801,14 +801,14 @@ describe("recovery tools", () => {
       expect(text).toContain('epic_manage({ epic_id: "1.1", action: "force_status", target_status: "pending", cascade: false, confirm: true })');
     });
 
-    it("suggests task_manage reset_evidence for missing task evidence", () => {
+    it("suggests task_manage reset_evidence for missing task evidence", async () => {
       const state = makeCycleState();
       state.phases[0].epics[0].tasks[0].status = "done";
       state.phases[0].epics[0].tasks[0].gate_0 = { passed: true };
       // No evidence file on disk
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -820,13 +820,13 @@ describe("recovery tools", () => {
       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
     });
 
-    it("excludes skipped entities from progress totals", () => {
+    it("excludes skipped entities from progress totals", async () => {
       const state = makeCycleState();
       // 2 tasks total: skip one, leave one pending
       state.phases[0].epics[0].tasks[0].status = "skipped";
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -839,7 +839,7 @@ describe("recovery tools", () => {
       expect(text).toContain("0/1 epics");
     });
 
-    it("excludes skipped epics from progress totals", () => {
+    it("excludes skipped epics from progress totals", async () => {
       const state = makeCycleState();
       state.phases[0].epics[0].status = "skipped";
       // Also skip all tasks so we get clean counts
@@ -847,7 +847,7 @@ describe("recovery tools", () => {
       state.phases[0].epics[0].tasks[1].status = "skipped";
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -859,7 +859,7 @@ describe("recovery tools", () => {
       expect(text).toContain("0/0 epics");
     });
 
-    it("suggests phase_manage for stuck phases", () => {
+    it("suggests phase_manage for stuck phases", async () => {
       const state = makeCycleState();
       // Add a second phase stuck in "doing" (non-current phase)
       state.phases.push({
@@ -885,7 +885,7 @@ describe("recovery tools", () => {
       });
       writeState(tempDir, state);
 
-      const result = handleCycleDiagnose(
+      const result = await handleCycleDiagnose(
         stateManager,
         evidenceManager,
         tempDir,
@@ -901,9 +901,9 @@ describe("recovery tools", () => {
   // task_manage
   // -----------------------------------------------------------------------
 
-  describe("task_manage", () => {
-    it("returns error when no active cycle exists", () => {
-      const result = handleTaskManage(
+  describe("task_manage", async () => {
+    it("returns error when no active cycle exists", async () => {
+      const result = await handleTaskManage(
         { task_id: "1.1.1", action: "skip", confirm: false },
         stateManager,
         evidenceManager,
@@ -914,10 +914,10 @@ describe("recovery tools", () => {
       expect(extractText(result)).toContain("No active cycle");
     });
 
-    it("returns error when task is not found", () => {
+    it("returns error when task is not found", async () => {
       writeState(tempDir, makeCycleState());
 
-      const result = handleTaskManage(
+      const result = await handleTaskManage(
         { task_id: "9.9.9", action: "skip", confirm: false },
         stateManager,
         evidenceManager,
@@ -930,11 +930,11 @@ describe("recovery tools", () => {
 
     // ----- force_status -----
 
-    describe("force_status", () => {
-      it("requires target_status parameter", () => {
+    describe("force_status", async () => {
+      it("requires target_status parameter", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "force_status", confirm: false },
           stateManager,
           evidenceManager,
@@ -945,10 +945,10 @@ describe("recovery tools", () => {
         expect(extractText(result)).toContain("target_status");
       });
 
-      it("rejects invalid target_status", () => {
+      it("rejects invalid target_status", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           {
             task_id: "1.1.1",
             action: "force_status",
@@ -964,10 +964,10 @@ describe("recovery tools", () => {
         expect(extractText(result)).toContain("Invalid target_status");
       });
 
-      it("returns preview without mutating state", () => {
+      it("returns preview without mutating state", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           {
             task_id: "1.1.1",
             action: "force_status",
@@ -991,10 +991,10 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.1").status).toBe("pending");
       });
 
-      it("applies force_status on confirm", () => {
+      it("applies force_status on confirm", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           {
             task_id: "1.1.1",
             action: "force_status",
@@ -1011,7 +1011,7 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.1").status).toBe("done");
       });
 
-      it("clears evidence on backward transition (done -> pending)", () => {
+      it("clears evidence on backward transition (done -> pending)", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "done";
         state.phases[0].epics[0].tasks[0].gate_0 = { passed: true };
@@ -1027,7 +1027,7 @@ describe("recovery tools", () => {
         });
 
         // Preview should mention evidence cleanup
-        const preview = handleTaskManage(
+        const preview = await handleTaskManage(
           {
             task_id: "1.1.1",
             action: "force_status",
@@ -1041,7 +1041,7 @@ describe("recovery tools", () => {
         expect(extractText(preview)).toContain("will be deleted");
 
         // Confirm
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           {
             task_id: "1.1.1",
             action: "force_status",
@@ -1058,7 +1058,7 @@ describe("recovery tools", () => {
         expect(evidenceManager.load("gate_0", "1.1.1")).toBeNull();
       });
 
-      it("preserves evidence on forward transition", () => {
+      it("preserves evidence on forward transition", async () => {
         writeState(tempDir, makeCycleState());
 
         evidenceManager.save({
@@ -1070,7 +1070,7 @@ describe("recovery tools", () => {
         });
 
         // Preview should mention evidence preserved
-        const preview = handleTaskManage(
+        const preview = await handleTaskManage(
           {
             task_id: "1.1.1",
             action: "force_status",
@@ -1083,7 +1083,7 @@ describe("recovery tools", () => {
         );
         expect(extractText(preview)).toContain("will be preserved");
 
-        handleTaskManage(
+        await handleTaskManage(
           {
             task_id: "1.1.1",
             action: "force_status",
@@ -1102,11 +1102,11 @@ describe("recovery tools", () => {
 
     // ----- skip -----
 
-    describe("skip", () => {
-      it("returns preview without mutating state", () => {
+    describe("skip", async () => {
+      it("returns preview without mutating state", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "skip", confirm: false },
           stateManager,
           evidenceManager,
@@ -1120,10 +1120,10 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.1").status).toBe("pending");
       });
 
-      it("transitions task to skipped on confirm", () => {
+      it("transitions task to skipped on confirm", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "skip", confirm: true },
           stateManager,
           evidenceManager,
@@ -1135,12 +1135,12 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.1").status).toBe("skipped");
       });
 
-      it("rejects skip from already-skipped status", () => {
+      it("rejects skip from already-skipped status", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "skipped";
         writeState(tempDir, state);
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "skip", confirm: true },
           stateManager,
           evidenceManager,
@@ -1154,11 +1154,11 @@ describe("recovery tools", () => {
 
     // ----- retry -----
 
-    describe("retry", () => {
-      it("returns error preview for non-failed tasks", () => {
+    describe("retry", async () => {
+      it("returns error preview for non-failed tasks", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "retry", confirm: false },
           stateManager,
           evidenceManager,
@@ -1170,7 +1170,7 @@ describe("recovery tools", () => {
         expect(extractText(result)).toContain("Only \"failed\"");
       });
 
-      it("returns preview for failed tasks with evidence info", () => {
+      it("returns preview for failed tasks with evidence info", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "failed";
         writeState(tempDir, state);
@@ -1185,7 +1185,7 @@ describe("recovery tools", () => {
           ],
         });
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "retry", confirm: false },
           stateManager,
           evidenceManager,
@@ -1199,7 +1199,7 @@ describe("recovery tools", () => {
         expect(text).toContain("confirm: true");
       });
 
-      it("delegates to handleTaskRetry on confirm", () => {
+      it("delegates to handleTaskRetry on confirm", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "failed";
         writeState(tempDir, state);
@@ -1214,7 +1214,7 @@ describe("recovery tools", () => {
           ],
         });
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "retry", confirm: true },
           stateManager,
           evidenceManager,
@@ -1229,8 +1229,8 @@ describe("recovery tools", () => {
 
     // ----- reset_evidence -----
 
-    describe("reset_evidence", () => {
-      it("returns preview showing what evidence exists", () => {
+    describe("reset_evidence", async () => {
+      it("returns preview showing what evidence exists", async () => {
         writeState(tempDir, makeCycleState());
 
         evidenceManager.save({
@@ -1241,7 +1241,7 @@ describe("recovery tools", () => {
           checks: [],
         });
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "reset_evidence", confirm: false },
           stateManager,
           evidenceManager,
@@ -1255,10 +1255,10 @@ describe("recovery tools", () => {
         expect(text).toContain("will NOT change");
       });
 
-      it("returns preview showing no evidence when none exists", () => {
+      it("returns preview showing no evidence when none exists", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "reset_evidence", confirm: false },
           stateManager,
           evidenceManager,
@@ -1269,7 +1269,7 @@ describe("recovery tools", () => {
         expect(text).toContain("0 file(s)");
       });
 
-      it("deletes all evidence without changing status on confirm", () => {
+      it("deletes all evidence without changing status on confirm", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "done";
         writeState(tempDir, state);
@@ -1288,7 +1288,7 @@ describe("recovery tools", () => {
           gate_0_attempt: { version: 1, id: "reset-attempt", started_at: "2026-09-08T00:00:00.000Z", finished_at: "2026-09-08T00:01:00.000Z", outcome: "failed" },
         });
 
-        const result = handleTaskManage(
+        const result = await handleTaskManage(
           { task_id: "1.1.1", action: "reset_evidence", confirm: true },
           stateManager,
           evidenceManager,
@@ -1312,9 +1312,9 @@ describe("recovery tools", () => {
   // epic_manage
   // -----------------------------------------------------------------------
 
-  describe("epic_manage", () => {
-    it("returns error when no active cycle exists", () => {
-      const result = handleEpicManage(
+  describe("epic_manage", async () => {
+    it("returns error when no active cycle exists", async () => {
+      const result = await handleEpicManage(
         { epic_id: "1.1", action: "skip", cascade: false, confirm: false },
         stateManager,
         evidenceManager,
@@ -1325,10 +1325,10 @@ describe("recovery tools", () => {
       expect(extractText(result)).toContain("No active cycle");
     });
 
-    it("returns error when epic is not found", () => {
+    it("returns error when epic is not found", async () => {
       writeState(tempDir, makeCycleState());
 
-      const result = handleEpicManage(
+      const result = await handleEpicManage(
         { epic_id: "9.9", action: "skip", cascade: false, confirm: false },
         stateManager,
         evidenceManager,
@@ -1341,11 +1341,11 @@ describe("recovery tools", () => {
 
     // ----- force_status -----
 
-    describe("force_status", () => {
-      it("requires target_status", () => {
+    describe("force_status", async () => {
+      it("requires target_status", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "force_status", cascade: false, confirm: false },
           stateManager,
           evidenceManager,
@@ -1356,10 +1356,10 @@ describe("recovery tools", () => {
         expect(extractText(result)).toContain("target_status");
       });
 
-      it("rejects invalid target_status", () => {
+      it("rejects invalid target_status", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           {
             epic_id: "1.1",
             action: "force_status",
@@ -1376,10 +1376,10 @@ describe("recovery tools", () => {
         expect(extractText(result)).toContain("Invalid target_status");
       });
 
-      it("returns preview without mutating state", () => {
+      it("returns preview without mutating state", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           {
             epic_id: "1.1",
             action: "force_status",
@@ -1400,10 +1400,10 @@ describe("recovery tools", () => {
         expect(stateManager.getEpic("1.1").status).toBe("pending");
       });
 
-      it("applies force_status on confirm", () => {
+      it("applies force_status on confirm", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           {
             epic_id: "1.1",
             action: "force_status",
@@ -1423,10 +1423,10 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.1").status).toBe("pending");
       });
 
-      it("cascades force_status to all child tasks", () => {
+      it("cascades force_status to all child tasks", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           {
             epic_id: "1.1",
             action: "force_status",
@@ -1448,10 +1448,10 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.2").status).toBe("done");
       });
 
-      it("cascade preview lists each task transition", () => {
+      it("cascade preview lists each task transition", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           {
             epic_id: "1.1",
             action: "force_status",
@@ -1470,7 +1470,7 @@ describe("recovery tools", () => {
         expect(text).toContain("1.1.2");
       });
 
-      it("cleans task evidence on backward cascade", () => {
+      it("cleans task evidence on backward cascade", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "done";
         state.phases[0].epics[0].tasks[1].status = "done";
@@ -1484,7 +1484,7 @@ describe("recovery tools", () => {
           checks: [],
         });
 
-        handleEpicManage(
+        await handleEpicManage(
           {
             epic_id: "1.1",
             action: "force_status",
@@ -1504,14 +1504,14 @@ describe("recovery tools", () => {
 
     // ----- reset_tasks -----
 
-    describe("reset_tasks", () => {
-      it("returns preview listing all tasks", () => {
+    describe("reset_tasks", async () => {
+      it("returns preview listing all tasks", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "done";
         state.phases[0].epics[0].tasks[1].status = "failed";
         writeState(tempDir, state);
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: false },
           stateManager,
           evidenceManager,
@@ -1526,7 +1526,7 @@ describe("recovery tools", () => {
         expect(text).toContain("failed -> pending");
       });
 
-      it("resets all tasks to pending and clears evidence on confirm", () => {
+      it("resets all tasks to pending and clears evidence on confirm", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].tasks[0].status = "done";
         state.phases[0].epics[0].tasks[1].status = "failed";
@@ -1555,7 +1555,7 @@ describe("recovery tools", () => {
         evidenceManager.save({ gate: "gate_8", entity_id: "1.1", passed: true, timestamp: new Date().toISOString(), checks: [] });
         evidenceManager.save({ gate: "gate_9", entity_id: "1.1", passed: true, timestamp: new Date().toISOString(), checks: [] });
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: true },
           stateManager,
           evidenceManager,
@@ -1580,11 +1580,11 @@ describe("recovery tools", () => {
 
     // ----- skip -----
 
-    describe("skip", () => {
-      it("returns preview without mutating state", () => {
+    describe("skip", async () => {
+      it("returns preview without mutating state", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "skip", cascade: false, confirm: false },
           stateManager,
           evidenceManager,
@@ -1598,10 +1598,10 @@ describe("recovery tools", () => {
         expect(stateManager.getEpic("1.1").status).toBe("pending");
       });
 
-      it("transitions epic to skipped on confirm", () => {
+      it("transitions epic to skipped on confirm", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "skip", cascade: false, confirm: true },
           stateManager,
           evidenceManager,
@@ -1615,10 +1615,10 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.1").status).toBe("pending");
       });
 
-      it("cascades skip to all child tasks", () => {
+      it("cascades skip to all child tasks", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "skip", cascade: true, confirm: true },
           stateManager,
           evidenceManager,
@@ -1634,10 +1634,10 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.2").status).toBe("skipped");
       });
 
-      it("cascade skip preview shows task details", () => {
+      it("cascade skip preview shows task details", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "skip", cascade: true, confirm: false },
           stateManager,
           evidenceManager,
@@ -1650,12 +1650,12 @@ describe("recovery tools", () => {
         expect(text).toContain("1.1.2");
       });
 
-      it("rejects skip from already-skipped epic", () => {
+      it("rejects skip from already-skipped epic", async () => {
         const state = makeCycleState();
         state.phases[0].epics[0].status = "skipped";
         writeState(tempDir, state);
 
-        const result = handleEpicManage(
+        const result = await handleEpicManage(
           { epic_id: "1.1", action: "skip", cascade: false, confirm: true },
           stateManager,
           evidenceManager,
@@ -1672,9 +1672,9 @@ describe("recovery tools", () => {
   // phase_manage
   // -----------------------------------------------------------------------
 
-  describe("phase_manage", () => {
-    it("returns error when no active cycle exists", () => {
-      const result = handlePhaseManage(
+  describe("phase_manage", async () => {
+    it("returns error when no active cycle exists", async () => {
+      const result = await handlePhaseManage(
         { phase_id: "1", action: "skip", confirm: false },
         stateManager,
         evidenceManager,
@@ -1685,10 +1685,10 @@ describe("recovery tools", () => {
       expect(extractText(result)).toContain("No active cycle");
     });
 
-    it("returns error for invalid (non-numeric) phase_id", () => {
+    it("returns error for invalid (non-numeric) phase_id", async () => {
       writeState(tempDir, makeCycleState());
 
-      const result = handlePhaseManage(
+      const result = await handlePhaseManage(
         { phase_id: "abc", action: "skip", confirm: false },
         stateManager,
         evidenceManager,
@@ -1699,10 +1699,10 @@ describe("recovery tools", () => {
       expect(extractText(result)).toContain("Invalid phase_id");
     });
 
-    it("returns error when phase is not found", () => {
+    it("returns error when phase is not found", async () => {
       writeState(tempDir, makeCycleState());
 
-      const result = handlePhaseManage(
+      const result = await handlePhaseManage(
         { phase_id: "99", action: "skip", confirm: false },
         stateManager,
         evidenceManager,
@@ -1715,11 +1715,11 @@ describe("recovery tools", () => {
 
     // ----- force_status -----
 
-    describe("force_status", () => {
-      it("requires target_status", () => {
+    describe("force_status", async () => {
+      it("requires target_status", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           { phase_id: "1", action: "force_status", confirm: false },
           stateManager,
           evidenceManager,
@@ -1730,10 +1730,10 @@ describe("recovery tools", () => {
         expect(extractText(result)).toContain("target_status");
       });
 
-      it("rejects invalid target_status", () => {
+      it("rejects invalid target_status", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           {
             phase_id: "1",
             action: "force_status",
@@ -1749,10 +1749,10 @@ describe("recovery tools", () => {
         expect(extractText(result)).toContain("Invalid target_status");
       });
 
-      it("returns preview without mutating state", () => {
+      it("returns preview without mutating state", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           {
             phase_id: "1",
             action: "force_status",
@@ -1773,10 +1773,10 @@ describe("recovery tools", () => {
         expect(stateManager.getPhase(1).status).toBe("doing");
       });
 
-      it("applies force_status on confirm", () => {
+      it("applies force_status on confirm", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           {
             phase_id: "1",
             action: "force_status",
@@ -1796,11 +1796,11 @@ describe("recovery tools", () => {
 
     // ----- skip -----
 
-    describe("skip", () => {
-      it("returns preview with full cascade details", () => {
+    describe("skip", async () => {
+      it("returns preview with full cascade details", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           { phase_id: "1", action: "skip", confirm: false },
           stateManager,
           evidenceManager,
@@ -1819,10 +1819,10 @@ describe("recovery tools", () => {
         expect(stateManager.getPhase(1).status).toBe("doing");
       });
 
-      it("skips phase and all children on confirm", () => {
+      it("skips phase and all children on confirm", async () => {
         writeState(tempDir, makeCycleState());
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           { phase_id: "1", action: "skip", confirm: true },
           stateManager,
           evidenceManager,
@@ -1840,7 +1840,7 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.1.2").status).toBe("skipped");
       });
 
-      it("skips multi-epic phase correctly", () => {
+      it("skips multi-epic phase correctly", async () => {
         const state = makeCycleState();
         // Add a second epic with a task
         state.phases[0].epics.push({
@@ -1860,7 +1860,7 @@ describe("recovery tools", () => {
         });
         writeState(tempDir, state);
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           { phase_id: "1", action: "skip", confirm: true },
           stateManager,
           evidenceManager,
@@ -1879,13 +1879,13 @@ describe("recovery tools", () => {
         expect(stateManager.getTask("1.2.1").status).toBe("skipped");
       });
 
-      it("does not re-skip already-skipped children", () => {
+      it("does not re-skip already-skipped children", async () => {
         const state = makeCycleState();
         // Pre-skip one task
         state.phases[0].epics[0].tasks[0].status = "skipped";
         writeState(tempDir, state);
 
-        const result = handlePhaseManage(
+        const result = await handlePhaseManage(
           { phase_id: "1", action: "skip", confirm: true },
           stateManager,
           evidenceManager,

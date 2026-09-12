@@ -55,6 +55,18 @@ export function handleCycleReset(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   projectRoot: string,
+): CallToolResult | Promise<CallToolResult> {
+  if (!params.confirm) return handleCycleResetUnlocked(params, stateManager, evidenceManager, projectRoot);
+  const preflight = handleCycleResetUnlocked({ confirm: false }, stateManager, evidenceManager, projectRoot);
+  if (preflight.isError) return preflight;
+  return withProjectMutationLock(projectRoot, async () => handleCycleResetUnlocked(params, stateManager, evidenceManager, projectRoot));
+}
+
+function handleCycleResetUnlocked(
+  params: CycleResetParams,
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
+  projectRoot: string,
 ): CallToolResult {
   const state = stateManager.load();
   if (state === null) {
@@ -255,8 +267,9 @@ export function handleTaskManage(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   projectRoot: string,
-): CallToolResult {
-  return handleTaskManageUnlocked(params, stateManager, evidenceManager, projectRoot);
+): CallToolResult | Promise<CallToolResult> {
+  if (!params.confirm) return handleTaskManageUnlocked(params, stateManager, evidenceManager, projectRoot);
+  return withProjectMutationLock(projectRoot, async () => handleTaskManageUnlocked(params, stateManager, evidenceManager, projectRoot));
 }
 
 function handleTaskManageUnlocked(
@@ -456,7 +469,16 @@ export function handleEpicManage(
   params: EpicManageParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  _projectRoot: string,
+  projectRoot: string,
+): CallToolResult | Promise<CallToolResult> {
+  if (!params.confirm) return handleEpicManageUnlocked(params, stateManager, evidenceManager);
+  return withProjectMutationLock(projectRoot, async () => handleEpicManageUnlocked(params, stateManager, evidenceManager));
+}
+
+function handleEpicManageUnlocked(
+  params: EpicManageParams,
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
 ): CallToolResult {
   const state = stateManager.load();
   if (state === null) {
@@ -634,7 +656,16 @@ export function handlePhaseManage(
   params: PhaseManageParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  _projectRoot: string,
+  projectRoot: string,
+): CallToolResult | Promise<CallToolResult> {
+  if (!params.confirm) return handlePhaseManageUnlocked(params, stateManager, evidenceManager);
+  return withProjectMutationLock(projectRoot, async () => handlePhaseManageUnlocked(params, stateManager, evidenceManager));
+}
+
+function handlePhaseManageUnlocked(
+  params: PhaseManageParams,
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
 ): CallToolResult {
   const state = stateManager.load();
   if (state === null) {
@@ -877,13 +908,23 @@ export function reconcilePersistedGate0Attempts(
 // cycle_diagnose handler
 // ---------------------------------------------------------------------------
 
-export function handleCycleDiagnose(
+export async function handleCycleDiagnose(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   projectRoot: string,
   config: RigorConfig = DEFAULTS,
-): CallToolResult {
-  const recoveryOutcomes = reconcilePersistedGate0Attempts(stateManager, evidenceManager, projectRoot, config);
+): Promise<CallToolResult> {
+  const stateBeforeDiagnosis = stateManager.load();
+  const requiresReconciliation = stateBeforeDiagnosis?.phases.some((phase) =>
+    phase.epics.some((epic) => epic.tasks.some((task) => {
+      if (task.status !== "doing") return false;
+      const attempt = evidenceManager.load("gate_0", task.id)?.gate_0_attempt;
+      return Boolean(attempt && !isGate0AttemptActive(projectRoot, task.id, attempt.id));
+    }))) ?? false;
+  const recoveryOutcomes = requiresReconciliation
+    ? await withProjectMutationLock(projectRoot, async () =>
+        reconcilePersistedGate0Attempts(stateManager, evidenceManager, projectRoot, config))
+    : [];
   const recoveredTaskIds = new Set(recoveryOutcomes.map((outcome) => outcome.taskId));
   const terminalEvidenceMismatches = terminalGate0Mismatches(stateManager, evidenceManager)
     .filter((mismatch) => !recoveredTaskIds.has(mismatch.taskId));

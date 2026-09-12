@@ -654,7 +654,7 @@ describe("review tools", async () => {
       // Complete the single epic in phase 1
       await completeEpic("1.1");
 
-      const result = handlePhaseAdvance(stateManager);
+      const result = await handlePhaseAdvance(stateManager);
 
       expect(result.isError).toBeUndefined();
       const text = extractText(result);
@@ -677,7 +677,7 @@ describe("review tools", async () => {
     it("rejects when epics are incomplete", async () => {
       stateManager.init("test-plan.md", makePhases());
 
-      const result = handlePhaseAdvance(stateManager);
+      const result = await handlePhaseAdvance(stateManager);
 
       expect(result.isError).toBe(true);
       const text = extractText(result);
@@ -717,7 +717,7 @@ describe("review tools", async () => {
       // Complete the epic
       await completeEpic("1.1");
 
-      const result = handlePhaseAdvance(
+      const result = await handlePhaseAdvance(
         stateManager,
         evidenceManager,
         new ArchiveManager(tempDir),
@@ -758,7 +758,7 @@ describe("review tools", async () => {
         throw new Error("archive storage unavailable");
       });
 
-      const result = handlePhaseAdvance(
+      const result = await handlePhaseAdvance(
         stateManager,
         evidenceManager,
         new ArchiveManager(tempDir),

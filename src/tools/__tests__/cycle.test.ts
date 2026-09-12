@@ -81,12 +81,12 @@ describe("cycle tools", () => {
   // cycle_init
   // -----------------------------------------------------------------------
 
-  describe("cycle_init", () => {
-    it("creates state from plan and returns success with counts", () => {
+  describe("cycle_init", async () => {
+    it("creates state from plan and returns success with counts", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
       const params: CycleInitParams = { plan_path: planPath };
-      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
+      const result = await handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBeUndefined();
 
@@ -105,13 +105,13 @@ describe("cycle tools", () => {
       expect(loaded?.phases).toHaveLength(2);
     });
 
-    it("resolves relative plan_path against projectRoot", () => {
+    it("resolves relative plan_path against projectRoot", async () => {
       // Copy the fixture into the temp dir
       const planName = "my-plan.md";
       cpSync(SAMPLE_PLAN, join(tempDir, planName));
 
       const params: CycleInitParams = { plan_path: planName };
-      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
+      const result = await handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBeUndefined();
 
@@ -120,28 +120,28 @@ describe("cycle tools", () => {
       expect(parsed.phases).toBe(2);
     });
 
-    it("rejects when a cycle already exists", () => {
+    it("rejects when a cycle already exists", async () => {
       // Init first cycle
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
       const params: CycleInitParams = { plan_path: planPath };
-      handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
+      await handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       // Try to init again
-      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
+      const result = await handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBe(true);
       const text = extractText(result);
       expect(text).toContain("cycle already exists");
     });
 
-    it("treats re-init with a relative path to the same plan as same-plan", () => {
+    it("treats re-init with a relative path to the same plan as same-plan", async () => {
       const planName = "my-plan.md";
       cpSync(SAMPLE_PLAN, join(tempDir, planName));
 
-      handleCycleInit({ plan_path: planName }, stateManager, tempDir, TEST_CONFIG);
+      await handleCycleInit({ plan_path: planName }, stateManager, tempDir, TEST_CONFIG);
 
-      const result = handleCycleInit(
+      const result = await handleCycleInit(
         { plan_path: join(tempDir, planName) },
         stateManager,
         tempDir,
@@ -154,16 +154,16 @@ describe("cycle tools", () => {
       expect(text).toContain("cycle_reset");
     });
 
-    it("rejects a foreign plan without recommending cycle_reset", () => {
+    it("rejects a foreign plan without recommending cycle_reset", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
+      await handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
       const existing = stateManager.load();
 
       const otherPlanName = "other-plan.md";
       cpSync(SAMPLE_PLAN, join(tempDir, otherPlanName));
 
-      const result = handleCycleInit(
+      const result = await handleCycleInit(
         { plan_path: otherPlanName },
         stateManager,
         tempDir,
@@ -178,8 +178,8 @@ describe("cycle tools", () => {
       expect(text).toContain("rigor:worktree");
     });
 
-    it("rejects a shared workspace override when project config disables it", () => {
-      const result = handleCycleInit(
+    it("rejects a shared workspace override when project config disables it", async () => {
+      const result = await handleCycleInit(
         { plan_path: "plan.md", allow_shared_workspace: true },
         stateManager,
         tempDir,
@@ -193,10 +193,10 @@ describe("cycle tools", () => {
       expect(extractText(result)).toContain("allow_shared_workspace is disabled");
     });
 
-    it("allows an explicit shared workspace override when project config permits it", () => {
+    it("allows an explicit shared workspace override when project config permits it", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      const result = handleCycleInit(
+      const result = await handleCycleInit(
         { plan_path: planPath, allow_shared_workspace: true },
         stateManager,
         tempDir,
@@ -213,19 +213,19 @@ describe("cycle tools", () => {
       expect(result.isError).toBeUndefined();
     });
 
-    it("throws on invalid plan path", () => {
+    it("throws on invalid plan path", async () => {
       const params: CycleInitParams = { plan_path: "/nonexistent/plan.md" };
 
-      expect(() =>
+      await expect(
         handleCycleInit(params, stateManager, tempDir, TEST_CONFIG),
-      ).toThrow();
+      ).rejects.toThrow();
     });
 
-    it("maps task done checkbox to done status", () => {
+    it("maps task done checkbox to done status", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
       const params: CycleInitParams = { plan_path: planPath };
-      handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
+      await handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       const state = stateManager.load();
       // Task 1.1.1 has [x] Done in sample-plan.md
@@ -244,18 +244,18 @@ describe("cycle tools", () => {
   // cycle_status
   // -----------------------------------------------------------------------
 
-  describe("cycle_status", () => {
-    it("returns 'no active cycle' when no state exists", () => {
+  describe("cycle_status", async () => {
+    it("returns 'no active cycle' when no state exists", async () => {
       const result = handleCycleStatus(stateManager);
 
       const text = extractText(result);
       expect(text).toContain("No active cycle");
     });
 
-    it("returns correct summary for a fresh cycle", () => {
+    it("returns correct summary for a fresh cycle", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
+      await handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
 
       const result = handleCycleStatus(stateManager);
       const text = extractText(result);
@@ -273,10 +273,10 @@ describe("cycle tools", () => {
       expect(text).toContain("1/3 tasks completed");
     });
 
-    it("labels an unfinished persisted Gate 0 attempt as stale", () => {
+    it("labels an unfinished persisted Gate 0 attempt as stale", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      await handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
       stateManager.transition("1.1.2", "doing");
       const evidenceManager = new EvidenceManager(tempDir);
       evidenceManager.save({
@@ -303,10 +303,10 @@ describe("cycle tools", () => {
       expect(text).not.toContain("Gate 0: executing");
     });
 
-    it("does not report a stale attempt as executing when its timeout is unconfigured", () => {
+    it("does not report a stale attempt as executing when its timeout is unconfigured", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      await handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
       stateManager.transition("1.1.2", "doing");
       const evidenceManager = new EvidenceManager(tempDir);
       evidenceManager.save({
@@ -332,10 +332,10 @@ describe("cycle tools", () => {
       expect(text).not.toContain("Gate 0: executing");
     });
 
-    it("shows progress and active task for mid-progress cycle", () => {
+    it("shows progress and active task for mid-progress cycle", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
+      await handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
 
       // Transition task 1.1.2 to "doing"
       stateManager.transition("1.1.2", "doing");
@@ -354,17 +354,17 @@ describe("cycle tools", () => {
   // cycle_reload (rolling-wave elaboration)
   // -----------------------------------------------------------------------
 
-  describe("cycle_reload", () => {
-    it("errors when no cycle exists", () => {
-      const result = handleCycleReload({}, stateManager, tempDir);
+  describe("cycle_reload", async () => {
+    it("errors when no cycle exists", async () => {
+      const result = await handleCycleReload({}, stateManager, tempDir);
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("No active cycle");
     });
 
-    it("adds newly-elaborated tasks to an epic and preserves existing progress", () => {
+    it("adds newly-elaborated tasks to an epic and preserves existing progress", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      await handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
 
       // Epic 2.1 starts with zero tasks (epic-level in the fixture).
       const epic21Before = stateManager.load()!.phases[1].epics[0];
@@ -395,7 +395,7 @@ describe("cycle tools", () => {
         ].join("\n");
       writeFileSync(planPath, expanded, "utf-8");
 
-      const result = handleCycleReload({}, stateManager, tempDir);
+      const result = await handleCycleReload({}, stateManager, tempDir);
       expect(result.isError).toBeUndefined();
       const summary = JSON.parse(extractText(result)) as {
         added: { phases: number; epics: number; tasks: number };
@@ -413,12 +413,12 @@ describe("cycle tools", () => {
       expect(e11.tasks.find((t) => t.id === "1.1.2")?.status).toBe("doing");
     });
 
-    it("is a no-op (adds nothing) when the plan is unchanged", () => {
+    it("is a no-op (adds nothing) when the plan is unchanged", async () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      await handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
 
-      const result = handleCycleReload({}, stateManager, tempDir);
+      const result = await handleCycleReload({}, stateManager, tempDir);
       const summary = JSON.parse(extractText(result)) as {
         added: { phases: number; epics: number; tasks: number };
       };

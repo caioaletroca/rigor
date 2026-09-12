@@ -598,7 +598,7 @@ describe("gate tools", async () => {
       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
       const evidenceManager = new EvidenceManager(tempDir);
       const liveStatus = extractText(handleCycleStatus(stateManager, evidenceManager, tempDir));
-      const liveDiagnose = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+      const liveDiagnose = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
        const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
        const liveEvidence = readFileSync(evidencePath, "utf-8");
@@ -621,7 +621,7 @@ describe("gate tools", async () => {
       await completion;
 
       const terminalStatus = extractText(handleCycleStatus(stateManager, evidenceManager));
-      const terminalDiagnose = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+      const terminalDiagnose = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
       expect(terminalStatus).not.toContain("Gate 0: executing");
       expect(terminalDiagnose).not.toContain("Executing Gate 0 attempts:");
     });
@@ -637,8 +637,8 @@ describe("gate tools", async () => {
 
       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
       const evidenceManager = new EvidenceManager(tempDir);
-      const preview = handleCycleReset({ confirm: false }, stateManager, evidenceManager, tempDir);
-      const reset = handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir);
+      const preview = await handleCycleReset({ confirm: false }, stateManager, evidenceManager, tempDir);
+      const reset = await handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir);
 
       expect(preview.isError).toBe(true);
       expect(reset.isError).toBe(true);
