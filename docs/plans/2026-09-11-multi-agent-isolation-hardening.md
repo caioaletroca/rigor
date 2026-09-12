@@ -203,7 +203,35 @@ Include an anti-rationalization table. Seed it with the failure modes this plan 
 
 **Status:** Pending
 
-*(No tasks yet -- elaborated during execution once the Phase 1 workspace boundary is in place.)*
+#### Task 2.1.1: Extract the shared per-project mutation coordinator
+
+- [ ] Done
+
+**Implementation:** Move the existing root-keyed queue from `src/tools/gate.ts` into `src/lifecycle/mutation-coordinator.ts`, export it through `src/lifecycle/index.ts`, and update all existing consumers. Canonicalize root keys, preserve FIFO same-root ordering, allow different roots to overlap, release after errors, and clean idle entries. This remains in-process coordination; do not add filesystem locks.
+
+**Files:** Create `src/lifecycle/mutation-coordinator.ts`, `src/lifecycle/index.ts`, `src/lifecycle/__tests__/mutation-coordinator.test.ts`; modify `src/tools/gate.ts`, `src/tools/recovery.ts`.
+
+**Verification:** `npx vitest run src/lifecycle/` and `npm run build`.
+
+#### Task 2.1.2: Route lifecycle mutations through the shared coordinator
+
+- [ ] Done
+
+**Implementation:** Route `cycle_init`, `cycle_reload`, review/acceptance submissions, phase advance, confirmed reset and management operations, and diagnostic reconciliation through the coordinator using the effective project root. Keep status, acceptance start, previews, and non-mutating diagnosis outside it. Ensure exported handlers are safe, not only MCP registration wrappers. Update the zero-task review message to recommend `cycle_reload`, not re-init.
+
+**Files:** Modify `src/tools/cycle.ts`, `src/tools/review.ts`, `src/tools/recovery.ts` and their tests, including `src/tools/__tests__/multi-project.integration.test.ts`.
+
+**Verification:** Run the affected tool test files, then `npm run build`.
+
+#### Task 2.1.3: Split long-running gate execution from coordinated commits
+
+- [ ] Done
+
+**Implementation:** Refactor task start/completion and custom-gate-backed review/acceptance into prepare-under-coordinator, execute-outside-coordinator, and commit-under-coordinator phases. Preserve active-completion duplicate suppression and reload fresh state before commit. No external command or custom gate may run while the mutation coordinator is held.
+
+**Files:** Modify `src/tools/gate.ts`, `src/tools/review.ts`, `src/tools/__tests__/gate.test.ts`, `src/tools/__tests__/review.test.ts`.
+
+**Verification:** `npx vitest run src/tools/__tests__/gate.test.ts src/tools/__tests__/review.test.ts`, `npm test`, and `npm run build`.
 
 ### Epic 2.2: Fence completion against lease takeover
 
@@ -217,7 +245,35 @@ Include an anti-rationalization table. Seed it with the failure modes this plan 
 
 **Status:** Pending
 
-*(No tasks yet.)*
+#### Task 2.2.1: Add an atomic persisted lease assertion primitive
+
+- [ ] Done
+
+**Implementation:** Add a reusable StateManager lease-fence assertion for coordinated commit sections. Reload persisted state and verify task status, owner, attempt, expiry, and timestamp validity. Return typed recoverable outcomes for owner change, attempt takeover, expiry, status change, and malformed leases. Registered completion calls remain strict; retain isolated compatibility for legacy calls.
+
+**Files:** Modify `src/state/schema.ts`, `src/state/manager.ts`, `src/state/index.ts`, `src/state/__tests__/manager.test.ts`.
+
+**Verification:** `npx vitest run src/state/` and `npm run build`.
+
+#### Task 2.2.2: Fence Gate 0 progress and terminal publication
+
+- [ ] Done
+
+**Implementation:** Separate attempt-history persistence from canonical evidence promotion. Before every canonical progress/terminal evidence write, task Gate 0 update, post-task result, terminal transition, and failure-path mutation, revalidate the persisted lease under the coordinator. Timestamp recency must never authorize promotion. A stale worker may retain immutable attempt history but must return a recoverable stale-attempt result without changing canonical state or evidence.
+
+**Files:** Modify `src/tools/gate.ts`, `src/evidence/manager.ts`, `src/evidence/index.ts`, `src/tools/__tests__/gate.test.ts`, `src/evidence/__tests__/manager.test.ts`.
+
+**Verification:** Run evidence and gate tests with deterministic delayed-attempt takeover scenarios, then `npm test` and `npm run build`.
+
+#### Task 2.2.3: Add lease renewal for legitimate long-running attempts
+
+- [ ] Done
+
+**Implementation:** Add a project-root-aware `task_renew` lifecycle tool that extends a live lease only when persisted task status, owner, and attempt match. Generate expiry server-side, serialize renewal through the coordinator, and make renewal/takeover races deterministic: whichever commits first determines whether takeover or renewal succeeds. A replaced attempt can never revive itself.
+
+**Files:** Modify `src/state/schema.ts`, `src/state/manager.ts`, `src/tools/gate.ts`, `src/tools/index.ts`, `src/tools/__tests__/gate.test.ts`, `src/tools/__tests__/transport.integration.test.ts`; config files only if renewal duration becomes configurable.
+
+**Verification:** Run gate and transport integration tests, then `npm test` and `npm run build`.
 
 ---
 

@@ -29,7 +29,8 @@ import { classifyGate0Attempt } from "../evidence/index.js";
 import type { EvidenceManager } from "../evidence/index.js";
 import { DEFAULTS } from "../config/index.js";
 import type { RigorConfig } from "../config/index.js";
-import { isGate0AttemptActive, withProjectMutationLock } from "./gate.js";
+import { withProjectMutationLock } from "../lifecycle/index.js";
+import { isGate0AttemptActive } from "./gate.js";
 import type { ProjectContextRegistry } from "../context.js";
 import { responseResult } from "./response.js";
 

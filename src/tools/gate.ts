@@ -23,6 +23,7 @@ import {
 } from "../gates/index.js";
 import { runCommand } from "../executor/index.js";
 import type { ProjectContextRegistry } from "../context.js";
+import { withProjectMutationLock } from "../lifecycle/index.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -36,22 +37,6 @@ function textResult(text: string, isError?: boolean): CallToolResult {
 }
 
 const activeTaskCompletions = new Map<string, string>();
-const projectMutationQueues = new Map<string, Promise<void>>();
-
-export async function withProjectMutationLock<T>(projectRoot: string, operation: () => Promise<T>): Promise<T> {
-  const previous = projectMutationQueues.get(projectRoot) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => { release = resolve; });
-  const hasPrevious = projectMutationQueues.has(projectRoot);
-  projectMutationQueues.set(projectRoot, current);
-  if (hasPrevious) await previous;
-  try {
-    return await operation();
-  } finally {
-    release();
-    if (projectMutationQueues.get(projectRoot) === current) projectMutationQueues.delete(projectRoot);
-  }
-}
 
 function completionKey(projectRoot: string, taskId: string): string {
   return `${projectRoot}\u0000${taskId}`;
