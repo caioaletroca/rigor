@@ -76,6 +76,8 @@ export interface GateEvidence {
 // Entity types
 // ---------------------------------------------------------------------------
 
+export const TASK_LEASE_DURATION_MS = 300000;
+
 export interface TaskLease {
   owner_id: string;
   attempt_id: string;
@@ -117,6 +119,8 @@ export type LeaseFenceResult =
       reason: LeaseFenceMismatchReason;
       task_id: string;
     };
+
+export type LeaseRenewalResult = LeaseFenceResult;
 
 export type LegacyLeaseFenceResult =
   | { ok: true; state: CycleState; task: TaskState }

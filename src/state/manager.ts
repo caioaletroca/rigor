@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, basename } from "node:path";
-import { isValidTransition, ALL_STATUSES } from "./schema.js";
+import { isValidTransition, ALL_STATUSES, TASK_LEASE_DURATION_MS } from "./schema.js";
 import { EntityNotFoundError, InvalidTransitionError } from "./errors.js";
 import { validateState } from "./validator.js";
 import type { ValidationResult } from "./validator.js";
@@ -24,6 +24,7 @@ import type {
   LeaseFenceAssertion,
   LeaseFenceMismatchReason,
   LeaseFenceResult,
+  LeaseRenewalResult,
   LegacyLeaseFenceResult,
   PhaseState,
   Status,
@@ -263,6 +264,21 @@ export class StateManager {
     }
 
     return { ok: true, state, task, lease: task.lease };
+  }
+
+  renewPersistedLease(assertion: LeaseFenceAssertion): LeaseRenewalResult {
+    const fence = this.assertPersistedLease(assertion);
+    if (!fence.ok) return fence;
+
+    const now = assertion.now ?? Date.now();
+    const renewed: TaskLease = {
+      ...fence.lease,
+      lease_expires_at: new Date(now + TASK_LEASE_DURATION_MS).toISOString(),
+    };
+    fence.task.lease = renewed;
+    this.save(fence.state);
+
+    return { ok: true, state: fence.state, task: fence.task, lease: renewed };
   }
 
   assertPersistedLegacyLease(taskId: string): LegacyLeaseFenceResult {

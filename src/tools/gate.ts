@@ -10,8 +10,8 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import type { StateManager, TaskLease } from "../state/index.js";
-import { EntityNotFoundError, isValidTransition } from "../state/index.js";
+import type { StateManager, TaskLease, LeaseFenceMismatchReason } from "../state/index.js";
+import { EntityNotFoundError, isValidTransition, TASK_LEASE_DURATION_MS } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
@@ -219,7 +219,7 @@ export async function handleTaskStart(
   const lease: TaskLease = {
     owner_id: (params.owner_id ?? "legacy"),
     attempt_id: attemptId,
-    lease_expires_at: new Date(Date.now() + (params.lease_ms ?? 300000)).toISOString(),
+    lease_expires_at: new Date(Date.now() + (params.lease_ms ?? TASK_LEASE_DURATION_MS)).toISOString(),
     ...(task.lease && !activeLease ? { takeover_history: [...(task.lease.takeover_history ?? []), { ...task.lease, taken_over_at: new Date().toISOString() }] } : {}),
   };
   const commitResult = await withProjectMutationLock(projectRoot, async () => {
@@ -259,6 +259,67 @@ export async function handleTaskStart(
   }
 
   return textResult(lines.join("\n"));
+}
+
+// ---------------------------------------------------------------------------
+// task_renew handler
+// ---------------------------------------------------------------------------
+
+export interface TaskRenewParams {
+  task_id: string;
+  owner_id: string;
+  attempt_id: string;
+  project_root?: string;
+}
+
+const LEASE_RENEWAL_REASONS: Record<LeaseFenceMismatchReason, string> = {
+  status_changed: "its persisted status is no longer \"doing\"",
+  owner_changed: "its lease is held by a different owner",
+  attempt_changed: "its lease was reissued to a different attempt",
+  lease_expired: "its lease already expired",
+  malformed_timestamp: "its persisted lease is missing or malformed",
+};
+
+export async function handleTaskRenew(
+  params: TaskRenewParams,
+  stateManager: StateManager,
+  projectRoot: string,
+): Promise<CallToolResult> {
+  if (stateManager.load() === null) {
+    return textResult("No active cycle. Run cycle_init first.", true);
+  }
+
+  return withProjectMutationLock(projectRoot, async () => {
+    let renewal;
+    try {
+      renewal = stateManager.renewPersistedLease({
+        task_id: params.task_id,
+        owner_id: params.owner_id,
+        attempt_id: params.attempt_id,
+      });
+    } catch (error: unknown) {
+      if (error instanceof EntityNotFoundError) {
+        return textResult(`Task "${params.task_id}" not found.`, true);
+      }
+      throw error;
+    }
+
+    if (!renewal.ok) {
+      return textResult(
+        `Task "${params.task_id}" lease was not renewed for owner "${params.owner_id}" attempt "${params.attempt_id}" because ${LEASE_RENEWAL_REASONS[renewal.reason]}. ` +
+          "Canonical state was not modified; start the task again with explicit takeover to obtain a new lease.",
+        true,
+      );
+    }
+
+    return textResult(
+      [
+        `Task ${params.task_id} lease renewed for owner ${params.owner_id}.`,
+        `Attempt: ${params.attempt_id}`,
+        `Lease expires at: ${renewal.lease.lease_expires_at}`,
+      ].join("\n"),
+    );
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -552,6 +613,16 @@ export function registerGateTools(
      async (params) => {
        const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
        return handleTaskStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
+    },
+  );
+
+  server.tool(
+    "task_renew",
+    "Renew a live task lease for its current owner and attempt",
+    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: z.string().optional() },
+    async (params) => {
+      const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+      return handleTaskRenew(params, ctx?.stateManager ?? stateManager, ctx?.project_root ?? projectRoot);
     },
   );
 

@@ -46,7 +46,7 @@ const {
   runCustomGates: ReturnType<typeof vi.fn>;
 };
 
-const { handleTaskStart, handleTaskComplete } = await import("../gate.js");
+const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../gate.js");
 const { handleCycleStatus } = await import("../cycle.js");
 const { handleCycleDiagnose, handleCycleReset, handleTaskRetry } = await import("../recovery.js");
 
@@ -412,6 +412,76 @@ describe("gate tools", async () => {
       // Task should still be pending (not transitioned)
       const task = stateManager.getTask("1.1.2");
       expect(task.status).toBe("pending");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // task_renew
+  // -----------------------------------------------------------------------
+
+  describe("task_renew", () => {
+    async function startLease() {
+      await handleTaskStart({ task_id: "1.1.2", owner_id: "owner-a" }, stateManager, config, tempDir);
+      return stateManager.getTask("1.1.2").lease!;
+    }
+
+    it("renews only the matching live owner and attempt", async () => {
+      const lease = await startLease();
+      const before = Date.parse(lease.lease_expires_at);
+
+      const result = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(extractText(result)).toContain("lease renewed");
+      expect(Date.parse(stateManager.getTask("1.1.2").lease!.lease_expires_at)).toBeGreaterThanOrEqual(before);
+    });
+
+    it("rejects a stale owner or attempt without changing its replacement", async () => {
+      const lease = await startLease();
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+      task.lease = { owner_id: "owner-b", attempt_id: "attempt-b", lease_expires_at: new Date(Date.now() + 60_000).toISOString() };
+      stateManager.save(state);
+      const before = stateManager.getTask("1.1.2").lease;
+
+      const result = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("not renewed");
+      expect(stateManager.getTask("1.1.2").lease).toEqual(before);
+    });
+
+    it("serializes an expired renewal and takeover so the takeover keeps the lease", async () => {
+      const lease = await startLease();
+      const state = stateManager.load()!;
+      state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+      stateManager.save(state);
+
+      const [renewal, takeover] = await Promise.all([
+        handleTaskRenew({ task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id }, stateManager, tempDir),
+        handleTaskStart({ task_id: "1.1.2", owner_id: "owner-b", takeover: true }, stateManager, config, tempDir),
+      ]);
+
+      expect(renewal.isError).toBe(true);
+      expect(takeover.isError).toBeUndefined();
+      expect(stateManager.getTask("1.1.2").lease).toMatchObject({ owner_id: "owner-b" });
+    });
+
+    it("reports missing cycles and tasks as errors", async () => {
+      const empty = new StateManager(join(tempDir, "empty"));
+      const noCycle = await handleTaskRenew({ task_id: "1.1.2", owner_id: "owner-a", attempt_id: "attempt-a" }, empty, tempDir);
+      const noTask = await handleTaskRenew({ task_id: "9.9.9", owner_id: "owner-a", attempt_id: "attempt-a" }, stateManager, tempDir);
+
+      expect(noCycle.isError).toBe(true);
+      expect(noTask.isError).toBe(true);
     });
   });
 

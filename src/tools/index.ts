@@ -9,8 +9,8 @@ export type { ProjectRootResolution, RequestContext } from "../context.js";
 export { handleCycleInit, handleCycleStatus } from "./cycle.js";
 
 export { registerGateTools } from "./gate.js";
-export type { TaskStartParams, TaskCompleteParams } from "./gate.js";
-export { handleTaskStart, handleTaskComplete } from "./gate.js";
+export type { TaskStartParams, TaskCompleteParams, TaskRenewParams } from "./gate.js";
+export { handleTaskStart, handleTaskComplete, handleTaskRenew } from "./gate.js";
 
 export { registerReviewTools } from "./review.js";
 export type {

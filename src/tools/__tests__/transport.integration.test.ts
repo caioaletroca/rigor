@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { withHarnessSessions } from "../../testing/transport-harness.js";
@@ -90,6 +90,44 @@ describe("cross-client transport harness", () => {
       const status = await session.call("cycle_status");
       expect(status.isError).toBeUndefined();
       expect(text(status)).toContain(project);
+    });
+  });
+
+  it("renews leases per project root and rejects stale attempts over the transport", async () => {
+    const projectA = makeFixture("renew-a");
+    const projectB = makeFixture("renew-b");
+    roots.push(projectA, projectB);
+
+    await withHarnessSessions([
+      { projectRoot: projectA, clientStyle: "opencode" },
+      { projectRoot: projectB, clientStyle: "claude" },
+    ], async (sessions) => {
+      await Promise.all(sessions.map((session) => session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true })));
+      await Promise.all(sessions.map((session, index) => session.call("task_start", { task_id: "1.1.2", owner_id: `owner-${index}` })));
+
+      const tools = await sessions[0].client.listTools();
+      expect(tools.tools.map((tool) => tool.name)).toContain("task_renew");
+
+      const leaseA = JSON.parse(readFileSync(join(projectA, ".rigor", "state.json"), "utf-8"))
+        .phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").lease;
+
+      const renewed = await sessions[0].call("task_renew", {
+        task_id: "1.1.2",
+        owner_id: leaseA.owner_id,
+        attempt_id: leaseA.attempt_id,
+        project_root: projectA,
+      });
+      expect(renewed.isError).toBeUndefined();
+      expect(text(renewed)).toContain("lease renewed");
+
+      const stale = await sessions[1].call("task_renew", {
+        task_id: "1.1.2",
+        owner_id: leaseA.owner_id,
+        attempt_id: leaseA.attempt_id,
+        project_root: projectB,
+      });
+      expect(stale.isError).toBe(true);
+      expect(text(stale)).toContain("not renewed");
     });
   });
 
