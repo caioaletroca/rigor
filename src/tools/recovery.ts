@@ -31,7 +31,7 @@ import type { EvidenceManager } from "../evidence/index.js";
 import { DEFAULTS } from "../config/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { withProjectMutationLock } from "../lifecycle/index.js";
-import { isGate0AttemptActive } from "./gate.js";
+import { isGate0AttemptActive } from "../services/task-lifecycle.js";
 import type { ProjectContextRegistry } from "../context.js";
 
 // ---------------------------------------------------------------------------

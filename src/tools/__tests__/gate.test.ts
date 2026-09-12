@@ -46,7 +46,8 @@ const {
   runCustomGates: ReturnType<typeof vi.fn>;
 };
 
-const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../gate.js");
+const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../../services/task-lifecycle.js");
+const { registerGateTools } = await import("../gate.js");
 const { handleCycleStatus } = await import("../cycle.js");
 const { handleCycleDiagnose, handleCycleReset, handleTaskRetry } = await import("../recovery.js");
 
@@ -109,6 +110,16 @@ const config: RigorConfig = DEFAULTS;
 // ---------------------------------------------------------------------------
 
 describe("gate tools", async () => {
+  it("registers the task lifecycle MCP schemas", () => {
+    const tool = vi.fn();
+
+    registerGateTools({ tool } as never, {} as StateManager, "C:/project");
+
+    expect(tool.mock.calls.map(([name]) => name)).toEqual(["task_start", "task_renew", "task_complete"]);
+    expect(tool.mock.calls[0][2].owner_id.safeParse("").success).toBe(false);
+    expect(tool.mock.calls[2][2].attempt_id.safeParse("").success).toBe(false);
+  });
+
   let tempDir: string;
   let stateManager: StateManager;
 
