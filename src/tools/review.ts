@@ -43,8 +43,31 @@ export async function handleReviewStart(
   config: RigorConfig | null,
   projectRoot: string,
 ): Promise<CallToolResult> {
-  // Reload config fresh from disk when not supplied (see gate.ts handlers).
   const cfg = config ?? loadConfig(projectRoot);
+  const prepared = await withProjectMutationLock(projectRoot, async () => prepareReviewStart(params, stateManager));
+  if ("content" in prepared) return prepared;
+  const customResult = await runCustomGates("pre_review", params.epic_id, cfg, projectRoot);
+  if (!customResult.passed) {
+    const lines = [`Epic ${params.epic_id} blocked by custom pre_review gate.`, ""];
+    for (const check of customResult.checks) lines.push(`  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`);
+    return textResult(lines.join("\n"), true);
+  }
+  return withProjectMutationLock(projectRoot, async () => {
+    const epic = stateManager.getEpic(params.epic_id);
+    if (epic.status === "pending") stateManager.transition(params.epic_id, "doing");
+    const reviewers = cfg.gates.gate_8.reviewers;
+    return textResult([
+      `Review started for epic ${params.epic_id}: ${epic.name}`,
+      `Tasks: ${epic.tasks.length} (all done, all passed Gate 0)`,
+      `Expected reviewers: ${reviewers.join(", ")}`,
+    ].join("\n"));
+  });
+}
+
+function prepareReviewStart(
+  params: ReviewStartParams,
+  stateManager: StateManager,
+): CallToolResult | { ready: true } {
 
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
@@ -107,32 +130,7 @@ export async function handleReviewStart(
     return textResult(lines.join("\n"), true);
   }
 
-  // 4. Transition epic to "doing" if still pending
-  if (epic.status === "pending") {
-    stateManager.transition(params.epic_id, "doing");
-  }
-
-  // 4b. Run pre_review custom gates
-  const customResult = await runCustomGates("pre_review", params.epic_id, cfg, projectRoot);
-  if (!customResult.passed) {
-    const lines: string[] = [];
-    lines.push(`Epic ${params.epic_id} blocked by custom pre_review gate.`);
-    lines.push("");
-    for (const check of customResult.checks) {
-      const icon = check.passed ? "PASS" : "FAIL";
-      lines.push(`  [${icon}] ${check.name}: ${check.detail}`);
-    }
-    return textResult(lines.join("\n"), true);
-  }
-
-  // 5. Return summary
-  const reviewers = cfg.gates.gate_8.reviewers;
-  const lines: string[] = [];
-  lines.push(`Review started for epic ${params.epic_id}: ${epic.name}`);
-  lines.push(`Tasks: ${epic.tasks.length} (all done, all passed Gate 0)`);
-  lines.push(`Expected reviewers: ${reviewers.join(", ")}`);
-
-  return textResult(lines.join("\n"));
+  return { ready: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +319,7 @@ export async function handleAcceptSubmit(
   config: RigorConfig | null,
   projectRoot: string,
 ): Promise<CallToolResult> {
-  return withProjectMutationLock(projectRoot, () => handleAcceptSubmitUnlocked(params, stateManager, evidenceManager, config, projectRoot));
+  return handleAcceptSubmitUnlocked(params, stateManager, evidenceManager, config, projectRoot);
 }
 
 async function handleAcceptSubmitUnlocked(

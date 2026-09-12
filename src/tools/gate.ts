@@ -99,15 +99,6 @@ export async function handleTaskStart(
   config: RigorConfig | null,
   projectRoot: string,
 ): Promise<CallToolResult> {
-  return withProjectMutationLock(projectRoot, () => handleTaskStartUnlocked(params, stateManager, config, projectRoot));
-}
-
-async function handleTaskStartUnlocked(
-  params: TaskStartParams,
-  stateManager: StateManager,
-  config: RigorConfig | null,
-  projectRoot: string,
-): Promise<CallToolResult> {
   // Reload config fresh from disk when not explicitly supplied, so edits to
   // .rigor/config.yaml take effect without restarting the server.
   const cfg = config ?? loadConfig(projectRoot);
@@ -224,8 +215,9 @@ async function handleTaskStartUnlocked(
     lease_expires_at: new Date(Date.now() + (params.lease_ms ?? 300000)).toISOString(),
     ...(task.lease && !activeLease ? { takeover_history: [...(task.lease.takeover_history ?? []), { ...task.lease, taken_over_at: new Date().toISOString() }] } : {}),
   };
-  const leasedState = stateManager.load();
-  if (leasedState) {
+  const commitResult = await withProjectMutationLock(projectRoot, async () => {
+    const leasedState = stateManager.load();
+    if (!leasedState) return textResult("No active cycle. Run cycle_init first.", true);
     for (const phase of leasedState.phases) for (const epic of phase.epics) for (const currentTask of epic.tasks) {
       if (currentTask.id === params.task_id) {
         const currentLeaseExpiresAt = currentTask.lease
@@ -237,6 +229,9 @@ async function handleTaskStartUnlocked(
             currentLeaseExpiresAt! <= Date.now()
           : isValidTransition(currentTask.status, "doing");
         if (!transitionAllowed) {
+          if (currentTask.lease && Date.parse(currentTask.lease.lease_expires_at) > Date.now()) {
+            return textResult(`Task "${params.task_id}" is owned by "${currentTask.lease.owner_id}" until ${currentTask.lease.lease_expires_at}.`, true);
+          }
           return textResult(`Task "${params.task_id}" changed before its lease could be issued.`, true);
         }
         currentTask.status = "doing";
@@ -244,7 +239,9 @@ async function handleTaskStartUnlocked(
       }
     }
     stateManager.save(leasedState);
-  }
+    return null;
+  });
+  if (commitResult) return commitResult;
 
   const lines: string[] = [];
   lines.push(`Task ${params.task_id} started: ${task.name}`);
@@ -276,7 +273,7 @@ export async function handleTaskComplete(
 ): Promise<CallToolResult> {
   const activeAttemptId = activeTaskCompletions.get(completionKey(projectRoot, params.task_id));
   if (activeAttemptId) return Promise.resolve(activeCompletionResult(params.task_id, activeAttemptId));
-  return withProjectMutationLock(projectRoot, () => handleTaskCompleteUnlocked(params, stateManager, config, projectRoot));
+  return handleTaskCompleteUnlocked(params, stateManager, config, projectRoot);
 }
 
 async function handleTaskCompleteUnlocked(
