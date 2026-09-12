@@ -21,8 +21,13 @@ import type { ValidationResult } from "./validator.js";
 import type {
   CycleState,
   EpicState,
+  LeaseFenceAssertion,
+  LeaseFenceMismatchReason,
+  LeaseFenceResult,
+  LegacyLeaseFenceResult,
   PhaseState,
   Status,
+  TaskLease,
   TaskState,
 } from "./schema.js";
 import type { SyncManager } from "../sync/index.js";
@@ -230,6 +235,56 @@ export class StateManager {
   // Lookups
   // -----------------------------------------------------------------------
 
+  assertPersistedLease(assertion: LeaseFenceAssertion): LeaseFenceResult {
+    const state = this.load();
+    if (state === null) {
+      throw new EntityNotFoundError("task", assertion.task_id);
+    }
+
+    const task = this.findTask(state, assertion.task_id);
+    if (!task) {
+      throw new EntityNotFoundError("task", assertion.task_id);
+    }
+
+    if (task.status !== "doing") {
+      return this.leaseFenceMismatch(assertion.task_id, "status_changed");
+    }
+    if (!task.lease || !this.isValidLease(task.lease)) {
+      return this.leaseFenceMismatch(assertion.task_id, "malformed_timestamp");
+    }
+    if (task.lease.owner_id !== assertion.owner_id) {
+      return this.leaseFenceMismatch(assertion.task_id, "owner_changed");
+    }
+    if (task.lease.attempt_id !== assertion.attempt_id) {
+      return this.leaseFenceMismatch(assertion.task_id, "attempt_changed");
+    }
+    if (Date.parse(task.lease.lease_expires_at) <= (assertion.now ?? Date.now())) {
+      return this.leaseFenceMismatch(assertion.task_id, "lease_expired");
+    }
+
+    return { ok: true, state, task, lease: task.lease };
+  }
+
+  assertPersistedLegacyLease(taskId: string): LegacyLeaseFenceResult {
+    const state = this.load();
+    if (state === null) {
+      throw new EntityNotFoundError("task", taskId);
+    }
+
+    const task = this.findTask(state, taskId);
+    if (!task) {
+      throw new EntityNotFoundError("task", taskId);
+    }
+    if (task.status !== "doing") {
+      return this.leaseFenceMismatch(taskId, "status_changed");
+    }
+    if (task.lease && !this.isValidLease(task.lease)) {
+      return this.leaseFenceMismatch(taskId, "malformed_timestamp");
+    }
+
+    return { ok: true, state, task };
+  }
+
   /**
    * Find a task by id (e.g., "1.1.1"). Throws if not found.
    */
@@ -300,6 +355,34 @@ export class StateManager {
    * - Two dot-separated segments (e.g. "1.1") = epic
    * - Three dot-separated segments (e.g. "1.1.1") = task
    */
+  private findTask(state: CycleState, taskId: string): TaskState | undefined {
+    for (const phase of state.phases) {
+      for (const epic of phase.epics) {
+        const task = epic.tasks.find((candidate) => candidate.id === taskId);
+        if (task) return task;
+      }
+    }
+    return undefined;
+  }
+
+  private isValidLease(lease: TaskLease): boolean {
+    return (
+      typeof lease.owner_id === "string" &&
+      lease.owner_id.length > 0 &&
+      typeof lease.attempt_id === "string" &&
+      lease.attempt_id.length > 0 &&
+      typeof lease.lease_expires_at === "string" &&
+      Number.isFinite(Date.parse(lease.lease_expires_at))
+    );
+  }
+
+  private leaseFenceMismatch(
+    taskId: string,
+    reason: LeaseFenceMismatchReason,
+  ): Exclude<LeaseFenceResult, { ok: true }> {
+    return { ok: false, recoverable: true, reason, task_id: taskId };
+  }
+
   private inferEntityType(entityId: string): SyncEntityType {
     const parts = entityId.split(".");
     if (parts.length >= 3) return "task";
