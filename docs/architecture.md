@@ -65,18 +65,18 @@ The AI agent handles everything requiring **judgment or creativity**:
 ### Gate 0: Implementation
 
 ```
-Agent: gate.start_task("1.1.1")
-Server: { gate: 0, task: "1.1.1", status: "in_progress" }
+Agent: task_start({ task_id: "1.1.1", owner_id, project_root })
+Server: { gate: 0, task: "1.1.1", status: "doing", attempt_id }
 
   ... agent writes code and tests ...
 
-Agent: gate.check_exit("gate_0")
-Server: runs `go test -coverprofile`, checks threshold
+Agent: task_complete({ task_id: "1.1.1", owner_id, attempt_id, project_root })
+Server: runs configured tests, coverage, and lint checks
 Server: { passed: false, coverage: 72.3, threshold: 85, missing: [...] }
 
   ... agent writes more tests ...
 
-Agent: gate.check_exit("gate_0")
+Agent: task_complete({ task_id: "1.1.1", owner_id, attempt_id, project_root })
 Server: { passed: true, coverage: 87.1, threshold: 85 }
 Server: auto-advances to next task or gate
 ```
@@ -84,13 +84,13 @@ Server: auto-advances to next task or gate
 ### Gate 8: Review
 
 ```
-Agent: gate.start_review("epic_1.1")
+Agent: review_start({ epic_id: "1.1", project_root })
 Server: { gate: 8, epic: "1.1", diff: "abc123..def456" }
 
   ... agent dispatches reviewer subagents ...
   ... reviewers analyze diff and return findings ...
 
-Agent: gate.submit_review({ findings: [...], passed: true })
+Agent: review_submit({ epic_id: "1.1", submissions: [...], project_root })
 Server: validates all required reviewers reported
 Server: { passed: true, all_reviewers_reported: true }
 ```
@@ -98,12 +98,12 @@ Server: { passed: true, all_reviewers_reported: true }
 ### Gate 9: Acceptance
 
 ```
-Agent: gate.start_validation("epic_1.1")
+Agent: accept_start({ epic_id: "1.1", project_root })
 Server: { gate: 9, criteria: [...], evidence_required: true }
 
   ... agent maps criteria to evidence ...
 
-Agent: gate.submit_validation({ criteria_map: [...] })
+Agent: accept_submit({ epic_id: "1.1", criteria: [...], user_approved, project_root })
 Server: checks all criteria have evidence
 Server: prompts user for approval (or returns approval_required: true)
 ```

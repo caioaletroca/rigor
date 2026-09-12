@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { withHarnessSessions } from "../../testing/transport-harness.js";
+import { createHarnessSession, withHarnessSessions } from "../../testing/transport-harness.js";
 
 function makeFixture(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `rigor-transport-${name}-`));
@@ -26,6 +26,25 @@ describe("cross-client transport harness", () => {
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  it("matches the README MCP tool inventory to the actual server tools/list response", async () => {
+    const session = await createHarnessSession(process.cwd(), "opencode");
+    try {
+      const inventory = await session.client.listTools();
+      const documentedSection = readFileSync(join(process.cwd(), "README.md"), "utf-8")
+        .split("## MCP tools", 2)[1]
+        .split("## Configuration", 1)[0];
+      const documented = [...documentedSection.matchAll(/\| `([^`]+)` \|/g)]
+        .map((match) => match[1])
+        .sort();
+      const registered = inventory.tools.map((tool) => tool.name).sort();
+
+      expect(registered).toHaveLength(23);
+      expect(documented).toEqual(registered);
+    } finally {
+      await session.close();
+    }
   });
 
   it("runs concurrent client-style lifecycle, gate, and recovery flows independently", async () => {
