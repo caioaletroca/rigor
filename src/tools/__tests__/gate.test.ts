@@ -510,6 +510,7 @@ describe("gate tools", async () => {
       }));
 
       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
+      await vi.waitFor(() => expect(checkGate0Exit).toHaveBeenCalledTimes(1));
       const evidence = JSON.parse(readFileSync(join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json"), "utf-8"));
 
        expect(evidence.gate_0_attempt).toMatchObject({ version: 1 });
@@ -560,9 +561,11 @@ describe("gate tools", async () => {
         });
       });
 
-      const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
-      const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
-      const liveEvidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
+       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
+       await vi.waitFor(() => expect(checkGate0Exit).toHaveBeenCalledTimes(1));
+       const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
+       await vi.waitFor(() => expect(JSON.parse(readFileSync(evidencePath, "utf-8")).gate_0_attempt.current_check).toBeDefined());
+       const liveEvidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
 
       expect(liveEvidence.gate_0_attempt).toMatchObject({
         current_check: {
@@ -597,10 +600,11 @@ describe("gate tools", async () => {
 
       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
       const evidenceManager = new EvidenceManager(tempDir);
+      const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(evidencePath, "utf-8")).gate_0_attempt.current_check).toBeDefined());
       const liveStatus = extractText(handleCycleStatus(stateManager, evidenceManager, tempDir));
       const liveDiagnose = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
-       const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
        const liveEvidence = readFileSync(evidencePath, "utf-8");
        expect(liveStatus).toContain("Active Task: 1.1.2 Second task");
        expect(liveStatus).toMatch(/Gate 0: executing tests \(\d+ms elapsed, timeout: 5000ms\)/);
@@ -887,6 +891,55 @@ describe("gate tools", async () => {
       expect(task.status).toBe("failed");
       expect(task.gate_0.passed).toBe(false);
       expect(task.gate_0.evidence_path).toContain("gate_0-task-1.1.2.json");
+    });
+
+    it("rejects a taken-over attempt at the progress boundary without canonical mutation", async () => {
+      const initialState = stateManager.load()!;
+      initialState.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease = { owner_id: "owner-a", attempt_id: "attempt-a", lease_expires_at: new Date(Date.now() + 60_000).toISOString() };
+      stateManager.save(initialState);
+      const attemptId = "attempt-a";
+      checkGate0Exit.mockImplementationOnce(async (_taskId, _config, _projectRoot, options) => {
+        const state = stateManager.load()!;
+        const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+        task.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+        stateManager.save(state);
+        await handleTaskStart({ task_id: "1.1.2", owner_id: "owner-b", takeover: true }, stateManager, config, tempDir);
+        await options.onCheckStart({ check_name: "tests", command: "npm test" });
+        return { passed: true, checks: [{ name: "tests", passed: true, detail: "All tests passed" }] };
+      });
+
+      const result = await handleTaskComplete({ task_id: "1.1.2", owner_id: "owner-a", attempt_id: attemptId }, stateManager, config, tempDir);
+      const evidence = new EvidenceManager(tempDir);
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("stale");
+      expect(stateManager.getTask("1.1.2")).toMatchObject({ status: "doing", lease: { owner_id: "owner-b" } });
+      expect(evidence.load("gate_0", "1.1.2")?.gate_0_attempt?.finished_at).toBeUndefined();
+      expect(existsSync(evidence.attemptPathFor("1.1.2", attemptId))).toBe(true);
+    });
+
+    it("retains thrown stale attempt history without transitioning the takeover", async () => {
+      const initialState = stateManager.load()!;
+      initialState.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease = { owner_id: "owner-a", attempt_id: "attempt-a", lease_expires_at: new Date(Date.now() + 60_000).toISOString() };
+      stateManager.save(initialState);
+      const attemptId = "attempt-a";
+      checkGate0Exit.mockImplementationOnce(async () => {
+        const state = stateManager.load()!;
+        const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+        task.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+        stateManager.save(state);
+        await handleTaskStart({ task_id: "1.1.2", owner_id: "owner-b", takeover: true }, stateManager, config, tempDir);
+        throw new Error("runner unavailable");
+      });
+
+      const result = await handleTaskComplete({ task_id: "1.1.2", owner_id: "owner-a", attempt_id: attemptId }, stateManager, config, tempDir);
+      const evidence = new EvidenceManager(tempDir);
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("stale");
+      expect(stateManager.getTask("1.1.2")).toMatchObject({ status: "doing", lease: { owner_id: "owner-b" } });
+      expect(evidence.load("gate_0", "1.1.2")?.gate_0_attempt?.finished_at).toBeUndefined();
+      expect(evidence.latestTerminalGate0Attempt("1.1.2")?.gate_0_attempt).toMatchObject({ id: attemptId, outcome: "execution_error" });
     });
 
     // 6. Rejects task not in "doing" status
