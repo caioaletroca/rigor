@@ -32,7 +32,7 @@ export interface Gate0Progress {
 }
 
 export interface Gate0Options {
-  onCheckStart?: (progress: Gate0Progress) => void;
+  onCheckStart?: (progress: Gate0Progress) => void | Promise<void>;
 }
 
 function formatDuration(durationMs: number | undefined): string {
@@ -81,7 +81,7 @@ export async function checkGate0Exit(
     }
 
     ranAnyCommand = true;
-    options.onCheckStart?.({
+    await options.onCheckStart?.({
       check_name: check.name,
       command: check.command,
       configured_timeout_ms: check.timeout_ms,
@@ -296,7 +296,7 @@ export async function evaluateTestFiles(
   projectRoot: string,
   options: Gate0Options = {},
 ): Promise<CheckResult> {
-  options.onCheckStart?.({
+  await options.onCheckStart?.({
     check_name: "test_files",
     command: "git status --porcelain",
   });

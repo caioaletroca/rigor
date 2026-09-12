@@ -57,6 +57,13 @@ function activeCompletionResult(taskId: string, attemptId: string): CallToolResu
   );
 }
 
+function staleAttemptResult(taskId: string): CallToolResult {
+  return textResult(
+    `Task ${taskId} attempt is stale and its result was not promoted. The attempt history was retained; retry with the current lease.`,
+    true,
+  );
+}
+
 function terminalCompletionResult(
   taskId: string,
   taskStatus: "done" | "failed",
@@ -370,122 +377,79 @@ async function handleTaskCompleteUnlocked(
              owner_id: (params.owner_id ?? "legacy"),
              started_at: startedAt },
     };
-    const inProgressEvidencePath = evidenceManager.save(inProgressEvidence);
-    const inProgressState = stateManager.load();
-    if (inProgressState !== null) {
-      for (const phase of inProgressState.phases) {
-        for (const epic of phase.epics) {
-          for (const inProgressTask of epic.tasks) {
-            if (inProgressTask.id === params.task_id) {
-              inProgressTask.gate_0 = {
-                ...inProgressTask.gate_0,
-                evidence_path: inProgressEvidencePath,
-              };
-            }
-          }
-        }
-      }
-      stateManager.save(inProgressState);
-    }
+    const inProgressCommit = await withProjectMutationLock(projectRoot, async () => {
+      const fence = legacyCompletion
+        ? stateManager.assertPersistedLegacyLease(params.task_id)
+        : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
+      if (!fence.ok) return false;
+      const inProgressEvidencePath = evidenceManager.save(inProgressEvidence);
+      fence.task.gate_0 = { ...fence.task.gate_0, evidence_path: inProgressEvidencePath };
+      stateManager.save(fence.state);
+      return true;
+    });
+    if (!inProgressCommit) return staleAttemptResult(params.task_id);
 
     let gate0Result;
-    let evidencePath: string;
+    let executionError: string | undefined;
     try {
       gate0Result = await checkGate0Exit(params.task_id, cfg, projectRoot, {
-        onCheckStart: (progress) => {
-          evidenceManager.save({
-            ...inProgressEvidence,
-            gate_0_attempt: {
-              version: 1,
-              id: attemptId,
-              started_at: startedAt,
-              current_check: {
-                ...progress,
-                started_at: new Date().toISOString(),
-              },
-            },
+        onCheckStart: async (progress) => {
+          const promoted = await withProjectMutationLock(projectRoot, async () => {
+            const fence = legacyCompletion
+              ? stateManager.assertPersistedLegacyLease(params.task_id)
+              : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
+            if (!fence.ok) return false;
+            evidenceManager.save({
+              ...inProgressEvidence,
+              gate_0_attempt: { ...inProgressEvidence.gate_0_attempt!, current_check: { ...progress, started_at: new Date().toISOString() } },
+            });
+            return true;
           });
+          if (!promoted) throw new Error("stale-attempt");
         },
       });
-    const outcome = gate0Result.passed
-      ? "passed"
-      : gate0Result.checks.some((check) => check.timed_out)
-        ? "timed_out"
-        : gate0Result.checks.some((check) => check.cancelled)
-          ? "cancelled"
-          : "failed";
+    } catch (error: unknown) {
+      executionError = error instanceof Error ? error.message : String(error);
+      gate0Result = { passed: false, checks: [{ name: "gate_0", passed: false, detail: `Gate 0 execution error: ${executionError}` }] };
+    }
+    const outcome = executionError ? "execution_error" : gate0Result.passed ? "passed" : gate0Result.checks.some((check) => check.timed_out) ? "timed_out" : gate0Result.checks.some((check) => check.cancelled) ? "cancelled" : "failed";
     const finishedAt = new Date().toISOString();
-    evidencePath = evidenceManager.saveTerminalGate0Attempt({
+    const terminalEvidence: GateEvidence = {
       ...inProgressEvidence,
       passed: gate0Result.passed,
       timestamp: finishedAt,
       checks: gate0Result.checks,
-      gate_0_attempt: {
-        version: 1,
-        id: attemptId,
-        started_at: startedAt,
-        finished_at: finishedAt,
-        outcome,
-      },
+      gate_0_attempt: { version: 1, id: attemptId, owner_id: params.owner_id ?? "legacy", started_at: startedAt, finished_at: finishedAt, outcome },
+    };
+    evidenceManager.saveGate0AttemptHistory(terminalEvidence);
+    const terminalCommit = await withProjectMutationLock(projectRoot, async () => {
+      const fence = legacyCompletion
+        ? stateManager.assertPersistedLegacyLease(params.task_id)
+        : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
+      if (!fence.ok) return false;
+      const evidencePath = evidenceManager.promoteTerminalGate0Attempt(terminalEvidence);
+      fence.task.gate_0 = {
+        passed: gate0Result.passed,
+        evidence_path: evidencePath,
+        coverage: gate0Result.coverage,
+        lint_passed: gate0Result.checks.find((check) => check.name === "lint")?.passed,
+        tests_passed: gate0Result.checks.find((check) => check.name === "tests")?.passed,
+      };
+      stateManager.save(fence.state);
+      return evidencePath;
     });
-  } catch (error: unknown) {
-    const finishedAt = new Date().toISOString();
-    const detail = error instanceof Error ? error.message : String(error);
-    evidencePath = evidenceManager.saveTerminalGate0Attempt({
-      ...inProgressEvidence,
-      timestamp: finishedAt,
-      checks: [{ name: "gate_0", passed: false, detail: `Gate 0 execution error: ${detail}` }],
-      gate_0_attempt: {
-        version: 1,
-        id: attemptId,
-        started_at: startedAt,
-        finished_at: finishedAt,
-        outcome: "execution_error",
-      },
-    });
-    const failedState = stateManager.load();
-    if (failedState !== null) {
-      for (const phase of failedState.phases) {
-        for (const epic of phase.epics) {
-          for (const failedTask of epic.tasks) {
-            if (failedTask.id === params.task_id) {
-              failedTask.gate_0 = { passed: false, evidence_path: evidencePath };
-            }
-          }
-        }
-      }
-      stateManager.save(failedState);
+    if (!terminalCommit) return staleAttemptResult(params.task_id);
+    const evidencePath = terminalCommit;
+    if (executionError) {
+      const failed = await withProjectMutationLock(projectRoot, async () => {
+        const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
+        if (!fence.ok) return false;
+        stateManager.transition(params.task_id, "failed");
+        return true;
+      });
+      if (!failed) return staleAttemptResult(params.task_id);
+      return textResult(`Task ${params.task_id} failed because Gate 0 could not run.\n\n  [FAIL] gate_0: Gate 0 execution error: ${executionError}\n\nEvidence: ${evidencePath}`, true);
     }
-    stateManager.transition(params.task_id, "failed");
-    return textResult(
-      `Task ${params.task_id} failed because Gate 0 could not run.\n\n` +
-        `  [FAIL] gate_0: Gate 0 execution error: ${detail}\n\nEvidence: ${evidencePath}`,
-      true,
-    );
-  }
-
-  // 5. Update task gate_0 field in state
-  const freshState = stateManager.load();
-  if (freshState !== null) {
-    for (const phase of freshState.phases) {
-      for (const epic of phase.epics) {
-        for (const t of epic.tasks) {
-          if (t.id === params.task_id) {
-            t.gate_0 = {
-              passed: gate0Result.passed,
-              evidence_path: evidencePath,
-              coverage: gate0Result.coverage,
-              lint_passed: gate0Result.checks.find((c) => c.name === "lint")
-                ?.passed,
-              tests_passed: gate0Result.checks.find((c) => c.name === "tests")
-                ?.passed,
-            };
-          }
-        }
-      }
-    }
-    stateManager.save(freshState);
-  }
 
   // 5b. Run post_task custom gates (only if Gate 0 passed)
   if (gate0Result.passed) {
@@ -493,61 +457,19 @@ async function handleTaskCompleteUnlocked(
     try {
       customResult = await runCustomGates("post_task", params.task_id, cfg, projectRoot);
     } catch (error: unknown) {
-      const detail = error instanceof Error ? error.message : String(error);
-      evidenceManager.save({
-        gate: "custom_post_task",
-        entity_id: params.task_id,
-        passed: false,
-        timestamp: new Date().toISOString(),
-        checks: [{ name: "custom_post_task", passed: false, detail: `Post-task custom gate execution error: ${detail}` }],
-      });
-      const failedState = stateManager.load();
-      if (failedState !== null) {
-        for (const phase of failedState.phases) {
-          for (const epic of phase.epics) {
-            for (const failedTask of epic.tasks) {
-              if (failedTask.id === params.task_id) {
-                failedTask.gate_0 = { passed: false, evidence_path: evidencePath };
-              }
-            }
-          }
-        }
-        stateManager.save(failedState);
-      }
-      stateManager.transition(params.task_id, "failed");
-      return textResult(
-        `Task ${params.task_id} passed Gate 0 but post_task custom gates could not run.\n\n` +
-          `  [FAIL] custom_post_task: Post-task custom gate execution error: ${detail}\n\nEvidence: ${evidencePath}`,
-        true,
-      );
+      customResult = { passed: false, checks: [{ name: "custom_post_task", passed: false, detail: `Post-task custom gate execution error: ${error instanceof Error ? error.message : String(error)}` }] };
     }
     if (!customResult.passed) {
-      // Save custom gate evidence
-      const customEvidence: GateEvidence = {
-        gate: "custom_post_task",
-        entity_id: params.task_id,
-        passed: false,
-        timestamp: new Date().toISOString(),
-        checks: customResult.checks,
-      };
-      evidenceManager.save(customEvidence);
-
-      // Gate 0 passed but post_task custom gate failed → task fails
-    const failedState = stateManager.load();
-    if (failedState !== null) {
-      for (const phase of failedState.phases) {
-        for (const epic of phase.epics) {
-          for (const failedTask of epic.tasks) {
-            if (failedTask.id === params.task_id) {
-              failedTask.gate_0 = { passed: false, evidence_path: evidencePath };
-            }
-          }
-        }
-      }
-      stateManager.save(failedState);
-    }
-    stateManager.transition(params.task_id, "failed");
-
+      const failed = await withProjectMutationLock(projectRoot, async () => {
+        const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
+        if (!fence.ok) return false;
+        evidenceManager.save({ gate: "custom_post_task", entity_id: params.task_id, passed: false, timestamp: new Date().toISOString(), checks: customResult.checks });
+        fence.task.gate_0 = { passed: false, evidence_path: evidencePath };
+        stateManager.save(fence.state);
+        stateManager.transition(params.task_id, "failed");
+        return true;
+      });
+      if (!failed) return staleAttemptResult(params.task_id);
       const lines: string[] = [];
       lines.push(`Task ${params.task_id} passed Gate 0 but failed post_task custom gate.`);
       lines.push("");
@@ -567,12 +489,13 @@ async function handleTaskCompleteUnlocked(
     }
   }
 
-  // 6. Transition based on result
-  if (gate0Result.passed) {
-    stateManager.transition(params.task_id, "done");
-  } else {
-    stateManager.transition(params.task_id, "failed");
-  }
+  const transitioned = await withProjectMutationLock(projectRoot, async () => {
+    const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
+    if (!fence.ok) return false;
+    stateManager.transition(params.task_id, gate0Result.passed ? "done" : "failed");
+    return true;
+  });
+  if (!transitioned) return staleAttemptResult(params.task_id);
 
   // 7. Build response
   const lines: string[] = [];
@@ -596,26 +519,14 @@ async function handleTaskCompleteUnlocked(
     return textResult(lines.join("\n"), !gate0Result.passed);
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
-    try {
+    const failed = await withProjectMutationLock(projectRoot, async () => {
+      const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
+      if (!fence.ok) return false;
       stateManager.transition(params.task_id, "failed");
-      return textResult(
-        `Task ${params.task_id} failed while initializing or persisting its Gate 0 attempt. ` +
-          `The active attempt was cleared and the task can be retried.\n\n` +
-          `  [FAIL] gate_0: ${detail}`,
-        true,
-      );
-    } catch (transitionError: unknown) {
-      const transitionDetail = transitionError instanceof Error
-        ? transitionError.message
-        : String(transitionError);
-      return textResult(
-        `Task ${params.task_id} could not initialize its Gate 0 attempt and could not be transitioned safely. ` +
-          `The active attempt was cleared; inspect and recover the task with task_manage.\n\n` +
-          `  [FAIL] gate_0: ${detail}\n` +
-          `  [FAIL] state recovery: ${transitionDetail}`,
-        true,
-      );
-    }
+      return true;
+    });
+    if (!failed) return staleAttemptResult(params.task_id);
+    return textResult(`Task ${params.task_id} failed while initializing or persisting its Gate 0 attempt. The active attempt was cleared and the task can be retried.\n\n  [FAIL] gate_0: ${detail}`, true);
   } finally {
     activeTaskCompletions.delete(key);
   }

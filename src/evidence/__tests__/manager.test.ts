@@ -138,7 +138,8 @@ describe("EvidenceManager", () => {
     expect(manager.load("gate_0", "1.1.1")?.gate_0_attempt?.id).toBe("attempt-2");
     expect(existsSync(manager.attemptPathFor("1.1.1", "attempt-1"))).toBe(true);
     expect(manager.load("gate_0", "1.1.1")?.passed).toBe(true);
-    expect(() => manager.saveTerminalGate0Attempt(first)).toThrow("attempt-1");
+    manager.saveGate0AttemptHistory(first);
+    expect(manager.load("gate_0", "1.1.1")?.gate_0_attempt?.id).toBe("attempt-2");
   });
 
   it("classifies live, interrupted, terminal, and inconsistent attempts", () => {

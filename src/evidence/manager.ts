@@ -185,34 +185,29 @@ export class EvidenceManager {
     return filePath;
   }
 
-  saveTerminalGate0Attempt(evidence: GateEvidence): string {
+  saveGate0AttemptHistory(evidence: GateEvidence): string {
     const attempt = evidence.gate_0_attempt;
-    if (
-      evidence.gate !== "gate_0" ||
-      !attempt?.finished_at ||
-      !attempt.outcome
-    ) {
+    if (evidence.gate !== "gate_0" || !attempt?.finished_at || !attempt.outcome) {
       throw new Error("Terminal Gate 0 evidence requires a finished attempt.");
     }
-
     const attemptPath = this.attemptPathFor(evidence.entity_id, attempt.id);
     mkdirSync(join(this.evidenceDir, `gate_0-task-${evidence.entity_id}`), { recursive: true });
     if (!existsSync(attemptPath)) this.write(attemptPath, evidence);
-    const current = this.load("gate_0", evidence.entity_id);
-    if (!current) {
-      this.write(this.pathFor("gate_0", evidence.entity_id), evidence);
-    } else if (current.gate_0_attempt?.id === attempt.id) {
-      this.write(this.pathFor("gate_0", evidence.entity_id), evidence);
-    } else {
-      const currentFinishedAt = current.gate_0_attempt?.finished_at ?? current.gate_0_attempt?.started_at ?? "";
-      const attemptFinishedAt = attempt.finished_at ?? attempt.started_at ?? "";
-      if (attemptFinishedAt > currentFinishedAt) {
-        this.write(this.pathFor("gate_0", evidence.entity_id), evidence);
-      } else {
-        throw new Error(`Terminal Gate 0 attempt ${attempt.id} is not newer than the canonical attempt.`);
-      }
+    return attemptPath;
+  }
+
+  promoteTerminalGate0Attempt(evidence: GateEvidence): string {
+    const attempt = evidence.gate_0_attempt;
+    if (evidence.gate !== "gate_0" || !attempt?.finished_at || !attempt.outcome) {
+      throw new Error("Terminal Gate 0 evidence requires a finished attempt.");
     }
+    this.write(this.pathFor("gate_0", evidence.entity_id), evidence);
     return this.pathFor("gate_0", evidence.entity_id);
+  }
+
+  saveTerminalGate0Attempt(evidence: GateEvidence): string {
+    this.saveGate0AttemptHistory(evidence);
+    return this.promoteTerminalGate0Attempt(evidence);
   }
 
   audit(): EvidenceAudit {
