@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, basename } from "node:path";
@@ -102,6 +103,12 @@ export class StateManager {
     renameSync(this.tmpPath, this.statePath);
   }
 
+  clear(): void {
+    if (existsSync(this.statePath)) {
+      unlinkSync(this.statePath);
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Lifecycle
   // -----------------------------------------------------------------------
@@ -112,13 +119,14 @@ export class StateManager {
    * The `cycle_id` is derived from the plan file's basename without extension
    * (e.g., `docs/2026-07-16-mcp-server.md` -> `"2026-07-16-mcp-server"`).
    */
-  init(planPath: string, phases: PhaseState[]): CycleState {
+  init(planPath: string, phases: PhaseState[], projectRoot = this.projectRoot): CycleState {
     const name = basename(planPath).replace(/\.[^.]+$/, "");
     const now = new Date().toISOString();
 
     const state: CycleState = {
       cycle_id: name,
       plan_path: planPath,
+      project_root: projectRoot,
       current_phase: phases.length > 0 ? phases[0].id : 1,
       created_at: now,
       updated_at: now,

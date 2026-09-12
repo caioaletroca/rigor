@@ -25,6 +25,20 @@ export interface Gate0Result {
   coverage?: number;
 }
 
+export interface Gate0Progress {
+  check_name: string;
+  command: string;
+  configured_timeout_ms?: number;
+}
+
+export interface Gate0Options {
+  onCheckStart?: (progress: Gate0Progress) => void;
+}
+
+function formatDuration(durationMs: number | undefined): string {
+  return durationMs === undefined ? "the configured timeout" : `${durationMs}ms`;
+}
+
 // ---------------------------------------------------------------------------
 // Core check
 // ---------------------------------------------------------------------------
@@ -43,6 +57,7 @@ export async function checkGate0Exit(
   _taskId: string,
   config: RigorConfig,
   projectRoot: string,
+  options: Gate0Options = {},
 ): Promise<Gate0Result> {
   const checks: CheckResult[] = [];
   let parsedCoverage: number | undefined;
@@ -50,16 +65,10 @@ export async function checkGate0Exit(
   const g0 = config.gates.gate_0;
   const requireTestFiles = g0.require_test_files;
 
-  // If nothing is configured, pass trivially.
-  if (g0.checks.length === 0) {
-    checks.push({
-      name: "tests",
-      passed: true,
-      detail: "No test or lint commands configured — gate 0 passes trivially",
-    });
-
-    return { passed: true, checks };
-  }
+  // Track whether any check actually executed a command. An empty `checks`
+  // array — or checks whose commands are all empty/unresolved (e.g. unresolved
+  // ${lang.*} variables) — means nothing was verified.
+  let ranAnyCommand = false;
 
   // -----------------------------------------------------------------------
   // Iterate generic checks
@@ -71,7 +80,41 @@ export async function checkGate0Exit(
       continue;
     }
 
-    const result = runCommand(check.command, { cwd: projectRoot });
+    ranAnyCommand = true;
+    options.onCheckStart?.({
+      check_name: check.name,
+      command: check.command,
+      configured_timeout_ms: check.timeout_ms,
+    });
+    const result = await runCommand(check.command, {
+      cwd: projectRoot,
+      timeout_ms: check.timeout_ms,
+    });
+
+    if (result.timed_out || result.cancelled) {
+      checks.push({
+        name: check.name,
+        passed: false,
+        detail: result.timed_out
+          ? `${capitalize(check.name)} timed out after ${formatDuration(check.timeout_ms)}`
+          : `${capitalize(check.name)} was cancelled`,
+        command: check.command,
+        duration_ms: result.duration_ms,
+        configured_timeout_ms: check.timeout_ms,
+        timed_out: result.timed_out,
+        cancelled: result.cancelled,
+        attempt_id: result.attempt_id,
+        started_at: result.started_at,
+        finished_at: result.finished_at,
+        termination_reason: result.termination_reason,
+        signal: result.signal,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        stdout_truncated: result.stdout_truncated,
+        stderr_truncated: result.stderr_truncated,
+      });
+      continue;
+    }
 
     // Exit code 127 = command not found — provide a clear, actionable message.
     if (result.exit_code === 127) {
@@ -97,6 +140,18 @@ export async function checkGate0Exit(
       command: check.command,
       exit_code: result.exit_code,
       duration_ms: result.duration_ms,
+      configured_timeout_ms: result.configured_timeout_ms,
+      timed_out: result.timed_out,
+      cancelled: result.cancelled,
+      attempt_id: result.attempt_id,
+      started_at: result.started_at,
+      finished_at: result.finished_at,
+      termination_reason: result.termination_reason,
+      signal: result.signal,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      stdout_truncated: result.stdout_truncated,
+      stderr_truncated: result.stderr_truncated,
     });
 
     // -----------------------------------------------------------------
@@ -139,15 +194,46 @@ export async function checkGate0Exit(
   }
 
   // -----------------------------------------------------------------------
-  // Test files (informational)
+  // No runnable check — do NOT silently certify an unverified task.
+  // -----------------------------------------------------------------------
+
+  if (!ranAnyCommand) {
+    if (g0.allow_empty) {
+      return {
+        passed: true,
+        checks: [
+          {
+            name: "gate_0",
+            passed: true,
+            detail:
+              "No runnable checks configured — passing because gates.gate_0.allow_empty is true.",
+          },
+        ],
+      };
+    }
+
+    return {
+      passed: false,
+      checks: [
+        {
+          name: "gate_0",
+          passed: false,
+          detail:
+            "No runnable Gate 0 checks (checks[] empty or all commands unresolved). " +
+            "Refusing to certify an unverified task. Configure gates.gate_0.checks, " +
+            "activate a domain/lang pack, or set gates.gate_0.allow_empty: true.",
+        },
+      ],
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Test files: every newly-added source file must have a matching test in
+  // the same changeset (see evaluateTestFiles).
   // -----------------------------------------------------------------------
 
   if (requireTestFiles) {
-    checks.push({
-      name: "test_files",
-      passed: true,
-      detail: "Skipped: requires git diff integration (Phase 4)",
-    });
+    checks.push(await evaluateTestFiles(projectRoot, options));
   }
 
   // -----------------------------------------------------------------------
@@ -166,4 +252,105 @@ export async function checkGate0Exit(
 function capitalize(s: string): string {
   if (s.length === 0) return s;
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const SOURCE_EXT = /\.(ts|tsx|js|jsx|go|py|cs|java|rs)$/;
+
+/** pytest-style prefix marker: `test_<name>.<ext>` (e.g. tests/test_foo.py). */
+const TEST_PREFIX = /^test_/;
+
+/** A path that is itself a test file (by filename marker or a test directory). */
+function isTestPath(path: string): boolean {
+  const base = path.split("/").pop() ?? path;
+  return (
+    /\.(test|spec)\.[a-z]+$/.test(base) ||
+    /_test\.[a-z]+$/.test(base) ||
+    (TEST_PREFIX.test(base) && SOURCE_EXT.test(base)) ||
+    /(^|\/)(__tests__|__test__|tests?)\//.test(path)
+  );
+}
+
+/** Basename with directory and source extension stripped (e.g. src/a/foo.ts -> foo). */
+function sourceStem(path: string): string {
+  const base = path.split("/").pop() ?? path;
+  return base.replace(SOURCE_EXT, "");
+}
+
+/** Basename of a test file with test markers + extension stripped (foo.test.ts -> foo). */
+function testStem(path: string): string {
+  const base = path.split("/").pop() ?? path;
+  return base
+    .replace(TEST_PREFIX, "")
+    .replace(/\.(test|spec)\.[a-z]+$/, "")
+    .replace(/_test\.[a-z]+$/, "")
+    .replace(SOURCE_EXT, "");
+}
+
+/**
+ * Enforce require_test_files: every newly-added (untracked or added) source
+ * file in the working tree must have a matching test file present in the same
+ * changeset, matched by basename stem. Modified files are not required to add
+ * a test. Skips gracefully when git is unavailable / not a repo.
+ */
+export async function evaluateTestFiles(
+  projectRoot: string,
+  options: Gate0Options = {},
+): Promise<CheckResult> {
+  options.onCheckStart?.({
+    check_name: "test_files",
+    command: "git status --porcelain",
+  });
+  const result = await runCommand("git status --porcelain", { cwd: projectRoot });
+
+  if (result.exit_code !== 0) {
+    return {
+      name: "test_files",
+      passed: true,
+      detail: "Skipped: not a git repository or git unavailable",
+    };
+  }
+
+  const lines = String(result.stdout)
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\s+$/, ""))
+    .filter((l) => l.length > 0);
+
+  const newSource: string[] = [];
+  const testStems = new Set<string>();
+
+  for (const line of lines) {
+    const status = line.slice(0, 2);
+    let path = line.slice(3).trim();
+    if (path.includes(" -> ")) path = path.split(" -> ").pop()!.trim(); // rename target
+    path = path.replace(/^"|"$/g, "");
+
+    if (isTestPath(path)) {
+      testStems.add(testStem(path));
+      continue;
+    }
+
+    const isNew = status.includes("A") || status.includes("?");
+    if (isNew && SOURCE_EXT.test(path)) {
+      newSource.push(path);
+    }
+  }
+
+  const uncovered = newSource.filter((s) => !testStems.has(sourceStem(s)));
+
+  if (uncovered.length === 0) {
+    return {
+      name: "test_files",
+      passed: true,
+      detail:
+        newSource.length === 0
+          ? "No new source files requiring tests"
+          : `All ${newSource.length} new source file(s) have a matching test`,
+    };
+  }
+
+  return {
+    name: "test_files",
+    passed: false,
+    detail: `New source files without a matching test in the changeset: ${uncovered.join(", ")}`,
+  };
 }

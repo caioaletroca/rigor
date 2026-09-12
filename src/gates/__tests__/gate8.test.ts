@@ -270,10 +270,10 @@ describe("checkGate8Exit", () => {
   });
 
   // -----------------------------------------------------------------------
-  // 8. Design-quality reviewer is in default reviewers list
+  // 8. Design-quality reviewer is opt-in
   // -----------------------------------------------------------------------
-  it("includes design-quality in default reviewers list", () => {
-    expect(DEFAULTS.gates.gate_8.reviewers).toContain("design-quality");
+  it("does not include design-quality in default reviewers list", () => {
+    expect(DEFAULTS.gates.gate_8.reviewers).not.toContain("design-quality");
   });
 
   // -----------------------------------------------------------------------

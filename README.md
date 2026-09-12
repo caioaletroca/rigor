@@ -41,7 +41,7 @@ rigor install --client hermes --global
 rigor install --client opencode --global
 ```
 
-This gives you slash commands like `/rigor:cycle`, `/rigor:plan`, `/rigor:review`, etc. For Claude Code and OpenCode, skills are referenced via `@path` (no duplication, auto-updates). For Hermes, skills are copied as self-contained SKILL.md files.
+This gives you slash commands like `/rigor:cycle`, `/rigor:plan`, `/rigor:review`, etc. `/rigor:cycle` asks whether to execute stepwise or continuously; continuous execution pauses only for configured Gate 9 approval or genuine blockers. For Claude Code and OpenCode, skills are referenced via `@path` (no duplication, auto-updates). For Hermes, skills are copied as self-contained SKILL.md files.
 
 Drop `--global` to install per-project instead. Your AI agent can also call the `install_commands` MCP tool to install skills into a project automatically.
 
@@ -137,6 +137,7 @@ gates:
 | Tool | Description |
 |------|-------------|
 | `cycle_init` | Parse a plan.md and initialize cycle state |
+| `cycle_reload` | Re-parse the plan and merge new phases/epics/tasks into the running cycle (rolling-wave elaboration) without losing progress |
 | `cycle_status` | Current progress, active task, phase info |
 
 ### Gate enforcement
@@ -335,7 +336,7 @@ Rigor ships workflow skills that orchestrate the MCP tools:
 └─────────────────────────────────────┘
 ```
 
-**State persistence:** `.rigor/state.json` (cycle state), `.rigor/evidence/` (gate artifacts), `.rigor/history/` (completed cycles), `.rigor/sync/events.jsonl` (sync journal).
+**State persistence:** `.rigor/state.json` (active cycle state), `.rigor/evidence/` (active gate artifacts), `.rigor/history/` (validated snapshots of completed cycles), `.rigor/sync/events.jsonl` (sync journal). Final phase completion archives state and evidence automatically, then clears active artifacts so the next cycle can begin.
 
 The state machine enforces transitions. You can't skip Gate 0 to get to Gate 8, and you can't mark a task complete without passing checks. If a session crashes, it resumes from the last persisted state.
 

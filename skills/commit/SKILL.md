@@ -157,7 +157,7 @@ Chosen scope: auth
 Proceed with this plan? [Execute plan / Single commit / Let me review]
 ```
 
-Confirm with the user before proceeding.
+Use the host's formal user-question mechanism to confirm before proceeding. In OpenCode, use the `question` tool with concise options; in Claude Code, use its native user-question mechanism. Do not ask for confirmation only by writing a plain-text question.
 
 ---
 

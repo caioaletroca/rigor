@@ -1,5 +1,5 @@
+import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
-import { runCommand } from "../executor/index.js";
 
 export interface WorkspaceInspection {
   branch: string | null;
@@ -18,27 +18,29 @@ export class WorkspaceInspectionError extends Error {
   }
 }
 
-function git(projectRoot: string, args: string): string {
-  const result = runCommand(`git ${args}`, { cwd: projectRoot });
-  if (result.exit_code !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || "Git command failed";
-    throw new WorkspaceInspectionError(detail, result.stderr);
+function git(projectRoot: string, args: string[]): string {
+  try {
+    return execFileSync("git", args, { cwd: projectRoot, encoding: "utf8" }).trim();
+  } catch (err) {
+    const stderr = err instanceof Error && "stderr" in err
+      ? String(err.stderr).trim()
+      : "";
+    throw new WorkspaceInspectionError(stderr || "Git command failed", stderr);
   }
-  return result.stdout.trim();
 }
 
 export function inspectWorkspace(projectRoot: string): WorkspaceInspection {
   const root = resolve(projectRoot);
-  const bare = git(root, "rev-parse --is-bare-repository");
+  const bare = git(root, ["rev-parse", "--is-bare-repository"]);
   if (bare === "true") {
     throw new WorkspaceInspectionError("Cannot inspect a bare repository");
   }
 
-  const branchOutput = git(root, "rev-parse --abbrev-ref HEAD");
+  const branchOutput = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const detached = branchOutput === "HEAD";
   const branch = detached ? null : branchOutput;
-  const gitDir = resolve(root, git(root, "rev-parse --git-dir"));
-  const commonDir = resolve(root, git(root, "rev-parse --git-common-dir"));
+  const gitDir = resolve(root, git(root, ["rev-parse", "--git-dir"]));
+  const commonDir = resolve(root, git(root, ["rev-parse", "--git-common-dir"]));
   const isLinked = gitDir !== commonDir;
   const mainWorktreeRoot = resolve(dirname(commonDir));
 

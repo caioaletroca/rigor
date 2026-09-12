@@ -1,0 +1,7 @@
+{
+  "name": "fixture-empty",
+  "scripts": {
+    "build": "exit 1",
+    "test": "exit 1"
+  }
+}

@@ -15,9 +15,12 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { StateManager } from "../state/index.js";
 import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
+import { loadConfig } from "../config/index.js";
 import type { EvidenceManager, GateEvidence } from "../evidence/index.js";
-import { checkGate8Exit, checkGate9Exit, runCustomGates } from "../gates/index.js";
+import { ArchiveManager } from "../archive/manager.js";
+import { checkGate8Exit, checkGate9Exit, runCustomGates, Gate9Criteria } from "../gates/index.js";
 import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
+import type { ProjectContextRegistry } from "../context.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -38,12 +41,15 @@ export interface ReviewStartParams {
   epic_id: string;
 }
 
-export function handleReviewStart(
+export async function handleReviewStart(
   params: ReviewStartParams,
   stateManager: StateManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
-): CallToolResult {
+): Promise<CallToolResult> {
+  // Reload config fresh from disk when not supplied (see gate.ts handlers).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
   if (state === null) {
@@ -59,6 +65,27 @@ export function handleReviewStart(
       return textResult(`Epic "${params.epic_id}" not found.`, true);
     }
     throw error;
+  }
+
+  // 2b. An epic with no tasks cannot be reviewed — there is no implemented
+  // work to certify. Guards the rolling-wave case where a later-phase epic
+  // has not yet been elaborated into tasks.
+  if (epic.tasks.length === 0) {
+    return textResult(
+      `Epic "${params.epic_id}" has no tasks — cannot review an epic with no implemented work. ` +
+        `Elaborate its tasks into the plan (and re-init the cycle) before review.`,
+      true,
+    );
+  }
+
+  // A submitted review can be updated directly with review_submit after fixes.
+  // Refusing to restart here prevents orchestrators from spawning a fresh full
+  // reviewer set for the same epic by accident.
+  if (epic.gate_8.evidence_path) {
+    const nextStep = epic.gate_8.passed
+      ? `Gate 8 already passed. Run accept_start for epic "${params.epic_id}".`
+      : `Gate 8 already has failed review evidence. Fix the saved findings, then call review_submit directly without another review_start.`;
+    return textResult(nextStep, true);
   }
 
   // 3. Verify ALL tasks in this epic have status "done" and gate_0.passed
@@ -86,7 +113,7 @@ export function handleReviewStart(
   }
 
   // 4b. Run pre_review custom gates
-  const customResult = runCustomGates("pre_review", params.epic_id, config, projectRoot);
+  const customResult = await runCustomGates("pre_review", params.epic_id, cfg, projectRoot);
   if (!customResult.passed) {
     const lines: string[] = [];
     lines.push(`Epic ${params.epic_id} blocked by custom pre_review gate.`);
@@ -99,7 +126,7 @@ export function handleReviewStart(
   }
 
   // 5. Return summary
-  const reviewers = config.gates.gate_8.reviewers;
+  const reviewers = cfg.gates.gate_8.reviewers;
   const lines: string[] = [];
   lines.push(`Review started for epic ${params.epic_id}: ${epic.name}`);
   lines.push(`Tasks: ${epic.tasks.length} (all done, all passed Gate 0)`);
@@ -121,8 +148,12 @@ export function handleReviewSubmit(
   params: ReviewSubmitParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
+  projectRoot: string,
 ): CallToolResult {
+  // Reload config fresh from disk when not supplied (see gate.ts handlers).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state, verify epic is in "doing" status
   const state = stateManager.load();
   if (state === null) {
@@ -156,7 +187,7 @@ export function handleReviewSubmit(
   }
 
   // 3. Run Gate 8 checks
-  const gate8Result = checkGate8Exit(submissions, config);
+  const gate8Result = checkGate8Exit(submissions, cfg);
 
   // 4. Save evidence
   const evidence: GateEvidence = {
@@ -165,6 +196,7 @@ export function handleReviewSubmit(
     passed: gate8Result.passed,
     timestamp: new Date().toISOString(),
     checks: gate8Result.checks,
+    review_submissions: submissions,
   };
   const evidencePath = evidenceManager.save(evidence);
 
@@ -191,6 +223,7 @@ export function handleReviewSubmit(
     lines.push(`Gate 8 PASSED for epic ${params.epic_id}.`);
   } else {
     lines.push(`Gate 8 FAILED for epic ${params.epic_id}.`);
+    lines.push("Review findings were saved. After remediation, call review_submit directly without another review_start.");
   }
 
   lines.push("");
@@ -271,13 +304,16 @@ export interface AcceptSubmitParams {
   user_approved: boolean;
 }
 
-export function handleAcceptSubmit(
+export async function handleAcceptSubmit(
   params: AcceptSubmitParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  config: RigorConfig,
+  config: RigorConfig | null,
   projectRoot: string,
-): CallToolResult {
+): Promise<CallToolResult> {
+  // Reload config fresh from disk when not supplied (see gate.ts handlers).
+  const cfg = config ?? loadConfig(projectRoot);
+
   // 1. Load state
   const state = stateManager.load();
   if (state === null) {
@@ -303,16 +339,26 @@ export function handleAcceptSubmit(
     );
   }
 
-  // 3. Parse criteria JSON
-  let criteria: AcceptanceCriterion[];
+  // 3. Parse and structurally validate criteria JSON. A malformed payload
+  // (not an array, empty, or an item missing `criterion`/`evidence`/`met`)
+  // is a schema error — short-circuit before evaluation so a missing `met`
+  // is never silently treated as an unmet criterion, and no evidence is
+  // written or state mutated.
+  let parsedCriteria: unknown;
   try {
-    criteria = JSON.parse(params.criteria) as AcceptanceCriterion[];
+    parsedCriteria = JSON.parse(params.criteria);
   } catch {
     return textResult("Invalid criteria JSON.", true);
   }
 
+  const validated = Gate9Criteria.safeParse(parsedCriteria);
+  if (!validated.success) {
+    return textResult(`Invalid criteria JSON: ${validated.error.message}`, true);
+  }
+  const criteria: AcceptanceCriterion[] = validated.data;
+
   // 4. Run Gate 9 checks
-  const gate9Result = checkGate9Exit(criteria, params.user_approved, config);
+  const gate9Result = checkGate9Exit(criteria, params.user_approved, cfg);
 
   // 5. Save evidence
   const evidence: GateEvidence = {
@@ -342,7 +388,7 @@ export function handleAcceptSubmit(
 
   // 6b. Run post_accept custom gates (only if Gate 9 passed)
   if (gate9Result.passed) {
-    const customResult = runCustomGates("post_accept", params.epic_id, config, projectRoot);
+    const customResult = await runCustomGates("post_accept", params.epic_id, cfg, projectRoot);
     if (!customResult.passed) {
       // Save custom gate evidence
       const customEvidence: GateEvidence = {
@@ -401,7 +447,7 @@ export function handleAcceptSubmit(
         lines.push(`  - ${c.criterion}`);
       }
     }
-    if (config.gates.gate_9.require_user_approval && !params.user_approved) {
+    if (cfg.gates.gate_9.require_user_approval && !params.user_approved) {
       lines.push("");
       lines.push("User approval: required but not given");
     }
@@ -419,6 +465,8 @@ export function handleAcceptSubmit(
 
 export function handlePhaseAdvance(
   stateManager: StateManager,
+  evidenceManager?: EvidenceManager,
+  archiveManager?: ArchiveManager,
 ): CallToolResult {
   // 1. Load state
   const state = stateManager.load();
@@ -492,12 +540,38 @@ export function handlePhaseAdvance(
     return textResult(lines.join("\n"));
   }
 
-  // 7. No next phase — cycle complete
-  const lines: string[] = [];
-  lines.push(`Phase ${currentPhase.id} completed.`);
-  lines.push("All phases complete — cycle finished.");
+  // 7. No next phase — archive the completed cycle before clearing active artifacts
+  if (!evidenceManager || !archiveManager) {
+    return textResult(
+      "Cycle completed, but archival dependencies are unavailable. Active artifacts were retained.",
+      true,
+    );
+  }
 
-  return textResult(lines.join("\n"));
+  try {
+    const completedState = stateManager.load()!;
+    const archive = archiveManager.archive(completedState);
+    evidenceManager.clearAll();
+    try {
+      stateManager.clear();
+    } catch (error) {
+      archiveManager.restoreEvidence(archive.path);
+      throw error;
+    }
+
+    const lines: string[] = [];
+    lines.push(`Phase ${currentPhase.id} completed.`);
+    lines.push("All phases complete — cycle finished.");
+    lines.push(`Archive: ${archive.path}`);
+    lines.push(`Archived evidence files: ${archive.evidenceCount}`);
+    return textResult(lines.join("\n"));
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return textResult(
+      `Cycle completed, but finalization failed. The completed archive was preserved; active cleanup may be incomplete. ${detail}`,
+      true,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -508,15 +582,25 @@ export function registerReviewTools(
   server: McpServer,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  config: RigorConfig,
   projectRoot: string,
+  registry?: ProjectContextRegistry,
 ): void {
+  const context = (requestRoot?: string) =>
+    registry?.getByRoot(requestRoot ?? stateManager.load()?.project_root ?? projectRoot);
+  const archiveManager = new ArchiveManager(projectRoot);
+  const projectRootParam = z
+    .string()
+    .optional()
+    .describe("Absolute Git repository root; defaults to the server --project-root");
+  // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
+  // per invocation — config edits take effect without a server restart.
   server.tool(
     "review_start",
     "Start code review for an epic — verifies all tasks are done and passed Gate 0",
-    { epic_id: z.string().describe("Epic id (e.g. 1.1)") },
+    { epic_id: z.string().describe("Epic id (e.g. 1.1)"), project_root: projectRootParam },
     async (params) => {
-      return handleReviewStart(params, stateManager, config, projectRoot);
+      const ctx = context(params.project_root);
+       return handleReviewStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -528,18 +612,20 @@ export function registerReviewTools(
       submissions: z
         .string()
         .describe("JSON array of ReviewFindings objects"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      return handleReviewSubmit(params, stateManager, evidenceManager, config);
+      const ctx = context(params.project_root);
+       return handleReviewSubmit(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
   server.tool(
     "accept_start",
     "Start acceptance for an epic — verifies Gate 8 passed",
-    { epic_id: z.string().describe("Epic id (e.g. 1.1)") },
+    { epic_id: z.string().describe("Epic id (e.g. 1.1)"), project_root: projectRootParam },
     async (params) => {
-      return handleAcceptStart(params, stateManager);
+      return handleAcceptStart(params, context(params.project_root)?.stateManager ?? stateManager);
     },
   );
 
@@ -555,17 +641,23 @@ export function registerReviewTools(
         .boolean()
         .default(false)
         .describe("Whether the user has approved the epic"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      return handleAcceptSubmit(params, stateManager, evidenceManager, config, projectRoot);
+      const ctx = context(params.project_root);
+       return handleAcceptSubmit(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
 
-  server.tool(
+  server.registerTool(
     "phase_advance",
-    "Advance to the next phase — verifies all epics in current phase are done",
-    async () => {
-      return handlePhaseAdvance(stateManager);
+    {
+      description: "Advance to the next phase — verifies all epics in current phase are done",
+      inputSchema: z.object({ project_root: projectRootParam }).default({}),
+    },
+    async (params) => {
+      const ctx = context(params?.project_root);
+       return handlePhaseAdvance(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx ? new ArchiveManager(ctx.project_root) : archiveManager);
     },
   );
 }

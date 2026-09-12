@@ -100,7 +100,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("Statements : 90%"));
+    runCommand.mockResolvedValue(okResult("Statements : 90%"));
     parseCoverage.mockReturnValue(90);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -126,7 +126,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(failResult(1));
+    runCommand.mockResolvedValue(failResult(1));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -148,7 +148,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("Statements : 70%"));
+    runCommand.mockResolvedValue(okResult("Statements : 70%"));
     parseCoverage.mockReturnValue(70);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -172,7 +172,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(failResult(2));
+    runCommand.mockResolvedValue(failResult(2));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -186,7 +186,7 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 5. Passes trivially when no commands are configured
   // -----------------------------------------------------------------------
-  it("passes trivially when no commands are configured", async () => {
+  it("FAILS by default when no commands are configured (no hollow pass)", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -195,9 +195,25 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
+    expect(result.passed).toBe(false);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("passes an empty gate only when allow_empty is true", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "",
+      require_test_files: false,
+      allow_empty: true,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
     expect(result.passed).toBe(true);
     expect(result.checks).toHaveLength(1);
-    expect(result.checks[0].detail).toContain("trivially");
+    expect(result.checks[0].detail).toContain("allow_empty");
   });
 
   // -----------------------------------------------------------------------
@@ -211,7 +227,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(failResult(1));
+    runCommand.mockResolvedValue(failResult(1));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -234,7 +250,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("no coverage info here"));
+    runCommand.mockResolvedValue(okResult("no coverage info here"));
     parseCoverage.mockReturnValue(null);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -249,20 +265,21 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 8. test_files check is informational
   // -----------------------------------------------------------------------
-  it("records test_files as informational pass when enabled", async () => {
+  it("passes test_files when the changeset has no new source files", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "npm run lint",
       require_test_files: true,
     });
 
-    runCommand.mockReturnValue(okResult());
+    // lint -> ok; git status --porcelain -> empty (no changes)
+    runCommand.mockResolvedValue(okResult());
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
     const tfCheck = result.checks.find((c) => c.name === "test_files");
     expect(tfCheck?.passed).toBe(true);
-    expect(tfCheck?.detail).toContain("Phase 4");
+    expect(tfCheck?.detail).toContain("No new source files");
   });
 
   // =======================================================================
@@ -290,7 +307,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult("Score: 92.5"));
+    runCommand.mockResolvedValue(okResult("Score: 92.5"));
     parseMetric.mockReturnValue(92.5);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -327,7 +344,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult("Score: 55"));
+    runCommand.mockResolvedValue(okResult("Score: 55"));
     parseMetric.mockReturnValue(55);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -353,7 +370,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult());
+    runCommand.mockResolvedValue(okResult());
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -377,7 +394,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(failResult(2));
+    runCommand.mockResolvedValue(failResult(2));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -390,7 +407,7 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 13. Empty checks array passes trivially
   // -----------------------------------------------------------------------
-  it("passes trivially when checks array is empty", async () => {
+  it("FAILS when checks array is empty (default)", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -400,9 +417,9 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
     expect(result.checks).toHaveLength(1);
-    expect(result.checks[0].detail).toContain("trivially");
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
     expect(runCommand).not.toHaveBeenCalled();
   });
 
@@ -428,8 +445,8 @@ describe("checkGate0Exit", () => {
 
     // Now run it through the gate
     runCommand
-      .mockReturnValueOnce(okResult("Statements : 95%"))  // tests
-      .mockReturnValueOnce(okResult());                     // lint
+      .mockResolvedValueOnce(okResult("Statements : 95%"))  // tests
+      .mockResolvedValueOnce(okResult());                     // lint
     parseCoverage.mockReturnValue(95);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -468,7 +485,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult("Performance: 95"));
+    runCommand.mockResolvedValue(okResult("Performance: 95"));
     parseMetric.mockReturnValue(95);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -504,7 +521,7 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockReturnValue(okResult());
+    runCommand.mockResolvedValue(okResult());
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -521,7 +538,7 @@ describe("checkGate0Exit", () => {
     expect(testsCheck).toBeUndefined();
   });
 
-  it("skips checks with whitespace-only command strings", async () => {
+  it("FAILS when the only check has a whitespace-only command", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -533,13 +550,13 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    // Should pass trivially since the only check was skipped
-    // and no checks produced results, but the checks array is empty
-    expect(result.passed).toBe(true);
+    // The only check was skipped, so nothing ran — must not certify.
+    expect(result.passed).toBe(false);
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
     expect(runCommand).not.toHaveBeenCalled();
   });
 
-  it("passes when all checks have empty commands", async () => {
+  it("FAILS when all checks have empty commands", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -552,7 +569,7 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
     expect(runCommand).not.toHaveBeenCalled();
   });
 
@@ -571,7 +588,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("No issues found"));
+    runCommand.mockResolvedValue(okResult("No issues found"));
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
@@ -593,7 +610,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx impeccable detect src/",
       exit_code: 1,
       stdout: "P0: overused-font in src/Button.tsx:5",
@@ -622,7 +639,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue(okResult("Statements : 90%"));
+    runCommand.mockResolvedValue(okResult("Statements : 90%"));
     parseCoverage.mockReturnValue(90);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -642,7 +659,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx impeccable detect src/",
       exit_code: 127,
       stdout: "",
@@ -672,7 +689,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx eslint .",
       exit_code: 127,
       stdout: "",
@@ -702,7 +719,7 @@ describe("checkGate0Exit", () => {
       require_test_files: false,
     });
 
-    runCommand.mockReturnValue({
+    runCommand.mockResolvedValue({
       command: "npx vitest run",
       exit_code: 127,
       stdout: "",
@@ -730,7 +747,7 @@ describe("checkGate0Exit", () => {
   // -----------------------------------------------------------------------
   // 23. Gate 0 passes trivially when all three commands are empty
   // -----------------------------------------------------------------------
-  it("passes trivially when test, lint, and design commands are all empty", async () => {
+  it("FAILS when test, lint, and design commands are all empty (default)", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -740,9 +757,9 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
     expect(result.checks).toHaveLength(1);
-    expect(result.checks[0].detail).toContain("trivially");
+    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
   });
 
   // -----------------------------------------------------------------------
@@ -757,7 +774,7 @@ describe("checkGate0Exit", () => {
     });
 
     // All three commands succeed
-    runCommand.mockReturnValue(okResult("all good"));
+    runCommand.mockResolvedValue(okResult("all good"));
     parseCoverage.mockReturnValue(null);
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
@@ -791,5 +808,194 @@ describe("checkGate0Exit", () => {
     expect(config.gates.gate_0.checks[0].name).toBe("tests");
     expect(config.gates.gate_0.checks[1].name).toBe("lint");
     expect(config.gates.gate_0.checks[2].name).toBe("design-quality");
+  });
+
+  // =======================================================================
+  // require_test_files (git-diff enforcement) — P5
+  // =======================================================================
+
+  it("fails require_test_files when a new source file has no matching test", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo/bar.ts\n")); // git status --porcelain
+
+    const onCheckStart = vi.fn();
+    const result = await checkGate0Exit("1.1.1", config, "/project", { onCheckStart });
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(false);
+    expect(onCheckStart).toHaveBeenLastCalledWith({
+      check_name: "test_files",
+      command: "git status --porcelain",
+    });
+    expect(tf?.detail).toContain("bar.ts");
+    expect(result.passed).toBe(false);
+  });
+
+  it("passes require_test_files when the new source has a matching test in the changeset", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo/bar.ts\n?? src/foo/bar.test.ts\n")); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+  });
+
+  it("ignores modified (non-new) source files for require_test_files", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult(" M src/foo/bar.ts\n")); // modified, not new
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+  });
+
+  it("skips require_test_files when git is unavailable / not a repo", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(failResult(128)); // git status fails
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(tf?.detail).toContain("Skipped");
+  });
+
+  // -----------------------------------------------------------------------
+  // pytest-style `test_<name>.py` source/test pairing (Epic 1.1)
+  // -----------------------------------------------------------------------
+
+  it("passes require_test_files for a pytest-style tests/test_<name>.py pairing", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo.py\n?? tests/test_foo.py\n")); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+  });
+
+  it("recognizes a co-located test_<name>.py file as the matching test", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo.py\n?? src/test_foo.py\n")); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+  });
+
+  it("fails require_test_files when a new .py source has no matching pytest test", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(okResult("?? src/foo.py\n")); // git status, no test
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(false);
+    expect(tf?.detail).toContain("foo.py");
+    expect(result.passed).toBe(false);
+  });
+
+  it("forwards configured timeout and records it for timed-out checks", async () => {
+    const config = makeConfig({
+      checks: [{ name: "tests", command: "npm test", timeout_ms: 5_000 }],
+      require_test_files: false,
+    });
+    runCommand.mockResolvedValue({
+      ...failResult(),
+      duration_ms: 5_100,
+      timed_out: true,
+      cancelled: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(runCommand).toHaveBeenCalledWith("npm test", {
+      cwd: "/project",
+      timeout_ms: 5_000,
+    });
+    expect(result.checks[0]).toMatchObject({
+      command: "npm test",
+      duration_ms: 5_100,
+      configured_timeout_ms: 5_000,
+      timed_out: true,
+      cancelled: false,
+    });
+    expect(result.checks[0].detail).toContain("5000ms");
+    expect(result.checks[0].detail).not.toContain("exit code");
+  });
+
+  it("still recognizes <name>_test.py and <name>.test.ts pairings", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: true,
+    });
+
+    runCommand
+      .mockResolvedValueOnce(okResult()) // lint
+      .mockResolvedValueOnce(
+        okResult("?? src/bar.py\n?? src/bar_test.py\n?? src/baz.ts\n?? src/baz.test.ts\n"),
+      ); // git status
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    const tf = result.checks.find((c) => c.name === "test_files");
+    expect(tf?.passed).toBe(true);
+    expect(result.passed).toBe(true);
   });
 });

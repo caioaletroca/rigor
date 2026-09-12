@@ -11,7 +11,7 @@
  *                   task_manage / epic_manage / phase_manage.
  */
 
-import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -25,17 +25,20 @@ import {
 } from "../state/index.js";
 import type { Status } from "../state/index.js";
 import { ALL_STATUSES } from "../state/index.js";
+import { classifyGate0Attempt } from "../evidence/index.js";
 import type { EvidenceManager } from "../evidence/index.js";
+import { DEFAULTS } from "../config/index.js";
+import type { RigorConfig } from "../config/index.js";
+import { isGate0AttemptActive, withProjectMutationLock } from "./gate.js";
+import type { ProjectContextRegistry } from "../context.js";
+import { responseResult } from "./response.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
 // ---------------------------------------------------------------------------
 
 function textResult(text: string, isError?: boolean): CallToolResult {
-  return {
-    content: [{ type: "text", text }],
-    ...(isError ? { isError: true } : {}),
-  };
+  return responseResult(text, { error: isError });
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +63,24 @@ export function handleCycleReset(
   const statePath = join(projectRoot, ".rigor", "state.json");
   const evidenceDir = join(projectRoot, ".rigor", "evidence");
 
+  for (const phase of state.phases) {
+    for (const epic of phase.epics) {
+      for (const task of epic.tasks) {
+        const attempt = evidenceManager.load("gate_0", task.id)?.gate_0_attempt;
+        if (
+          attempt &&
+          !attempt.finished_at &&
+          isGate0AttemptActive(projectRoot, task.id, attempt.id)
+        ) {
+          return textResult(
+            `Cannot reset cycle while Gate 0 attempt ${attempt.id} for task ${task.id} is executing.`,
+            true,
+          );
+        }
+      }
+    }
+  }
+
   // Count progress
   let tasksDone = 0;
   let tasksTotal = 0;
@@ -82,11 +103,7 @@ export function handleCycleReset(
   }
 
   // Count evidence files
-  let evidenceFileCount = 0;
-  if (existsSync(evidenceDir)) {
-    const files = readdirSync(evidenceDir);
-    evidenceFileCount = files.filter((f) => f.endsWith(".json")).length;
-  }
+  const evidenceFileCount = existsSync(evidenceDir) ? evidenceManager.countAll() : 0;
 
   if (!params.confirm) {
     const lines: string[] = [];
@@ -169,7 +186,7 @@ export function handleTaskRetry(
     }
   }
 
-  // 5. Delete the gate_0 evidence file on disk if it exists
+  // 5. Clear only the current Gate 0 summary; terminal attempt history is retained.
   evidenceManager.delete("gate_0", params.task_id);
 
   // 6. Reset the task's gate_0 field in state
@@ -180,6 +197,7 @@ export function handleTaskRetry(
         for (const t of epic.tasks) {
           if (t.id === params.task_id) {
             t.gate_0 = { passed: false };
+            delete t.lease;
           }
         }
       }
@@ -206,6 +224,9 @@ export interface TaskManageParams {
   action: "force_status" | "skip" | "retry" | "reset_evidence";
   target_status?: string;
   confirm: boolean;
+  owner_id?: string;
+  attempt_id?: string;
+  takeover?: boolean;
 }
 
 /**
@@ -232,7 +253,16 @@ export function handleTaskManage(
   params: TaskManageParams,
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
-  _projectRoot: string,
+  projectRoot: string,
+): CallToolResult {
+  return handleTaskManageUnlocked(params, stateManager, evidenceManager, projectRoot);
+}
+
+function handleTaskManageUnlocked(
+  params: TaskManageParams,
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
+  projectRoot: string,
 ): CallToolResult {
   const state = stateManager.load();
   if (state === null) {
@@ -248,6 +278,26 @@ export function handleTaskManage(
       return textResult(`Task "${params.task_id}" not found.`, true);
     }
     throw error;
+  }
+
+  const hasOwner = params.owner_id !== undefined;
+  const hasAttempt = params.attempt_id !== undefined;
+  if (hasOwner !== hasAttempt) {
+    return textResult(`Task "${params.task_id}" requires both owner_id and attempt_id together.`, true);
+  }
+  if (task.lease) {
+    const expiresAt = Date.parse(task.lease.lease_expires_at);
+    if (!Number.isFinite(expiresAt)) {
+      return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
+    }
+    const active = expiresAt > Date.now();
+    const matches = hasOwner && task.lease.owner_id === params.owner_id && task.lease.attempt_id === params.attempt_id;
+    if (active && !matches) {
+      return textResult(`Task "${params.task_id}" is owned by "${task.lease.owner_id}" until ${task.lease.lease_expires_at}.`, true);
+    }
+    if (!active && task.status === "doing" && params.confirm && !params.takeover && !matches) {
+      return textResult(`Task "${params.task_id}" lease expired. Explicit takeover is required.`, true);
+    }
   }
 
   switch (params.action) {
@@ -285,7 +335,7 @@ export function handleTaskManage(
       }
 
       if (willCleanEvidence) {
-        evidenceManager.deleteAll(params.task_id);
+        evidenceManager.deleteTaskEvidence(params.task_id);
       }
       stateManager.forceTransition(params.task_id, targetStatus);
       return textResult(
@@ -360,30 +410,25 @@ export function handleTaskManage(
         { task_id: params.task_id },
         stateManager,
         evidenceManager,
-        _projectRoot,
+        projectRoot,
       );
     }
 
     // ----- reset_evidence -----
     case "reset_evidence": {
       if (!params.confirm) {
-        const gates = ["gate_0", "gate_8", "gate_9"];
-        const existing = gates.filter(
-          (g) => evidenceManager.load(g, params.task_id) !== null,
-        );
+        const evidenceCount = evidenceManager.taskEvidenceCount(params.task_id);
         const lines: string[] = [];
         lines.push("task_manage reset_evidence preview:");
         lines.push(`  Task: ${params.task_id} (${task.name})`);
         lines.push(`  Current status: ${task.status} (will NOT change)`);
-        lines.push(
-          `  Evidence to delete: ${existing.length > 0 ? existing.join(", ") : "none"}`,
-        );
+        lines.push(`  Task evidence to delete: ${evidenceCount} file(s) (gate_0, history, gate_1, custom_post_task)`);
         lines.push("");
         lines.push("Run task_manage with confirm: true to apply.");
         return textResult(lines.join("\n"));
       }
 
-      const deleted = evidenceManager.deleteAll(params.task_id);
+      const deleted = evidenceManager.deleteTaskEvidence(params.task_id);
       return textResult(
         `Evidence for task "${params.task_id}" cleared. ${deleted} file(s) deleted. Status unchanged (${task.status}).`,
       );
@@ -455,7 +500,10 @@ export function handleEpicManage(
         if (params.cascade) {
           lines.push(`  Tasks affected: ${epic.tasks.length}`);
           for (const t of epic.tasks) {
-            lines.push(`    ${t.id} (${t.name}): ${t.status} -> ${targetStatus}`);
+            const cleanup = isBackwardTransition(t.status, targetStatus)
+              ? `; ${evidenceManager.taskEvidenceCount(t.id)} task evidence file(s) deleted`
+              : "; evidence preserved";
+            lines.push(`    ${t.id} (${t.name}): ${t.status} -> ${targetStatus}${cleanup}`);
           }
         }
         lines.push("");
@@ -468,7 +516,7 @@ export function handleEpicManage(
       if (params.cascade) {
         for (const t of epic.tasks) {
           if (isBackwardTransition(t.status, targetStatus)) {
-            evidenceManager.deleteAll(t.id);
+            evidenceManager.deleteTaskEvidence(t.id);
           }
           stateManager.forceTransition(t.id, targetStatus);
           cascadeCount++;
@@ -490,7 +538,11 @@ export function handleEpicManage(
         for (const t of epic.tasks) {
           lines.push(`    ${t.id} (${t.name}): ${t.status} -> pending`);
         }
-        lines.push("  Evidence: will be deleted for all tasks");
+        const evidenceCount = epic.tasks.reduce(
+          (count, task) => count + evidenceManager.taskEvidenceCount(task.id),
+          0,
+        );
+        lines.push(`  Task evidence: ${evidenceCount} file(s) will be deleted (gate_0, history, gate_1, custom_post_task)`);
         lines.push("");
         lines.push("Run epic_manage with confirm: true to apply.");
         return textResult(lines.join("\n"));
@@ -498,7 +550,7 @@ export function handleEpicManage(
 
       let evidenceDeleted = 0;
       for (const t of epic.tasks) {
-        evidenceDeleted += evidenceManager.deleteAll(t.id);
+        evidenceDeleted += evidenceManager.deleteTaskEvidence(t.id);
         stateManager.forceTransition(t.id, "pending");
       }
       return textResult(
@@ -693,6 +745,134 @@ export function handlePhaseManage(
 }
 
 // ---------------------------------------------------------------------------
+// Persisted Gate 0 attempt reconciliation
+// ---------------------------------------------------------------------------
+
+export interface Gate0RecoveryOutcome {
+  taskId: string;
+  taskName: string;
+  classification: NonNullable<ReturnType<typeof classifyGate0Attempt>> | "post_task_unproven";
+  outcome?: string;
+}
+
+function terminalGate0Mismatches(
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
+): Gate0RecoveryOutcome[] {
+  const state = stateManager.load();
+  if (state === null) return [];
+
+  return state.phases.flatMap((phase) => phase.epics.flatMap((epic) => epic.tasks.flatMap((task) => {
+    if (task.status === "doing") return [];
+    const evidence = evidenceManager.load("gate_0", task.id);
+    const attempt = evidence?.gate_0_attempt;
+    if (!attempt?.finished_at) return [];
+    const classification = classifyGate0Attempt(evidence, task.status, false);
+    return classification === "inconsistent"
+      ? [{ taskId: task.id, taskName: task.name, classification, outcome: attempt.outcome }]
+      : [];
+  })));
+}
+
+export function reconcilePersistedGate0Attempts(
+  stateManager: StateManager,
+  evidenceManager: EvidenceManager,
+  projectRoot: string,
+  config: RigorConfig = DEFAULTS,
+): Gate0RecoveryOutcome[] {
+  const state = stateManager.load();
+  if (state === null) return [];
+  const outcomes: Gate0RecoveryOutcome[] = [];
+
+  for (const phase of state.phases) {
+    for (const epic of phase.epics) {
+      for (const task of epic.tasks) {
+        if (task.status !== "doing") continue;
+        let evidence = evidenceManager.load("gate_0", task.id);
+        let attempt = evidence?.gate_0_attempt;
+        const isActive = Boolean(attempt && isGate0AttemptActive(projectRoot, task.id, attempt.id));
+        const terminalEvidence = !evidence && task.gate_0.evidence_path
+          ? evidenceManager.latestTerminalGate0Attempt(task.id)
+          : null;
+        if (terminalEvidence) {
+          evidenceManager.save(terminalEvidence);
+          evidence = terminalEvidence;
+          attempt = terminalEvidence.gate_0_attempt;
+        }
+        const classification = classifyGate0Attempt(evidence, task.status, isActive, 5 * 60 * 1000);
+        if (!evidence || !attempt || !classification || classification === "active" || classification === "live") continue;
+        const requiresPostTaskGates = config.gates.custom_gates.some(
+          (gate) => gate.position === "post_task",
+        );
+        const postTaskEvidence = evidenceManager.load("custom_post_task", task.id);
+        if (
+          classification === "terminal_passed" &&
+          requiresPostTaskGates &&
+          postTaskEvidence?.passed !== true
+        ) {
+          outcomes.push({
+            taskId: task.id,
+            taskName: task.name,
+            classification: "post_task_unproven",
+            outcome: attempt.outcome,
+          });
+          task.gate_0 = {
+            passed: false,
+            evidence_path: task.gate_0.evidence_path ?? evidenceManager.pathFor("gate_0", task.id),
+          };
+          stateManager.save(state);
+          stateManager.transition(task.id, "failed");
+          continue;
+        }
+        outcomes.push({
+          taskId: task.id,
+          taskName: task.name,
+          classification,
+          outcome: attempt.outcome,
+        });
+        if (classification === "inconsistent") continue;
+
+        if (classification === "interrupted" || classification === "stale") {
+          const finishedAt = new Date().toISOString();
+          const evidencePath = evidenceManager.saveTerminalGate0Attempt({
+            ...evidence,
+            passed: false,
+            timestamp: finishedAt,
+            checks: [
+              ...evidence.checks,
+              {
+                name: "gate_0",
+                passed: false,
+                detail: "Gate 0 attempt was interrupted before completion. Retry the task to run checks again.",
+              },
+            ],
+            gate_0_attempt: {
+              ...attempt,
+              finished_at: finishedAt,
+              outcome: "interrupted",
+              current_check: undefined,
+            },
+          });
+          task.gate_0 = { passed: false, evidence_path: evidencePath };
+          stateManager.save(state);
+          stateManager.transition(task.id, "failed");
+          continue;
+        }
+
+        task.gate_0 = {
+          passed: evidence.passed,
+          evidence_path: task.gate_0.evidence_path ?? evidenceManager.pathFor("gate_0", task.id),
+        };
+        stateManager.save(state);
+        stateManager.transition(task.id, classification === "terminal_passed" ? "done" : "failed");
+      }
+    }
+  }
+
+  return outcomes;
+}
+
+// ---------------------------------------------------------------------------
 // cycle_diagnose handler
 // ---------------------------------------------------------------------------
 
@@ -700,7 +880,13 @@ export function handleCycleDiagnose(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   projectRoot: string,
+  config: RigorConfig = DEFAULTS,
 ): CallToolResult {
+  const recoveryOutcomes = reconcilePersistedGate0Attempts(stateManager, evidenceManager, projectRoot, config);
+  const recoveredTaskIds = new Set(recoveryOutcomes.map((outcome) => outcome.taskId));
+  const terminalEvidenceMismatches = terminalGate0Mismatches(stateManager, evidenceManager)
+    .filter((mismatch) => !recoveredTaskIds.has(mismatch.taskId));
+
   // 1. Load state
   const state = stateManager.load();
   if (state === null) {
@@ -710,8 +896,36 @@ export function handleCycleDiagnose(
   // 2. Run validation
   const validation = validateState(state, projectRoot);
 
-  // 3. Detect stuck entities
-  const stuck = detectStuckEntities(state);
+  // 3. Detect stuck entities, excluding tasks with a live Gate 0 attempt.
+  const liveAttempts: { id: string; name: string; check: string; elapsedMs: number; timeoutMs?: number; evidencePath: string }[] = [];
+  const liveTaskIds = new Set<string>();
+  for (const phase of state.phases) {
+    for (const epic of phase.epics) {
+      for (const task of epic.tasks) {
+        if (task.status !== "doing") continue;
+        const evidence = evidenceManager.load("gate_0", task.id);
+        const attempt = evidence?.gate_0_attempt;
+        if (
+          !attempt ||
+          attempt.finished_at ||
+          !attempt.current_check ||
+          !isGate0AttemptActive(projectRoot, task.id, attempt.id)
+        ) continue;
+        liveTaskIds.add(task.id);
+        liveAttempts.push({
+          id: task.id,
+          name: task.name,
+          check: attempt.current_check.check_name,
+          elapsedMs: Date.now() - Date.parse(attempt.current_check.started_at),
+          timeoutMs: attempt.current_check.configured_timeout_ms,
+          evidencePath: join(projectRoot, ".rigor", "evidence", `gate_0-task-${task.id}.json`),
+        });
+      }
+    }
+  }
+  const stuck = detectStuckEntities(state).filter(
+    (entity) => entity.type !== "task" || !liveTaskIds.has(entity.id),
+  );
 
   // 4. Audit evidence completeness
   const missingEvidence: { message: string; entityType: "task" | "epic"; entityId: string; gate: string }[] = [];
@@ -769,6 +983,14 @@ export function handleCycleDiagnose(
     }
   }
 
+  const attemptHistory = state.phases.flatMap((phase) =>
+    phase.epics.flatMap((epic) => epic.tasks.map((task) => ({
+      id: task.id,
+      name: task.name,
+      ...evidenceManager.taskEvidenceSummary(task.id),
+    }))),
+  ).filter((task) => task.latest || task.prior.length > 0);
+
   // 6. Determine health status
   let health: "healthy" | "degraded" | "corrupt";
   if (validation.errors.length > 0) {
@@ -817,6 +1039,26 @@ export function handleCycleDiagnose(
   lines.push(`Current phase: ${state.current_phase}`);
   lines.push(`Progress: ${tasksDone}/${tasksActive} tasks, ${epicsDone}/${epicsActive} epics`);
 
+  if (liveAttempts.length > 0) {
+    lines.push("");
+    lines.push("Executing Gate 0 attempts:");
+    for (const attempt of liveAttempts) {
+      const timeout = attempt.timeoutMs === undefined ? "none" : `${attempt.timeoutMs}ms`;
+      lines.push(`  task ${attempt.id} (${attempt.name}): ${attempt.check} (${attempt.elapsedMs}ms elapsed, timeout: ${timeout})`);
+      lines.push(`    Evidence: ${attempt.evidencePath}`);
+    }
+  }
+
+  if (attemptHistory.length > 0) {
+    lines.push("");
+    lines.push("Gate 0 attempt history:");
+    for (const task of attemptHistory) {
+      const latest = task.latest ?? "none";
+      const prior = task.prior.length === 0 ? "none" : task.prior.join(", ");
+      lines.push(`  task ${task.id} (${task.name}): latest ${latest}; prior ${prior}`);
+    }
+  }
+
   // Issues
   if (validation.errors.length > 0 || validation.warnings.length > 0) {
     lines.push("");
@@ -826,6 +1068,35 @@ export function handleCycleDiagnose(
     }
     for (const w of validation.warnings) {
       lines.push(`  [WARNING] ${w}`);
+    }
+  }
+
+  if (recoveryOutcomes.length > 0) {
+    lines.push("");
+    lines.push("Recovery:");
+    for (const recovery of recoveryOutcomes) {
+      lines.push(`  task ${recovery.taskId} (${recovery.taskName}): ${recovery.classification}`);
+      if (
+        recovery.classification === "interrupted" ||
+        recovery.classification === "stale" ||
+        recovery.classification === "terminal_failed" ||
+        recovery.classification === "post_task_unproven"
+      ) {
+        lines.push(`    Suggestion: task_manage({ task_id: "${recovery.taskId}", action: "retry", confirm: true })`);
+      } else if (recovery.classification === "terminal_passed") {
+        lines.push("    Reconciled to done; no action required.");
+      } else {
+        lines.push(`    Suggestion: task_manage({ task_id: "${recovery.taskId}", action: "reset_evidence", confirm: true })`);
+      }
+    }
+  }
+
+  if (terminalEvidenceMismatches.length > 0) {
+    lines.push("");
+    lines.push("Terminal Gate 0 evidence mismatches:");
+    for (const mismatch of terminalEvidenceMismatches) {
+      lines.push(`  task ${mismatch.taskId} (${mismatch.taskName}): ${mismatch.outcome ?? "unknown"} evidence conflicts with task status`);
+      lines.push(`    Suggestion: task_manage({ task_id: "${mismatch.taskId}", action: "reset_evidence", confirm: true })`);
     }
   }
 
@@ -847,16 +1118,19 @@ export function handleCycleDiagnose(
   }
 
   // Failed tasks with retry suggestions
-  if (failedTasks.length > 0) {
+  const unrecoveredFailedTasks = failedTasks.filter((task) => !recoveredTaskIds.has(task.id));
+  if (unrecoveredFailedTasks.length > 0) {
     lines.push("");
     lines.push("Failed tasks:");
-    for (const t of failedTasks) {
+    for (const t of unrecoveredFailedTasks) {
       lines.push(`  task ${t.id} (${t.name}):`);
       lines.push(`    Suggestion: task_manage({ task_id: "${t.id}", action: "retry", confirm: true })`);
     }
   }
 
-  // Evidence audit with actionable suggestions
+  const evidenceAudit = evidenceManager.audit();
+  lines.push("");
+  lines.push(`Evidence audit: ${JSON.stringify(evidenceAudit)}`);
   if (missingEvidence.length > 0) {
     lines.push("");
     lines.push(`Evidence audit: ${missingEvidence.length} missing`);
@@ -880,13 +1154,22 @@ export function registerRecoveryTools(
   stateManager: StateManager,
   evidenceManager: EvidenceManager,
   projectRoot: string,
+  config: RigorConfig,
+  registry?: ProjectContextRegistry,
 ): void {
+  const context = (requestRoot?: string) =>
+    registry?.getByRoot(requestRoot ?? stateManager.load()?.project_root ?? projectRoot);
+  const projectRootParam = z
+    .string()
+    .optional()
+    .describe("Absolute Git repository root; defaults to the server --project-root");
   server.tool(
     "cycle_reset",
     "Preview or reset the current cycle — deletes state and evidence files",
-    { confirm: z.boolean().describe("Set to true to actually delete; false for preview") },
+    { confirm: z.boolean().describe("Set to true to actually delete; false for preview"), project_root: projectRootParam },
     async (params) => {
-      return handleCycleReset(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context(params.project_root);
+       return handleCycleReset(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -898,9 +1181,11 @@ export function registerRecoveryTools(
       action: z.enum(["force_status", "skip", "retry", "reset_evidence"]).describe("Action to perform"),
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      return handleTaskManage(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context(params.project_root);
+       return handleTaskManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -913,9 +1198,11 @@ export function registerRecoveryTools(
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       cascade: z.boolean().default(false).describe("Also apply action to child tasks (force_status, skip)"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      return handleEpicManage(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context(params.project_root);
+       return handleEpicManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
@@ -927,17 +1214,23 @@ export function registerRecoveryTools(
       action: z.enum(["force_status", "skip"]).describe("Action to perform"),
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
+      project_root: projectRootParam,
     },
     async (params) => {
-      return handlePhaseManage(params, stateManager, evidenceManager, projectRoot);
+      const ctx = context(params.project_root);
+       return handlePhaseManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
 
-  server.tool(
+  server.registerTool(
     "cycle_diagnose",
-    "Run diagnostics on the current cycle — validation, stuck detection, evidence audit",
-    async () => {
-      return handleCycleDiagnose(stateManager, evidenceManager, projectRoot);
+    {
+      description: "Run diagnostics on the current cycle — validation, stuck detection, evidence audit",
+      inputSchema: z.object({ project_root: projectRootParam }).default({}),
+    },
+    async (params) => {
+      const ctx = context(params?.project_root);
+       return handleCycleDiagnose(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot, ctx?.config ?? config);
     },
   );
 }

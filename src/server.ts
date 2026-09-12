@@ -10,6 +10,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config/index.js";
+import { ProjectContextRegistry } from "./context.js";
 import { StateManager } from "./state/index.js";
 import { EvidenceManager } from "./evidence/index.js";
 import { SyncManager } from "./sync/index.js";
@@ -33,6 +34,7 @@ export interface ServerContext {
   stateManager: StateManager;
   evidenceManager: EvidenceManager;
   syncManager?: SyncManager;
+  registry: ProjectContextRegistry;
   config: RigorConfig;
 }
 
@@ -42,7 +44,7 @@ export interface ServerContext {
  * This factory is separated from the transport layer so tests can
  * exercise tool registration without stdio.
  */
-export function createServer(projectRoot: string): ServerContext {
+export function createServer(projectRoot: string, sharedRegistry?: ProjectContextRegistry): ServerContext {
   const config = loadConfig(projectRoot);
 
   // Build sync layer if enabled
@@ -56,21 +58,22 @@ export function createServer(projectRoot: string): ServerContext {
     );
   }
 
-  const stateManager = new StateManager(projectRoot, syncManager);
-  const evidenceManager = new EvidenceManager(projectRoot);
+  const registry = sharedRegistry ?? new ProjectContextRegistry(projectRoot, syncManager);
+  const stateManager = registry.getByRoot(projectRoot).stateManager;
+  const evidenceManager = registry.getByRoot(projectRoot).evidenceManager;
 
   const server = new McpServer(
     { name: "rigor-gate-server", version: "0.1.0" },
   );
 
-  registerCycleTools(server, stateManager, config, projectRoot);
-  registerGateTools(server, stateManager, config, projectRoot);
-  registerReviewTools(server, stateManager, evidenceManager, config, projectRoot);
-  registerRecoveryTools(server, stateManager, evidenceManager, projectRoot);
-  registerSyncTools(server, syncManager);
+  registerCycleTools(server, stateManager, config, projectRoot, registry);
+  registerGateTools(server, stateManager, projectRoot, registry);
+  registerReviewTools(server, stateManager, evidenceManager, projectRoot, registry);
+  registerRecoveryTools(server, stateManager, evidenceManager, projectRoot, config, registry);
+  registerSyncTools(server, syncManager, registry, projectRoot);
   registerScaffoldTools(server, projectRoot);
 
-  return { server, stateManager, evidenceManager, syncManager, config };
+  return { server, stateManager, evidenceManager, syncManager, registry, config };
 }
 
 // ---------------------------------------------------------------------------
