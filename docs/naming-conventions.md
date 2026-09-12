@@ -46,6 +46,7 @@ All skills use the `rigor:` prefix. Language-specific skills use a `rigor:lang:`
 | `rigor:brainstorm` | `skills/brainstorm/` | Socratic design exploration with phase locks and approval gates | Done |
 | `rigor:receive-review` | `skills/receive-review/` | Process review feedback with verification before implementation | Done |
 | `rigor:test-guard` | `skills/test-guard/` | Test quality guard: 3 iron laws, 5 anti-pattern catalog | Done |
+| `rigor:worktree` | `skills/worktree/` | Create a collision-safe isolated git worktree, verify ignored state, install dependencies, and establish a passing baseline | Draft |
 | `rigor:debug` | `skills/debug/` | Systematic 4-phase debugging with root cause tracing | Done |
 | `rigor:lint` | `skills/lint/` | Run lang pack lint command, fix issues, verify clean | Done |
 

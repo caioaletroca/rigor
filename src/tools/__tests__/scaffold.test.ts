@@ -418,18 +418,18 @@ describe("install_commands domain gating", () => {
     expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-worktree.md"))).toBe(true);
   });
 
-  it("does NOT install rigor:worktree when a different domain is active", async () => {
+  it("installs rigor:worktree regardless of the active domain", async () => {
     writeConfig("data-science");
     await handleInstallCommands({ client: "claude", global: false }, projectRoot);
-    expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-worktree.md"))).toBe(false);
+    expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-worktree.md"))).toBe(true);
     // top-level skills still install (sanity: the commit command exists)
     expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-commit.md"))).toBe(true);
   });
 
-  it("does NOT install rigor:worktree when no domain is configured", async () => {
+  it("installs rigor:worktree when no domain is configured", async () => {
     writeConfig(undefined);
     await handleInstallCommands({ client: "claude", global: false }, projectRoot);
-    expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-worktree.md"))).toBe(false);
+    expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-worktree.md"))).toBe(true);
   });
 
   it("does not throw when the project config is malformed (top-level still installs)", async () => {
@@ -437,7 +437,7 @@ describe("install_commands domain gating", () => {
     writeFileSync(join(projectRoot, ".rigor", "config.yaml"), "domain: : : [broken yaml", "utf-8");
     const result = await handleInstallCommands({ client: "claude", global: false }, projectRoot);
     expect(result.isError).toBeUndefined();
-    expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-worktree.md"))).toBe(false);
+    expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-worktree.md"))).toBe(true);
     expect(existsSync(join(projectRoot, ".claude", "commands", "rigor-commit.md"))).toBe(true);
   });
 });
