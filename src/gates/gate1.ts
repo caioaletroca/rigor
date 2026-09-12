@@ -192,7 +192,14 @@ export async function checkGate1Exit(
 
   // Run audit command if configured
   const auditCommand = config.gates.gate_1.audit_command;
-  if (auditCommand !== "") {
+  if (auditCommand === "") {
+    checks.push({
+      name: "audit",
+      passed: false,
+      detail:
+        "Dependency changes require an infrastructure audit. Configure gates.gate_1.audit_command before retrying.",
+    });
+  } else {
     const result = await runCommand(auditCommand, { cwd: projectRoot });
     const passed = result.exit_code === 0;
 

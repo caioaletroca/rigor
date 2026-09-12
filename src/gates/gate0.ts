@@ -305,8 +305,12 @@ export async function evaluateTestFiles(
   if (result.exit_code !== 0) {
     return {
       name: "test_files",
-      passed: true,
-      detail: "Skipped: not a git repository or git unavailable",
+      passed: false,
+      detail:
+        "Could not evaluate require_test_files because `git status --porcelain` failed. Ensure Git is installed and this project is a Git working tree before retrying.",
+      command: "git status --porcelain",
+      exit_code: result.exit_code,
+      duration_ms: result.duration_ms,
     };
   }
 
