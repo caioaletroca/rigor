@@ -16,7 +16,7 @@ import type { RigorConfig } from "../config/index.js";
 import { inspectWorkspace, WorkspaceInspectionError } from "../workspace/index.js";
 import { parsePlan } from "../plan/index.js";
 import { EvidenceManager } from "../evidence/index.js";
-import { isGate0AttemptActive, isTaskCompletionActive } from "./gate.js";
+import { isGate0AttemptActive, isTaskCompletionActive } from "../services/task-lifecycle.js";
 import { ProjectContextRegistry, resolveProjectRoot as resolveCanonicalProjectRoot } from "../context.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
 import { responseResult } from "./response.js";
