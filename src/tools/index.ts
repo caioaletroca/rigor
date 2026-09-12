@@ -8,6 +8,8 @@ export { ProjectContextRegistry, resolveProjectRoot } from "../context.js";
 export type { ProjectRootResolution, RequestContext } from "../context.js";
 export { handleCycleInit, handleCycleStatus } from "./cycle.js";
 
+export { projectRootSchema, resolveRequestContext, responseResult } from "./lifecycle.js";
+
 export { registerGateTools } from "./gate.js";
 export type { TaskStartParams, TaskCompleteParams, TaskRenewParams } from "./gate.js";
 export { handleTaskStart, handleTaskComplete, handleTaskRenew } from "./gate.js";

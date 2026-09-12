@@ -13,6 +13,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { projectRootSchema, resolveRequestContext, responseResult } from "./lifecycle.js";
 import type { StateManager } from "../state/index.js";
 import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
@@ -613,22 +614,15 @@ export function registerReviewTools(
   projectRoot: string,
   registry?: ProjectContextRegistry,
 ): void {
-  const context = (requestRoot?: string) =>
-    registry?.getByRoot(requestRoot ?? stateManager.load()?.project_root ?? projectRoot);
   const archiveManager = new ArchiveManager(projectRoot);
-  const projectRootParam = z
-    .string()
-    .refine(isAbsolute, "project_root must be an absolute path")
-    .optional()
-    .describe("Absolute Git repository root; defaults to the server --project-root");
   // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
   // per invocation — config edits take effect without a server restart.
   server.tool(
     "review_start",
     "Start code review for an epic — verifies all tasks are done and passed Gate 0",
-    { epic_id: z.string().describe("Epic id (e.g. 1.1)"), project_root: projectRootParam },
+    { epic_id: z.string().describe("Epic id (e.g. 1.1)"), project_root: projectRootSchema },
     async (params) => {
-      const ctx = context(params.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleReviewStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
@@ -641,10 +635,10 @@ export function registerReviewTools(
       submissions: z
         .string()
         .describe("JSON array of ReviewFindings objects"),
-      project_root: projectRootParam,
+      project_root: projectRootSchema,
     },
     async (params) => {
-      const ctx = context(params.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleReviewSubmit(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
@@ -652,9 +646,9 @@ export function registerReviewTools(
   server.tool(
     "accept_start",
     "Start acceptance for an epic — verifies Gate 8 passed",
-    { epic_id: z.string().describe("Epic id (e.g. 1.1)"), project_root: projectRootParam },
+    { epic_id: z.string().describe("Epic id (e.g. 1.1)"), project_root: projectRootSchema },
     async (params) => {
-      return handleAcceptStart(params, context(params.project_root)?.stateManager ?? stateManager);
+      return handleAcceptStart(params, resolveRequestContext(registry, stateManager, projectRoot, params.project_root)?.stateManager ?? stateManager);
     },
   );
 
@@ -670,10 +664,10 @@ export function registerReviewTools(
         .boolean()
         .default(false)
         .describe("Whether the user has approved the epic"),
-      project_root: projectRootParam,
+      project_root: projectRootSchema,
     },
     async (params) => {
-      const ctx = context(params.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleAcceptSubmit(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
@@ -682,10 +676,10 @@ export function registerReviewTools(
     "phase_advance",
     {
       description: "Advance to the next phase — verifies all epics in current phase are done",
-      inputSchema: z.object({ project_root: projectRootParam }).default({}),
+      inputSchema: z.object({ project_root: projectRootSchema }).default({}),
     },
     async (params) => {
-      const ctx = context(params?.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params?.project_root);
        return handlePhaseAdvance(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx ? new ArchiveManager(ctx.project_root) : archiveManager, ctx?.project_root ?? projectRoot);
     },
   );

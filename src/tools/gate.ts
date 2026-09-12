@@ -10,6 +10,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { projectRootSchema, resolveRequestContext, responseResult } from "./lifecycle.js";
 import type { StateManager, TaskLease, LeaseFenceMismatchReason } from "../state/index.js";
 import { EntityNotFoundError, isValidTransition, TASK_LEASE_DURATION_MS } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
@@ -30,10 +31,7 @@ import { withProjectMutationLock } from "../lifecycle/index.js";
 // ---------------------------------------------------------------------------
 
 function textResult(text: string, isError?: boolean): CallToolResult {
-  return {
-    content: [{ type: "text", text }],
-    ...(isError ? { isError: true } : {}),
-  };
+  return responseResult(text, { error: isError });
 }
 
 const activeTaskCompletions = new Map<string, string>();
@@ -603,15 +601,14 @@ export function registerGateTools(
   projectRoot: string,
   registry?: ProjectContextRegistry,
 ): void {
-  const context = (root: string) => registry?.getByRoot(root);
   // Handlers receive `null` for config so they reload .rigor/config.yaml fresh
   // per invocation — config edits take effect without a server restart.
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
- { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), takeover: z.boolean().optional(), lease_ms: z.number().int().positive().optional(), project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional() },
+ { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), takeover: z.boolean().optional(), lease_ms: z.number().int().positive().optional(), project_root: projectRootSchema },
      async (params) => {
-       const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+       const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleTaskStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );
@@ -619,9 +616,9 @@ export function registerGateTools(
   server.tool(
     "task_renew",
     "Renew a live task lease for its current owner and attempt",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: z.string().optional() },
+    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: projectRootSchema },
     async (params) => {
-      const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
       return handleTaskRenew(params, ctx?.stateManager ?? stateManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -629,9 +626,9 @@ export function registerGateTools(
   server.tool(
     "task_complete",
     "Complete a task — runs Gate 0 exit checks (tests, coverage, lint), saves evidence",
- { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional() },
+ { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: projectRootSchema },
      async (params) => {
-       const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
+       const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleTaskComplete(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
     },
   );

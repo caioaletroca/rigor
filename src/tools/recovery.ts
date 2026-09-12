@@ -16,6 +16,7 @@ import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { projectRootSchema, resolveRequestContext, responseResult } from "./lifecycle.js";
 import type { StateManager } from "../state/index.js";
 import {
   EntityNotFoundError,
@@ -32,7 +33,6 @@ import type { RigorConfig } from "../config/index.js";
 import { withProjectMutationLock } from "../lifecycle/index.js";
 import { isGate0AttemptActive } from "./gate.js";
 import type { ProjectContextRegistry } from "../context.js";
-import { responseResult } from "./response.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -1199,19 +1199,13 @@ export function registerRecoveryTools(
   config: RigorConfig,
   registry?: ProjectContextRegistry,
 ): void {
-  const context = (requestRoot?: string) =>
-    registry?.getByRoot(requestRoot ?? stateManager.load()?.project_root ?? projectRoot);
-  const projectRootParam = z
-    .string()
-    .refine(isAbsolute, "project_root must be an absolute path")
-    .optional()
-    .describe("Absolute Git repository root; defaults to the server --project-root");
+
   server.tool(
     "cycle_reset",
     "Preview or reset the current cycle — deletes state and evidence files",
-    { confirm: z.boolean().describe("Set to true to actually delete; false for preview"), project_root: projectRootParam },
+    { confirm: z.boolean().describe("Set to true to actually delete; false for preview"), project_root: projectRootSchema },
     async (params) => {
-      const ctx = context(params.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleCycleReset(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -1224,10 +1218,10 @@ export function registerRecoveryTools(
       action: z.enum(["force_status", "skip", "retry", "reset_evidence"]).describe("Action to perform"),
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
-      project_root: projectRootParam,
+      project_root: projectRootSchema,
     },
     async (params) => {
-      const ctx = context(params.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleTaskManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -1241,10 +1235,10 @@ export function registerRecoveryTools(
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       cascade: z.boolean().default(false).describe("Also apply action to child tasks (force_status, skip)"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
-      project_root: projectRootParam,
+      project_root: projectRootSchema,
     },
     async (params) => {
-      const ctx = context(params.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handleEpicManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -1257,10 +1251,10 @@ export function registerRecoveryTools(
       action: z.enum(["force_status", "skip"]).describe("Action to perform"),
       target_status: z.string().optional().describe("Required for force_status. Valid: pending, doing, done, failed, skipped"),
       confirm: z.boolean().default(false).describe("Set to true to apply; false (default) for preview"),
-      project_root: projectRootParam,
+      project_root: projectRootSchema,
     },
     async (params) => {
-      const ctx = context(params.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
        return handlePhaseManage(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot);
     },
   );
@@ -1269,10 +1263,10 @@ export function registerRecoveryTools(
     "cycle_diagnose",
     {
       description: "Run diagnostics on the current cycle — validation, stuck detection, evidence audit",
-      inputSchema: z.object({ project_root: projectRootParam }).default({}),
+      inputSchema: z.object({ project_root: projectRootSchema }).default({}),
     },
     async (params) => {
-      const ctx = context(params?.project_root);
+      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params?.project_root);
        return handleCycleDiagnose(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.project_root ?? projectRoot, ctx?.config ?? config);
     },
   );
