@@ -201,6 +201,38 @@ sync:
     expect(config.sync.providers["my-webhook"]).toBeDefined();
     expect(config.sync.providers["my-webhook"].type).toBe("webhook");
   });
+
+  it("includes workspace defaults when no workspace config exists", () => {
+    const config = loadConfig(tmpDir);
+    expect(config.workspace).toEqual({
+      require_worktree: true,
+      require_feature_branch: true,
+      base_branches: ["main", "master", "develop", "release"],
+      allow_override: false,
+    });
+  });
+
+  it("merges partial workspace config with sibling defaults", () => {
+    writeConfigFile(tmpDir, `workspace:\n  require_worktree: false\n`);
+
+    const config = loadConfig(tmpDir);
+    expect(config.workspace).toEqual({
+      require_worktree: false,
+      require_feature_branch: true,
+      base_branches: ["main", "master", "develop", "release"],
+      allow_override: false,
+    });
+  });
+
+  it("replaces workspace base_branches wholesale", () => {
+    writeConfigFile(tmpDir, `workspace:\n  base_branches: [trunk, staging]\n`);
+
+    const config = loadConfig(tmpDir);
+    expect(config.workspace.base_branches).toEqual(["trunk", "staging"]);
+    expect(config.workspace.require_worktree).toBe(true);
+    expect(config.workspace.require_feature_branch).toBe(true);
+    expect(config.workspace.allow_override).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

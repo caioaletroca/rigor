@@ -14,5 +14,6 @@ export type {
   Metric,
   SyncConfig,
   SyncProviderConfig,
+  WorkspaceConfig,
 } from "./schema.js";
 export { loadConfig, loadDomainPackDefaults, resolveVariables, getGlobalConfigPath } from "./loader.js";
