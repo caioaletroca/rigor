@@ -117,7 +117,7 @@ Registration at `src/tools/cycle.ts:396-454` gains the new optional boolean in t
 
 #### Task 1.1.4: Detect foreign cycles already owned by the worktree
 
-- [ ] Done
+- [x] Done
 
 **Context:** `cycle_init` rejects any pre-existing cycle with a single generic message at `src/tools/cycle.ts:121-127`: "A cycle already exists. Use cycle_reset to start over." For a lone agent that is fine. For an agent army it is dangerous advice -- `cycle_reset` deletes state and evidence (`src/tools/recovery.ts:121-127`), so an agent told to reset may destroy a different agent's in-flight cycle if two agents ever share a checkout.
 
