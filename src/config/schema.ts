@@ -115,6 +115,13 @@ export interface SyncConfig {
   providers: Record<string, SyncProviderConfig>;
 }
 
+export interface WorkspaceConfig {
+  require_worktree: boolean;
+  require_feature_branch: boolean;
+  base_branches: string[];
+  allow_override: boolean;
+}
+
 export interface RigorConfig {
   /** Domain pack to load (e.g. "software"). Undefined means no domain pack. */
   domain?: string;
@@ -122,6 +129,7 @@ export interface RigorConfig {
   ship: ShipConfig;
   gates: GatesConfig;
   sync: SyncConfig;
+  workspace: WorkspaceConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,5 +191,11 @@ export const DEFAULTS: RigorConfig = {
   sync: {
     enabled: false,
     providers: {},
+  },
+  workspace: {
+    require_worktree: true,
+    require_feature_branch: true,
+    base_branches: ["main", "master", "develop", "release"],
+    allow_override: false,
   },
 };

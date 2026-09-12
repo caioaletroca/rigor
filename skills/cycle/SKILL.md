@@ -40,47 +40,63 @@ In Continuous mode, Gate 8 failure is not a user-confirmation point. Read the fi
 
 ## Lifecycle Sequence
 
+Every lifecycle tool call must pass the active isolated worktree's absolute `project_root`; never rely on the MCP server default, which may point at another checkout. Use the same root for initialization, tasks, reviews, acceptance, reload, reset, and management calls. `cycle_status` and `cycle_diagnose` are currently server-root-bound, so use them only when the server is configured for this worktree.
+
 ```
-cycle_init(plan_path)
+cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/worktree" })
   |
   v
 for each task in phase:
-  task_start(task_id)    -- Gate entry: validates order, custom pre_task gates, Gate 1
+  task_start(task_id, project_root)    -- Gate entry: validates order, custom pre_task gates, Gate 1
     |
     v
   [implement the task]
     |
     v
-  task_complete(task_id) -- Gate 0: runs tests, coverage, lint, custom post_task gates
+  task_complete(task_id, project_root) -- Gate 0: runs tests, coverage, lint, custom post_task gates
   |
   v
 for each epic in phase:
-  review_start(epic_id)  -- Validates all tasks done, custom pre_review gates
+  review_start(epic_id, project_root)  -- Validates all tasks done, custom pre_review gates
     |
     v
-  review_submit(epic_id, submissions) -- Gate 8: reviewer checks
+  review_submit(epic_id, submissions, project_root) -- Gate 8: reviewer checks
     |
     v
-  accept_start(epic_id)  -- Validates Gate 8 passed
+  accept_start(epic_id, project_root)  -- Validates Gate 8 passed
     |
     v
-  accept_submit(epic_id, criteria, user_approved) -- Gate 9: acceptance
+  accept_submit(epic_id, criteria, user_approved, project_root) -- Gate 9: acceptance
   |
   v
-phase_advance()          -- All epics done, advance to next phase
+phase_advance(project_root)          -- All epics done, advance to next phase
 ```
 
 ---
 
 ## Step 1 -- Initialize the Cycle
 
-Call `cycle_init` with the path to the plan file:
+### Preconditions
+
+Before calling `cycle_init`, verify that the current checkout is a linked Git worktree on a non-base feature branch. Confirm the worktree path and branch with Git, and confirm that the plan belongs to this checkout. If the checkout is not isolated, hand off to `rigor:worktree` before continuing. Do not initialize a cycle from a detached HEAD, the repository's base branch, or a non-worktree checkout.
+
+| Rejection | Remediation |
+|-----------|-------------|
+| Detached HEAD | Check out or create the intended feature branch, then verify it is a linked worktree. |
+| Base branch | Create or switch to a non-base feature branch in a linked worktree; do not initialize on the base branch. |
+| Not a linked worktree | Hand off to `rigor:worktree` and continue from the created worktree. |
+| Foreign cycle | Stop and use the cycle belonging to the active worktree; do not reset, overwrite, or adopt a cycle from another checkout. |
+| Any precondition failure rationalized as temporary or harmless | Treat the rejection as blocking, remediate it, and re-run every precondition check before calling `cycle_init`. |
+
+Never call `cycle_reset` for a foreign cycle. `cycle_reset` may only be used for an unrecoverable cycle that belongs to the active worktree, after diagnosis and explicit confirmation.
+
+Call `cycle_init` with the path to the plan file and the active worktree's absolute `project_root`:
 
 ```
-cycle_init({ plan_path: "docs/plans/my-plan.md" })
+cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/worktree" })
 ```
 
-The server parses the plan, creates initial state, and returns the cycle summary. If a cycle already exists, it returns an error -- use `cycle_reset` first.
+The server parses the plan, creates initial state, and returns the cycle summary. If a cycle already exists for this worktree, diagnose it and use `cycle_reset` only as a last resort; never reset a foreign cycle.
 
 **Project root:** when you pass an **absolute** `plan_path` that sits inside a git repository whose root differs from the server's `--project-root`, `cycle_init` writes `.rigor/` state and evidence under the plan's git root (the reliable signal) and returns a `warning` plus the derived `project_root` in the summary. `cycle_status`/`task_*` still read the server root, so the warning is your cue to restart the server with the correct `--project-root`. A relative `plan_path`, or a plan outside any repo, keeps the server root unchanged.
 

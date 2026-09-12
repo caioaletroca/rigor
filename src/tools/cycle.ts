@@ -6,13 +6,14 @@
  * without spinning up a real MCP transport.
  */
 
-import { resolve, isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StateManager } from "../state/index.js";
 import type { PhaseState, EpicState, TaskState } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
+import { inspectWorkspace, WorkspaceInspectionError } from "../workspace/index.js";
 import { parsePlan } from "../plan/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import { isGate0AttemptActive, isTaskCompletionActive } from "./gate.js";
@@ -92,14 +93,21 @@ function phaseToState(parsed: ParsedPhase): PhaseState {
 export interface CycleInitParams {
   plan_path: string;
   project_root?: string;
+  allow_shared_workspace?: boolean;
 }
+
+const WORKTREE_REMEDIATION =
+  "Run rigor:worktree to create an isolated worktree and feature branch, then re-run cycle_init from it.";
 
 export function handleCycleInit(
   params: CycleInitParams,
   stateManager: StateManager,
   projectRoot: string,
+  configOrRegistry?: RigorConfig | ProjectContextRegistry,
   registry?: ProjectContextRegistry,
 ): CallToolResult {
+  const config = configOrRegistry instanceof ProjectContextRegistry ? undefined : configOrRegistry;
+  const contextRegistry = configOrRegistry instanceof ProjectContextRegistry ? configOrRegistry : registry;
   const requestRoot = params.project_root ?? projectRoot;
   const resolvedPath = isAbsolute(params.plan_path)
     ? params.plan_path
@@ -115,11 +123,69 @@ export function handleCycleInit(
     fallback_root: projectRoot,
   }).project_root;
   const usingDerivedRoot = effectiveRoot !== projectRoot;
-  const context = registry?.getByRoot(effectiveRoot);
+  const context = contextRegistry?.getByRoot(effectiveRoot);
   const sm = context?.stateManager ?? (usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager);
+  const effectiveConfig = context?.config ?? config;
+
+  if (effectiveConfig) {
+    if (params.allow_shared_workspace) {
+      if (!effectiveConfig.workspace.allow_override) {
+        return textResult(
+          "allow_shared_workspace is disabled by project config (workspace.allow_override is false).",
+          true,
+        );
+      }
+    } else if (
+      effectiveConfig.workspace.require_worktree ||
+      effectiveConfig.workspace.require_feature_branch
+    ) {
+      let workspace;
+      try {
+        workspace = inspectWorkspace(effectiveRoot);
+      } catch (err) {
+        if (err instanceof WorkspaceInspectionError) {
+          return textResult(err.message, true);
+        }
+        throw err;
+      }
+
+      if (workspace.detached) {
+        return textResult(
+          `A cycle cannot be anchored to a detached HEAD. ${WORKTREE_REMEDIATION}`,
+          true,
+        );
+      }
+
+      if (
+        effectiveConfig.workspace.require_feature_branch &&
+        workspace.branch !== null &&
+        effectiveConfig.workspace.base_branches.includes(workspace.branch)
+      ) {
+        return textResult(
+          `Branch '${workspace.branch}' is an integration branch, not an agent workspace. ${WORKTREE_REMEDIATION}`,
+          true,
+        );
+      }
+
+      if (effectiveConfig.workspace.require_worktree && !workspace.is_linked_worktree) {
+        return textResult(
+          `A cycle must run in a dedicated worktree, not the main checkout. ${WORKTREE_REMEDIATION}`,
+          true,
+        );
+      }
+    }
+  }
 
   const existing = sm.load();
   if (existing !== null) {
+    const existingPlanPath = resolve(effectiveRoot, existing.plan_path);
+    if (existingPlanPath !== resolvedPath) {
+      return textResult(
+        `This worktree already belongs to cycle "${existing.cycle_id}" using plan "${existing.plan_path}". Initialize the other plan in a separate worktree. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
+    }
+
     return textResult(
       "A cycle already exists. Use cycle_reset to start over.",
       true,
@@ -406,11 +472,18 @@ export function registerCycleTools(
     {
       plan_path: z.string().describe("Absolute plan path, or relative to project_root or the legacy server --project-root fallback"),
       project_root: z.string().optional().describe("Absolute Git repository root; takes precedence over the server --project-root fallback"),
+      allow_shared_workspace: z.boolean().optional(),
     },
     async (params) => {
       const root = params.project_root ?? projectRoot;
       const context = registry?.getByRoot(root);
-      return handleCycleInit(params, context?.stateManager ?? stateManager, root, registry);
+      return handleCycleInit(
+        params,
+        context?.stateManager ?? stateManager,
+        root,
+        context?.config ?? _config,
+        registry,
+      );
     },
   );
 

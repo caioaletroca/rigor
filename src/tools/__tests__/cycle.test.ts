@@ -21,6 +21,7 @@ import { StateManager } from "../../state/index.js";
 import { EvidenceManager } from "../../evidence/index.js";
 import { handleCycleInit, handleCycleStatus, handleCycleReload } from "../cycle.js";
 import type { CycleInitParams } from "../cycle.js";
+import { DEFAULTS } from "../../config/index.js";
 
 // ---------------------------------------------------------------------------
 // Fixture path
@@ -35,6 +36,15 @@ const FIXTURE_DIR = join(
   "fixtures",
 );
 const SAMPLE_PLAN = join(FIXTURE_DIR, "sample-plan.md");
+const TEST_CONFIG = {
+  ...DEFAULTS,
+  workspace: {
+    ...DEFAULTS.workspace,
+    require_worktree: false,
+    require_feature_branch: false,
+    allow_override: true,
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -73,13 +83,10 @@ describe("cycle tools", () => {
 
   describe("cycle_init", () => {
     it("creates state from plan and returns success with counts", () => {
-      // Copy the fixture into the server root so root resolution stays anchored
-      // to tempDir (an absolute in-repo fixture path would otherwise resolve to
-      // this repo's own git root).
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
       const params: CycleInitParams = { plan_path: planPath };
-      const result = handleCycleInit(params, stateManager, tempDir);
+      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBeUndefined();
 
@@ -104,7 +111,7 @@ describe("cycle tools", () => {
       cpSync(SAMPLE_PLAN, join(tempDir, planName));
 
       const params: CycleInitParams = { plan_path: planName };
-      const result = handleCycleInit(params, stateManager, tempDir);
+      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBeUndefined();
 
@@ -118,21 +125,99 @@ describe("cycle tools", () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
       const params: CycleInitParams = { plan_path: planPath };
-      handleCycleInit(params, stateManager, tempDir);
+      handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       // Try to init again
-      const result = handleCycleInit(params, stateManager, tempDir);
+      const result = handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       expect(result.isError).toBe(true);
       const text = extractText(result);
       expect(text).toContain("cycle already exists");
     });
 
+    it("treats re-init with a relative path to the same plan as same-plan", () => {
+      const planName = "my-plan.md";
+      cpSync(SAMPLE_PLAN, join(tempDir, planName));
+
+      handleCycleInit({ plan_path: planName }, stateManager, tempDir, TEST_CONFIG);
+
+      const result = handleCycleInit(
+        { plan_path: join(tempDir, planName) },
+        stateManager,
+        tempDir,
+        TEST_CONFIG,
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain("cycle already exists");
+      expect(text).toContain("cycle_reset");
+    });
+
+    it("rejects a foreign plan without recommending cycle_reset", () => {
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
+      const existing = stateManager.load();
+
+      const otherPlanName = "other-plan.md";
+      cpSync(SAMPLE_PLAN, join(tempDir, otherPlanName));
+
+      const result = handleCycleInit(
+        { plan_path: otherPlanName },
+        stateManager,
+        tempDir,
+        TEST_CONFIG,
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain(existing!.cycle_id);
+      expect(text).toContain(existing!.plan_path);
+      expect(text).not.toContain("cycle_reset");
+      expect(text).toContain("rigor:worktree");
+    });
+
+    it("rejects a shared workspace override when project config disables it", () => {
+      const result = handleCycleInit(
+        { plan_path: "plan.md", allow_shared_workspace: true },
+        stateManager,
+        tempDir,
+        {
+          ...TEST_CONFIG,
+          workspace: { ...TEST_CONFIG.workspace, allow_override: false },
+        },
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("allow_shared_workspace is disabled");
+    });
+
+    it("allows an explicit shared workspace override when project config permits it", () => {
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+      const result = handleCycleInit(
+        { plan_path: planPath, allow_shared_workspace: true },
+        stateManager,
+        tempDir,
+        {
+          ...TEST_CONFIG,
+          workspace: {
+            ...TEST_CONFIG.workspace,
+            require_worktree: true,
+            require_feature_branch: true,
+          },
+        },
+      );
+
+      expect(result.isError).toBeUndefined();
+    });
+
     it("throws on invalid plan path", () => {
       const params: CycleInitParams = { plan_path: "/nonexistent/plan.md" };
 
       expect(() =>
-        handleCycleInit(params, stateManager, tempDir),
+        handleCycleInit(params, stateManager, tempDir, TEST_CONFIG),
       ).toThrow();
     });
 
@@ -140,7 +225,7 @@ describe("cycle tools", () => {
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
       const params: CycleInitParams = { plan_path: planPath };
-      handleCycleInit(params, stateManager, tempDir);
+      handleCycleInit(params, stateManager, tempDir, TEST_CONFIG);
 
       const state = stateManager.load();
       // Task 1.1.1 has [x] Done in sample-plan.md
@@ -168,11 +253,9 @@ describe("cycle tools", () => {
     });
 
     it("returns correct summary for a fresh cycle", () => {
-      // Anchor the plan inside the server root so the derived git root stays
-      // tempDir (an absolute in-repo fixture path would resolve to rigor's root).
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
 
       const result = handleCycleStatus(stateManager);
       const text = extractText(result);
@@ -250,10 +333,9 @@ describe("cycle tools", () => {
     });
 
     it("shows progress and active task for mid-progress cycle", () => {
-      // Anchor the plan inside the server root (see note in the test above).
       const planPath = join(tempDir, "plan.md");
       cpSync(SAMPLE_PLAN, planPath);
-      handleCycleInit({ plan_path: planPath }, stateManager, tempDir);
+      handleCycleInit({ plan_path: planPath }, stateManager, tempDir, TEST_CONFIG);
 
       // Transition task 1.1.2 to "doing"
       stateManager.transition("1.1.2", "doing");

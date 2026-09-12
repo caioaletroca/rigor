@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, cpSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, cpSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "../../server.js";
@@ -19,6 +19,8 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 function makeProject(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `rigor-${name}-`));
   execFileSync("git", ["init", "--quiet", root]);
+  mkdirSync(join(root, ".rigor"));
+  writeFileSync(join(root, ".rigor", "config.yaml"), "workspace:\n  allow_override: true\n");
   cpSync(join(import.meta.dirname, "..", "..", "plan", "__tests__", "fixtures", "sample-plan.md"), join(root, "plan.md"));
   return root;
 }
@@ -42,8 +44,8 @@ describe("multi-project server isolation", () => {
     const status = (params: unknown) => tools.cycle_status.handler(params);
     const diagnose = (params: unknown) => tools.cycle_diagnose.handler(params);
 
-    const first = await init({ plan_path: "plan.md" });
-    const second = await init({ plan_path: "plan.md", project_root: projectB });
+    const first = await init({ plan_path: "plan.md", allow_shared_workspace: true });
+    const second = await init({ plan_path: "plan.md", project_root: projectB, allow_shared_workspace: true });
     const firstSummary = JSON.parse(text(first as { content: Array<{ type: string; text?: string }> }));
     const secondSummary = JSON.parse(text(second as { content: Array<{ type: string; text?: string }> }));
 
@@ -73,7 +75,7 @@ describe("multi-project server isolation", () => {
     const serverContext = createServer(serverRoot);
     const tools = (serverContext.server as unknown as { _registeredTools: Record<string, { handler: (params?: unknown) => Promise<unknown> }> })._registeredTools;
 
-    await tools.cycle_init.handler({ plan_path: "plan.md", project_root: worktree });
+    await tools.cycle_init.handler({ plan_path: "plan.md", project_root: worktree, allow_shared_workspace: true });
 
     const status = await tools.cycle_status.handler({ project_root: worktree });
     const statusText = text(status as { content: Array<{ type: string; text?: string }> });
@@ -106,7 +108,7 @@ describe("multi-project server isolation", () => {
     const serverContext = createServer(project);
     const tools = (serverContext.server as unknown as { _registeredTools: Record<string, { handler: (params?: unknown) => Promise<unknown> }> })._registeredTools;
 
-    const legacy = await tools.cycle_init.handler({ plan_path: "plan.md" });
+    const legacy = await tools.cycle_init.handler({ plan_path: "plan.md", allow_shared_workspace: true });
     const summary = JSON.parse(text(legacy as { content: Array<{ type: string; text?: string }> }));
     expect(summary.project_root).toBe(project);
     expect(summary.cycle_id).toBeDefined();
@@ -128,8 +130,8 @@ describe("multi-project server isolation", () => {
     const contextB = registry.getByRoot(projectB);
 
     await Promise.all([
-      Promise.resolve(handleCycleInit({ plan_path: join(projectA, "plan.md") }, contextA.stateManager, projectA, registry)),
-      Promise.resolve(handleCycleInit({ plan_path: join(projectB, "plan.md") }, contextB.stateManager, projectB, registry)),
+      Promise.resolve(handleCycleInit({ plan_path: join(projectA, "plan.md"), allow_shared_workspace: true }, contextA.stateManager, projectA, registry)),
+      Promise.resolve(handleCycleInit({ plan_path: join(projectB, "plan.md"), allow_shared_workspace: true }, contextB.stateManager, projectB, registry)),
     ]);
 
     const statuses = await Promise.all([

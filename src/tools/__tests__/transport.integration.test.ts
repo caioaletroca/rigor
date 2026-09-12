@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { withHarnessSessions } from "../../testing/transport-harness.js";
@@ -8,6 +8,8 @@ import { withHarnessSessions } from "../../testing/transport-harness.js";
 function makeFixture(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `rigor-transport-${name}-`));
   execFileSync("git", ["init", "--quiet", root]);
+  mkdirSync(join(root, ".rigor"));
+  writeFileSync(join(root, ".rigor", "config.yaml"), "workspace:\n  allow_override: true\n");
   cpSync(
     join(import.meta.dirname, "..", "..", "plan", "__tests__", "fixtures", "sample-plan.md"),
     join(root, "plan.md"),
@@ -38,7 +40,7 @@ describe("cross-client transport harness", () => {
       { projectRoot: projectC, clientStyle: "hermes" },
     ], async (sessions) => {
       const initialized = await Promise.all(
-        sessions.map((session) => session.call("cycle_init", { plan_path: "plan.md" })),
+        sessions.map((session) => session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true })),
       );
       expect(initialized.every((result) => !result.isError)).toBe(true);
 
@@ -87,7 +89,7 @@ describe("cross-client transport harness", () => {
           clientStyle: (["opencode", "claude", "hermes"] as const)[index],
         })),
       async (sessions) => {
-        const initialized = await Promise.all(sessions.map((session) => session.call("cycle_init", { plan_path: "plan.md" })));
+        const initialized = await Promise.all(sessions.map((session) => session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true })));
         expect(initialized.every((result) => !result.isError)).toBe(true);
         const statuses = await Promise.all(sessions.map((session) => session.call("cycle_status")));
         const statusText = statuses.map(text);
