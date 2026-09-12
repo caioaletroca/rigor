@@ -20,14 +20,14 @@ export type {
   ReviewSubmitParams,
   AcceptStartParams,
   AcceptSubmitParams,
-} from "./review.js";
+} from "../services/review-lifecycle.js";
 export {
   handleReviewStart,
   handleReviewSubmit,
   handleAcceptStart,
   handleAcceptSubmit,
   handlePhaseAdvance,
-} from "./review.js";
+} from "../services/review-lifecycle.js";
 
 export { registerRecoveryTools } from "./recovery.js";
 export type {

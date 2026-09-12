@@ -49,7 +49,8 @@ const {
   handleAcceptStart,
   handleAcceptSubmit,
   handlePhaseAdvance,
-} = await import("../review.js");
+} = await import("../../services/review-lifecycle.js");
+const { registerReviewTools } = await import("../review.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,6 +180,18 @@ const config: RigorConfig = DEFAULTS;
 // ---------------------------------------------------------------------------
 
 describe("review tools", async () => {
+  it("registers review lifecycle MCP schemas", () => {
+    const tool = vi.fn();
+    const registerTool = vi.fn();
+
+    registerReviewTools({ tool, registerTool } as never, {} as StateManager, {} as EvidenceManager, "C:/project");
+
+    expect(tool.mock.calls.map(([name]) => name)).toEqual(["review_start", "review_submit", "accept_start", "accept_submit"]);
+    expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["phase_advance"]);
+    expect(tool.mock.calls[0][2].epic_id.safeParse("").success).toBe(true);
+    expect(tool.mock.calls[3][2].user_approved.safeParse(undefined).success).toBe(true);
+  });
+
   let tempDir: string;
   let stateManager: StateManager;
   let evidenceManager: EvidenceManager;
