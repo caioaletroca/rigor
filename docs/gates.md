@@ -6,9 +6,10 @@ Gates are mandatory quality checkpoints in the project cycle. Each gate
 has deterministic entry/exit criteria enforced by code, not prompts.
 
 Gates are domain-agnostic: the core gate system runs generic checks defined
-by **domain packs** (e.g. `software`) and resolved via **lang pack** variables
-(e.g. `react`, `go`, `typescript`). The software domain pack is the primary
-example, but the same gate infrastructure works for any domain.
+by **domain packs** (for example, `software`). The software domain pack is
+the primary example, but the same gate infrastructure works for any domain.
+Language packs are discoverable workflow skills that offer language-specific
+guidance; they are not runtime configuration layers.
 
 A gate has three parts:
 
@@ -20,10 +21,11 @@ A gate has three parts:
 
 ### Gate 0: Implementation (per task)
 
-Gate 0 runs a generic list of `checks[]` defined by the active domain pack
-and resolved with lang pack variables. The software domain pack provides
+Gate 0 runs the generic `checks[]` configured by the active domain pack and
+any higher-precedence configuration layer. The software domain pack provides
 checks for tests, lint, accessibility, visual regression, e2e, and
-performance. Checks with empty/unresolved commands are skipped automatically.
+performance. Empty-command checks are not run; if no checks run, Gate 0
+fails unless `gates.gate_0.allow_empty` is enabled.
 
 **Entry criteria (deterministic):**
 - Task exists in plan
@@ -69,23 +71,23 @@ Frontend quality checks (accessibility, visual regression, e2e, performance)
 are defined as checks in the **software domain pack** (`skills/domain/software/defaults.yaml`)
 and run through Gate 0's generic check runner. They are not separate gates.
 
-Each check uses a `${lang.*}` variable placeholder. When the lang pack (e.g.
-React) provides the corresponding command, the check runs. When the variable
-resolves to an empty string (no lang pack loaded, or the lang pack does not
-provide that command), Gate 0 skips the check automatically.
+The selected domain pack supplies these checks through the configuration
+cascade. Configure their commands in the global or project configuration as
+needed. A check with an empty command is not run; it does not make Gate 0
+pass when no other check runs unless `gates.gate_0.allow_empty` is enabled.
 
 **Checks defined in the software domain pack:**
 
-| Check | Variable | React default |
-|-------|----------|---------------|
-| Accessibility | `${lang.a11y_command}` | `npx axe-core-cli` |
-| Visual regression | `${lang.visual_command}` | `npx vitest run --project visual` |
-| E2E tests | `${lang.e2e_command}` | `npx playwright test` |
-| Performance | `${lang.perf_command}` | `npx lighthouse-ci` |
+| Check |
+|-------|
+| Accessibility |
+| Visual regression |
+| E2E tests |
+| Performance |
 
-**Overriding:** Set the command in `.rigor/config.yaml` under
-`gates.gate_0.checks` to replace the domain pack defaults entirely, or
-provide a lang pack with different variable values.
+**Overriding:** Set `gates.gate_0.checks` in `.rigor/config.yaml` to replace
+the domain pack's check list. Project configuration takes precedence over
+the selected domain defaults.
 
 ---
 

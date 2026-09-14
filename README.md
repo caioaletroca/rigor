@@ -184,12 +184,11 @@ gates:
 
 ## Configuration
 
-All configuration lives in `.rigor/config.yaml`. Values cascade: **core defaults < domain pack < lang pack < user config**.
+Project configuration lives in `.rigor/config.yaml`. Values cascade in precedence order: **core defaults < global config < selected domain defaults < project config < environment overrides**. The active domain is selected with `domain` in project config.
 
 ```yaml
-# Domain and language
+# Active domain
 domain: software
-lang: ts
 
 # Gate thresholds
 gates:
@@ -259,8 +258,8 @@ sync:
 
 Rigor is **domain-agnostic**. The gate system doesn't care if you're building software, writing papers, or running simulations. A gate is just a command that exits 0 or 1.
 
-**Domain packs** define *what* checks matter (tests, lint, accessibility, etc.).  
-**Language packs** define *how* to run those checks (`npx vitest`, `go test`, `pytest`, etc.).
+**Domain packs** provide defaults for the checks that matter (tests, lint, accessibility, and more).  
+**Language packs** are discoverable workflow guidance for language-specific implementation, testing, linting, and review; they do not participate in runtime configuration loading.
 
 ### Shipped domain packs
 
@@ -272,13 +271,15 @@ A domain pack can also ship **domain-scoped skills** under `skills/domain/<domai
 
 ### Shipped language packs
 
-| Lang | Test | Lint | Extras |
-|------|------|------|--------|
-| `go` | `go test -race ./...` | `golangci-lint run` | gosec, govulncheck, staticcheck |
-| `ts` | `npx vitest run --coverage` | `npx eslint .` | tsc, prettier |
-| `react` | `npx vitest run --coverage` | `npx eslint .` | axe-core, playwright, lighthouse, impeccable |
-| `py` | `pytest --cov` | `ruff check .` | mypy/pyright |
-| `csharp` | `dotnet test --collect:"XPlat Code Coverage"` | `dotnet format --verify-no-changes` | dotnet-security-guard |
+Language packs are discovered as workflow skills and provide language-specific guidance; load the relevant `rigor:lang:<name>` skill when working in that language.
+
+| Lang | Workflow focus |
+|------|----------------|
+| `go` | Go implementation, testing, linting, and review tools |
+| `ts` | TypeScript/Node.js implementation, testing, linting, and review tools |
+| `react` | React/Next.js implementation, testing, linting, and frontend quality tools |
+| `py` | Python implementation, testing, linting, and review tools |
+| `csharp` | C#/.NET implementation, testing, linting, and review tools |
 
 Create your own with `new_lang_pack` or `new_domain`.
 
