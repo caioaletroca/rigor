@@ -102,7 +102,7 @@ describe("multi-project server isolation", () => {
     expect(text(serverStatus as { content: Array<{ type: string; text?: string }> })).toContain("No active cycle");
   });
 
-  it("supports legacy fallback calls and rejects invalid or ambiguous relative paths", async () => {
+  it("supports legacy fallback calls and rejects relative project_root values", async () => {
     const project = makeProject("compatibility");
     roots.push(project);
     const serverContext = createServer(project);

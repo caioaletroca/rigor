@@ -9,6 +9,7 @@
  * phase_advance — advances to the next phase when all epics are done.
  */
 
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -21,16 +22,10 @@ import { ArchiveManager } from "../archive/manager.js";
 import { checkGate8Exit, checkGate9Exit, runCustomGates, Gate9Criteria } from "../gates/index.js";
 import type { ReviewFindings, AcceptanceCriterion } from "../gates/index.js";
 import type { ProjectContextRegistry } from "../context.js";
-
-// ---------------------------------------------------------------------------
-// Response helpers
-// ---------------------------------------------------------------------------
+import { responseResult } from "./response.js";
 
 function textResult(text: string, isError?: boolean): CallToolResult {
-  return {
-    content: [{ type: "text", text }],
-    ...(isError ? { isError: true } : {}),
-  };
+  return responseResult(text, { error: isError });
 }
 
 // ---------------------------------------------------------------------------
@@ -80,8 +75,12 @@ export async function handleReviewStart(
 
   // A submitted review can be updated directly with review_submit after fixes.
   // Refusing to restart here prevents orchestrators from spawning a fresh full
-  // reviewer set for the same epic by accident.
+  // reviewer set for the same epic by accident. Recover a pending epic first so
+  // the direct resubmission path can satisfy review_submit's status precondition.
   if (epic.gate_8.evidence_path) {
+    if (!epic.gate_8.passed && epic.status === "pending") {
+      stateManager.transition(params.epic_id, "doing");
+    }
     const nextStep = epic.gate_8.passed
       ? `Gate 8 already passed. Run accept_start for epic "${params.epic_id}".`
       : `Gate 8 already has failed review evidence. Fix the saved findings, then call review_submit directly without another review_start.`;
@@ -590,6 +589,7 @@ export function registerReviewTools(
   const archiveManager = new ArchiveManager(projectRoot);
   const projectRootParam = z
     .string()
+    .refine(isAbsolute, "project_root must be an absolute path")
     .optional()
     .describe("Absolute Git repository root; defaults to the server --project-root");
   // Handlers receive `null` for config so they reload .rigor/config.yaml fresh

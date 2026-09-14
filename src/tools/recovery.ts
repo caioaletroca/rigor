@@ -12,7 +12,7 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -1161,6 +1161,7 @@ export function registerRecoveryTools(
     registry?.getByRoot(requestRoot ?? stateManager.load()?.project_root ?? projectRoot);
   const projectRootParam = z
     .string()
+    .refine(isAbsolute, "project_root must be an absolute path")
     .optional()
     .describe("Absolute Git repository root; defaults to the server --project-root");
   server.tool(
