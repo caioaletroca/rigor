@@ -55,15 +55,28 @@ function prepareReviewStart(params: ReviewStartParams, stateManager: StateManage
   try { epic = stateManager.getEpic(params.epic_id); } catch (error: unknown) { if (error instanceof EntityNotFoundError) return textResult(`Epic "${params.epic_id}" not found.`, true); throw error; }
   if (epic.tasks.length === 0) return textResult(`Epic "${params.epic_id}" has no tasks — cannot review an epic with no implemented work. Elaborate its tasks into the plan and run cycle_reload before review.`, true);
   if (epic.gate_8.evidence_path) return textResult(epic.gate_8.passed ? `Gate 8 already passed. Run accept_start for epic "${params.epic_id}".` : "Gate 8 already has failed review evidence. Fix the saved findings, then call review_submit directly without another review_start.", true);
-  const incomplete = epic.tasks.filter((task) => task.status !== "done" || !task.gate_0.passed).map((task) => `${task.id} (${task.name}): status=${task.status}, gate_0=${task.gate_0.passed ? "pass" : "fail"}`);
-  if (incomplete.length) return textResult([`Cannot start review for epic "${params.epic_id}" — incomplete tasks:`, ...incomplete.map((task) => `  - ${task}`)].join("\n"), true);
+  const incomplete = incompleteTaskDetails(epic);
+  if (incomplete.length) return incompleteTasksResult(params.epic_id, incomplete, "start review");
   return { ready: true };
 }
+
+function incompleteTaskDetails(epic: { tasks: Array<{ id: string; name: string; status: string; gate_0: { passed: boolean } }> }): string[] {
+  return epic.tasks
+    .filter((task) => task.status !== "done" || !task.gate_0.passed)
+    .map((task) => `${task.id} (${task.name}): status=${task.status}, gate_0=${task.gate_0.passed ? "pass" : "fail"}`);
+}
+
+function incompleteTasksResult(epicId: string, incomplete: string[], action: string): CallToolResult {
+  return textResult([`Cannot ${action} for epic "${epicId}" — incomplete tasks:`, ...incomplete.map((task) => `  - ${task}`)].join("\n"), true);
+}
+
 export function handleReviewSubmit(params: ReviewSubmitParams, stateManager: StateManager, evidenceManager: EvidenceManager, config: RigorConfig | null, projectRoot: string): Promise<CallToolResult> { return withProjectMutationLock(projectRoot, async () => reviewSubmit(params, stateManager, evidenceManager, config, projectRoot)); }
 function reviewSubmit(params: ReviewSubmitParams, stateManager: StateManager, evidenceManager: EvidenceManager, config: RigorConfig | null, projectRoot: string): CallToolResult {
   const cfg = config ?? loadConfig(projectRoot); if (stateManager.load() === null) return textResult("No active cycle. Run cycle_init first.", true);
   let epic; try { epic = stateManager.getEpic(params.epic_id); } catch (error: unknown) { if (error instanceof EntityNotFoundError) return textResult(`Epic "${params.epic_id}" not found.`, true); throw error; }
   if (epic.status !== "doing") return textResult(`Epic "${params.epic_id}" is in "${epic.status}" status. Only "doing" epics can receive review submissions. Run review_start first.`, true);
+  const incomplete = incompleteTaskDetails(epic);
+  if (incomplete.length) return incompleteTasksResult(params.epic_id, incomplete, "submit review");
   let parsed: unknown; try { parsed = JSON.parse(params.submissions); } catch { return textResult("Invalid submissions JSON.", true); }
   const validated = Gate8Submissions.safeParse(parsed); if (!validated.success) return textResult(`Invalid submissions JSON: ${validated.error.message}`, true);
   const submissions: ReviewFindings[] = validated.data;

@@ -47,6 +47,32 @@ describe("cross-client transport harness", () => {
     }
   });
 
+  it("rejects relative project roots for cycle and sync tools", async () => {
+    const project = makeFixture("relative-root");
+    roots.push(project);
+    const session = await createHarnessSession(project, "opencode");
+
+    try {
+      const requests: Array<[string, Record<string, unknown>]> = [
+        ["cycle_init", { plan_path: "plan.md", project_root: "relative-root" }],
+        ["cycle_reload", { project_root: "relative-root" }],
+        ["cycle_status", { project_root: "relative-root" }],
+        ["sync_status", { project_root: "relative-root" }],
+        ["sync_retry", { provider: "test", project_root: "relative-root" }],
+        ["sync_replay", { provider: "test", project_root: "relative-root" }],
+        ["sync_enable", { provider: "test", project_root: "relative-root" }],
+      ];
+
+      for (const [tool, params] of requests) {
+        const result = await session.call(tool, params);
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("project_root must be an absolute path");
+      }
+    } finally {
+      await session.close();
+    }
+  });
+
   it("runs concurrent client-style lifecycle, gate, and recovery flows independently", async () => {
     const projectA = makeFixture("a");
     const projectB = makeFixture("b");

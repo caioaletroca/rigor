@@ -20,6 +20,7 @@ import { isGate0AttemptActive, isTaskCompletionActive } from "../services/task-l
 import { ProjectContextRegistry, resolveProjectRoot as resolveCanonicalProjectRoot } from "../context.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
 import { responseResult } from "./response.js";
+import { projectRootSchema } from "./lifecycle.js";
 import { withProjectMutationLock } from "../lifecycle/index.js";
 
 // ---------------------------------------------------------------------------
@@ -499,7 +500,7 @@ export function registerCycleTools(
     "Initialize a new development cycle from a plan.md file",
     {
       plan_path: z.string().describe("Absolute plan path, or relative to project_root or the legacy server --project-root fallback"),
-      project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional().describe("Absolute Git repository root; takes precedence over the server --project-root fallback"),
+      project_root: projectRootSchema.describe("Absolute Git repository root; takes precedence over the server --project-root fallback"),
       allow_shared_workspace: z.boolean().optional(),
     },
     async (params) => {
@@ -523,7 +524,7 @@ export function registerCycleTools(
          .string()
          .optional()
          .describe("Absolute plan path, or relative to project_root; defaults to the stored plan_path"),
-       project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional().describe("Absolute Git repository root; overrides the server default and anchors relative plan_path"),
+       project_root: projectRootSchema.describe("Absolute Git repository root; overrides the server default and anchors relative plan_path"),
     },
     async (params) => {
       const root = params.project_root ?? projectRoot;
@@ -538,7 +539,7 @@ export function registerCycleTools(
       description: "Show the current cycle status, progress, and active task",
       inputSchema: z
         .object({
-          project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional().describe("Absolute Git repository root; defaults to the server --project-root"),
+          project_root: projectRootSchema,
         })
         .default({}),
     },

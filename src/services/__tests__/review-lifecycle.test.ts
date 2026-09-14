@@ -190,6 +190,27 @@ describe("review lifecycle service", () => {
     expect(evidenceManager.load("gate_8", "1.1")?.review_submissions).toEqual(passingSubmissions());
   });
 
+  it("revalidates task completion before saving Gate 8 evidence", async () => {
+    stateManager.init("test-plan.md", makePhases());
+    await handleReviewStart({ epic_id: "1.1" }, stateManager, DEFAULTS, tempDir);
+    const state = stateManager.load()!;
+    state.phases[0].epics[0].tasks[0].gate_0.passed = false;
+    stateManager.save(state);
+
+    const result = await handleReviewSubmit(
+      { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
+      stateManager,
+      evidenceManager,
+      DEFAULTS,
+      tempDir,
+    );
+
+    expect(result.isError).toBe(true);
+    expect(extractText(result)).toContain("incomplete tasks");
+    expect(stateManager.getEpic("1.1").gate_8.passed).toBe(false);
+    expect(evidenceManager.load("gate_8", "1.1")).toBeNull();
+  });
+
   it("rejects malformed review submissions without mutating Gate 8 state or evidence", async () => {
     stateManager.init("test-plan.md", makePhases());
     await handleReviewStart({ epic_id: "1.1" }, stateManager, DEFAULTS, tempDir);

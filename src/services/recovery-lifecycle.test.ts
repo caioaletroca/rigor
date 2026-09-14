@@ -5,7 +5,7 @@
  * Each test gets a fresh temp directory so state files don't collide.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   mkdtempSync,
   rmSync,
@@ -30,6 +30,7 @@ import {
 import type { CycleState } from "../state/index.js";
 import { DEFAULTS } from "../config/index.js";
 import type { RigorConfig } from "../config/index.js";
+import * as taskLifecycle from "./task-lifecycle.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -182,6 +183,18 @@ describe("recovery tools", () => {
 
       // Verify state is NOT deleted
       expect(stateManager.load()).not.toBeNull();
+    });
+
+    it("rejects reset while an in-memory task completion is active", async () => {
+      writeState(tempDir, makeCycleState());
+      const active = vi.spyOn(taskLifecycle, "isTaskCompletionActive").mockReturnValue(true);
+
+      const result = await handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir);
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("Gate 0 completion for task 1.1.1 is executing");
+      expect(stateManager.load()).not.toBeNull();
+      active.mockRestore();
     });
 
     it("deletes state and evidence when confirm is true", async () => {

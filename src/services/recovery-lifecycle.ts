@@ -10,7 +10,7 @@ import type { EvidenceManager } from "../evidence/index.js";
 import { DEFAULTS } from "../config/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { withProjectMutationLock } from "../lifecycle/index.js";
-import { isGate0AttemptActive } from "./task-lifecycle.js";
+import { isGate0AttemptActive, isTaskCompletionActive } from "./task-lifecycle.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -65,6 +65,12 @@ function handleCycleResetUnlocked(
         ) {
           return textResult(
             `Cannot reset cycle while Gate 0 attempt ${attempt.id} for task ${task.id} is executing.`,
+            true,
+          );
+        }
+        if (isTaskCompletionActive(projectRoot, task.id)) {
+          return textResult(
+            `Cannot reset cycle while Gate 0 completion for task ${task.id} is executing.`,
             true,
           );
         }
