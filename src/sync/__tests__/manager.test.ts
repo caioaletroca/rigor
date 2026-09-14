@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SyncManager } from "../manager.js";
@@ -103,6 +103,30 @@ describe("SyncManager", () => {
     expect(p1.syncFn).toHaveBeenCalled();
     expect(p2.syncFn).toHaveBeenCalled();
     expect(p3.syncFn).toHaveBeenCalled();
+  });
+
+  it("returns a failure result when delivery persistence fails without changing provider health", async () => {
+    const provider = mockProvider("healthy");
+    const manager = new SyncManager(tmpDir, [provider]);
+    mkdirSync(join(tmpDir, ".rigor", "sync", "deliveries.json"));
+
+    const results = await manager.dispatch(makeEvent());
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        provider: "healthy",
+        success: false,
+        error: expect.stringContaining("Could not persist delivery outcome:"),
+      }),
+    ]);
+    expect(manager.getProviderHealth()).toEqual([
+      expect.objectContaining({
+        successes: 1,
+        failures: 0,
+        consecutive_failures: 0,
+        circuit_open: false,
+      }),
+    ]);
   });
 
   // -----------------------------------------------------------------------

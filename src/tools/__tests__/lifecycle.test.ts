@@ -15,9 +15,12 @@ function context(): RequestContext {
 }
 
 describe("lifecycle adapter", () => {
-  it("uses the shared optional project-root schema", () => {
+  it("uses the shared optional absolute project-root schema", () => {
     expect(projectRootSchema.parse(undefined)).toBeUndefined();
     expect(projectRootSchema.parse(projectRoot)).toBe(projectRoot);
+    expect(() => projectRootSchema.parse("relative-project")).toThrow(
+      "project_root must be an absolute path",
+    );
   });
 
   it("resolves an explicit request root through the registry", () => {

@@ -1,5 +1,6 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { responseResult } from "../tools/lifecycle.js";
+import { z } from "zod";
+import { responseResult } from "../tools/response.js";
 import type { StateManager } from "../state/index.js";
 import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
@@ -16,6 +17,19 @@ export interface ReviewSubmitParams { epic_id: string; submissions: string; }
 export interface AcceptStartParams { epic_id: string; }
 export interface AcceptSubmitParams { epic_id: string; criteria: string; user_approved: boolean; }
 
+const Gate8Submissions = z.array(z.object({
+  reviewer: z.string(),
+  verdict: z.enum(["PASS", "ISSUES_FOUND"]),
+  findings: z.array(z.object({
+    severity: z.enum(["critical", "high", "medium", "low"]),
+    file: z.string(),
+    title: z.string(),
+    description: z.string(),
+    suggestion: z.string(),
+    source: z.string(),
+  })),
+}));
+
 export async function handleReviewStart(params: ReviewStartParams, stateManager: StateManager, config: RigorConfig | null, projectRoot: string): Promise<CallToolResult> {
   const cfg = config ?? loadConfig(projectRoot);
   const prepared = await withProjectMutationLock(projectRoot, async () => prepareReviewStart(params, stateManager));
@@ -27,6 +41,8 @@ export async function handleReviewStart(params: ReviewStartParams, stateManager:
     return textResult(lines.join("\n"), true);
   }
   return withProjectMutationLock(projectRoot, async () => {
+    const revalidated = prepareReviewStart(params, stateManager);
+    if ("content" in revalidated) return revalidated;
     const epic = stateManager.getEpic(params.epic_id);
     if (epic.status === "pending") stateManager.transition(params.epic_id, "doing");
     return textResult([`Review started for epic ${params.epic_id}: ${epic.name}`, `Tasks: ${epic.tasks.length} (all done, all passed Gate 0)`, `Expected reviewers: ${cfg.gates.gate_8.reviewers.join(", ")}`].join("\n"));
@@ -48,7 +64,9 @@ function reviewSubmit(params: ReviewSubmitParams, stateManager: StateManager, ev
   const cfg = config ?? loadConfig(projectRoot); if (stateManager.load() === null) return textResult("No active cycle. Run cycle_init first.", true);
   let epic; try { epic = stateManager.getEpic(params.epic_id); } catch (error: unknown) { if (error instanceof EntityNotFoundError) return textResult(`Epic "${params.epic_id}" not found.`, true); throw error; }
   if (epic.status !== "doing") return textResult(`Epic "${params.epic_id}" is in "${epic.status}" status. Only "doing" epics can receive review submissions. Run review_start first.`, true);
-  let submissions: ReviewFindings[]; try { submissions = JSON.parse(params.submissions) as ReviewFindings[]; } catch { return textResult("Invalid submissions JSON.", true); }
+  let parsed: unknown; try { parsed = JSON.parse(params.submissions); } catch { return textResult("Invalid submissions JSON.", true); }
+  const validated = Gate8Submissions.safeParse(parsed); if (!validated.success) return textResult(`Invalid submissions JSON: ${validated.error.message}`, true);
+  const submissions: ReviewFindings[] = validated.data;
   const result = checkGate8Exit(submissions, cfg); const evidence: GateEvidence = { gate: "gate_8", entity_id: params.epic_id, passed: result.passed, timestamp: new Date().toISOString(), checks: result.checks, review_submissions: submissions }; const path = evidenceManager.save(evidence);
   const state = stateManager.load(); if (state) { for (const phase of state.phases) for (const current of phase.epics) if (current.id === params.epic_id) current.gate_8 = { passed: result.passed, evidence_path: path }; stateManager.save(state); }
   const lines = [result.passed ? `Gate 8 PASSED for epic ${params.epic_id}.` : `Gate 8 FAILED for epic ${params.epic_id}.`, ...(result.passed ? [] : ["Review findings were saved. After remediation, call review_submit directly without another review_start."]), "", "Checks:", ...result.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`)];
@@ -59,11 +77,31 @@ export function handleAcceptStart(params: AcceptStartParams, stateManager: State
   if (!epic.gate_8.passed) return textResult(`Epic "${params.epic_id}" has not passed Gate 8 (code review). Run review_submit first.`, true); return textResult([`Acceptance started for epic ${params.epic_id}: ${epic.name}`, "Gate 8: passed", "", "Validate the acceptance criteria for this epic and submit via accept_submit."].join("\n"));
 }
 export async function handleAcceptSubmit(params: AcceptSubmitParams, stateManager: StateManager, evidenceManager: EvidenceManager, config: RigorConfig | null, projectRoot: string): Promise<CallToolResult> {
-  const cfg = config ?? loadConfig(projectRoot); if (stateManager.load() === null) return textResult("No active cycle. Run cycle_init first.", true); let epic; try { epic = stateManager.getEpic(params.epic_id); } catch (error: unknown) { if (error instanceof EntityNotFoundError) return textResult(`Epic "${params.epic_id}" not found.`, true); throw error; }
-  if (!epic.gate_8.passed) return textResult(`Epic "${params.epic_id}" has not passed Gate 8 (code review). Run review_submit first.`, true); let parsed: unknown; try { parsed = JSON.parse(params.criteria); } catch { return textResult("Invalid criteria JSON.", true); } const validated = Gate9Criteria.safeParse(parsed); if (!validated.success) return textResult(`Invalid criteria JSON: ${validated.error.message}`, true); const criteria: AcceptanceCriterion[] = validated.data; const result = checkGate9Exit(criteria, params.user_approved, cfg);
-  const evidence: GateEvidence = { gate: "gate_9", entity_id: params.epic_id, passed: result.passed, timestamp: new Date().toISOString(), checks: result.checks }; const path = evidenceManager.save(evidence); const state = stateManager.load(); if (state) { for (const phase of state.phases) for (const current of phase.epics) if (current.id === params.epic_id) current.gate_9 = { passed: result.passed, evidence_path: path }; stateManager.save(state); }
-  if (result.passed) { const custom = await runCustomGates("post_accept", params.epic_id, cfg, projectRoot); if (!custom.passed) { evidenceManager.save({ gate: "custom_post_accept", entity_id: params.epic_id, passed: false, timestamp: new Date().toISOString(), checks: custom.checks }); return textResult([`Epic ${params.epic_id} passed Gate 9 but failed post_accept custom gate.`, "", ...custom.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`), "", `Evidence: ${path}`].join("\n"), true); } stateManager.transition(params.epic_id, "done"); }
-  const lines = [result.passed ? `Gate 9 PASSED for epic ${params.epic_id}. Epic is now done.` : `Gate 9 FAILED for epic ${params.epic_id}.`, "", "Checks:", ...result.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`), "", `Criteria met: ${result.criteria_met}/${result.criteria_total}`]; if (!result.passed) { const unmet = criteria.filter((criterion) => !criterion.met); if (unmet.length) lines.push("", "Unmet criteria:", ...unmet.map((criterion) => `  - ${criterion.criterion}`)); if (cfg.gates.gate_9.require_user_approval && !params.user_approved) lines.push("", "User approval: required but not given"); } lines.push("", `Evidence: ${path}`); return textResult(lines.join("\n"), !result.passed);
+  const cfg = config ?? loadConfig(projectRoot);
+  const prepared = await withProjectMutationLock(projectRoot, async () => prepareAcceptSubmit(params, stateManager));
+  if ("content" in prepared) return prepared;
+  let parsed: unknown; try { parsed = JSON.parse(params.criteria); } catch { return textResult("Invalid criteria JSON.", true); }
+  const validated = Gate9Criteria.safeParse(parsed); if (!validated.success) return textResult(`Invalid criteria JSON: ${validated.error.message}`, true);
+  const criteria: AcceptanceCriterion[] = validated.data;
+  const result = checkGate9Exit(criteria, params.user_approved, cfg);
+  const custom = result.passed ? await runCustomGates("post_accept", params.epic_id, cfg, projectRoot) : null;
+  return withProjectMutationLock(projectRoot, async () => {
+    const revalidated = prepareAcceptSubmit(params, stateManager);
+    if ("content" in revalidated) return revalidated;
+    const evidence: GateEvidence = { gate: "gate_9", entity_id: params.epic_id, passed: result.passed, timestamp: new Date().toISOString(), checks: result.checks };
+    const path = evidenceManager.save(evidence);
+    const state = stateManager.load(); if (state) { for (const phase of state.phases) for (const current of phase.epics) if (current.id === params.epic_id) current.gate_9 = { passed: result.passed, evidence_path: path }; stateManager.save(state); }
+    if (custom && !custom.passed) { evidenceManager.save({ gate: "custom_post_accept", entity_id: params.epic_id, passed: false, timestamp: new Date().toISOString(), checks: custom.checks }); return textResult([`Epic ${params.epic_id} passed Gate 9 but failed post_accept custom gate.`, "", ...custom.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`), "", `Evidence: ${path}`].join("\n"), true); }
+    if (result.passed) stateManager.transition(params.epic_id, "done");
+    const lines = [result.passed ? `Gate 9 PASSED for epic ${params.epic_id}. Epic is now done.` : `Gate 9 FAILED for epic ${params.epic_id}.`, "", "Checks:", ...result.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`), "", `Criteria met: ${result.criteria_met}/${result.criteria_total}`]; if (!result.passed) { const unmet = criteria.filter((criterion) => !criterion.met); if (unmet.length) lines.push("", "Unmet criteria:", ...unmet.map((criterion) => `  - ${criterion.criterion}`)); if (cfg.gates.gate_9.require_user_approval && !params.user_approved) lines.push("", "User approval: required but not given"); } lines.push("", `Evidence: ${path}`); return textResult(lines.join("\n"), !result.passed);
+  });
+}
+function prepareAcceptSubmit(params: AcceptSubmitParams, stateManager: StateManager): CallToolResult | { ready: true } {
+  if (stateManager.load() === null) return textResult("No active cycle. Run cycle_init first.", true);
+  let epic; try { epic = stateManager.getEpic(params.epic_id); } catch (error: unknown) { if (error instanceof EntityNotFoundError) return textResult(`Epic "${params.epic_id}" not found.`, true); throw error; }
+  if (!epic.gate_8.passed) return textResult(`Epic "${params.epic_id}" has not passed Gate 8 (code review). Run review_submit first.`, true);
+  if (epic.status !== "doing") return textResult(`Epic "${params.epic_id}" is in "${epic.status}" status. Only "doing" epics can receive acceptance submissions. Run accept_start first.`, true);
+  return { ready: true };
 }
 export function handlePhaseAdvance(stateManager: StateManager, evidenceManager?: EvidenceManager, archiveManager?: ArchiveManager, projectRoot = stateManager.load()?.project_root): Promise<CallToolResult> { if (!projectRoot) return Promise.resolve(phaseAdvance(stateManager, evidenceManager, archiveManager)); return withProjectMutationLock(projectRoot, async () => phaseAdvance(stateManager, evidenceManager, archiveManager)); }
 function phaseAdvance(stateManager: StateManager, evidenceManager?: EvidenceManager, archiveManager?: ArchiveManager): CallToolResult {

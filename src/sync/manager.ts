@@ -183,7 +183,11 @@ export class SyncManager {
 
     const events = this.getJournalEvents();
     const eventsToRetry = events
-      .filter((event) => this.deliveries.get(this.deliveryKey(providerName, event.event_id))?.success === false)
+      .filter(
+        (event) =>
+          this.deliveries.get(this.deliveryKey(providerName, event.event_id))
+            ?.success !== true,
+      )
       .slice(-count);
 
     const results: SyncResult[] = [];
@@ -343,16 +347,33 @@ export class SyncManager {
     return new Map(Object.entries(JSON.parse(content) as Record<string, DeliveryOutcome>));
   }
 
-  private recordDelivery(providerName: string, eventId: string, success: boolean): void {
-    this.deliveries.set(this.deliveryKey(providerName, eventId), {
+  private recordDelivery(
+    providerName: string,
+    eventId: string,
+    success: boolean,
+  ): string | undefined {
+    const key = this.deliveryKey(providerName, eventId);
+    const outcome = {
       success,
       updated_at: new Date().toISOString(),
-    });
-    writeFileSync(
-      this.deliveryPath,
-      JSON.stringify(Object.fromEntries(this.deliveries), null, 2) + "\n",
-      "utf-8",
-    );
+    };
+    const deliveries = new Map(this.deliveries);
+    deliveries.set(key, outcome);
+
+    try {
+      writeFileSync(
+        this.deliveryPath,
+        JSON.stringify(Object.fromEntries(deliveries), null, 2) + "\n",
+        "utf-8",
+      );
+      this.deliveries.set(key, outcome);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(
+        `[rigor:sync] could not persist delivery for provider "${providerName}": ${message}\n`,
+      );
+      return `Could not persist delivery outcome: ${message}`;
+    }
   }
 
   /** Append event as a JSON line to the journal file. */
@@ -376,13 +397,25 @@ export class SyncManager {
 
       this.recordSuccess(provider.name);
 
-      const result = {
+      const deliveryError = this.recordDelivery(
+        provider.name,
+        event.event_id,
+        true,
+      );
+      if (deliveryError) {
+        return {
+          provider: provider.name,
+          success: false,
+          error: deliveryError,
+          duration_ms: Date.now() - start,
+        };
+      }
+
+      return {
         provider: provider.name,
         success: true,
         duration_ms: Date.now() - start,
       };
-      this.recordDelivery(provider.name, event.event_id, result.success);
-      return result;
     } catch (error: unknown) {
       const message =
         error instanceof Error ? error.message : String(error);
@@ -391,15 +424,18 @@ export class SyncManager {
       );
 
       this.recordFailure(provider.name, message);
+      const deliveryError = this.recordDelivery(
+        provider.name,
+        event.event_id,
+        false,
+      );
 
-      const result = {
+      return {
         provider: provider.name,
         success: false,
-        error: message,
+        error: deliveryError ?? message,
         duration_ms: Date.now() - start,
       };
-      this.recordDelivery(provider.name, event.event_id, result.success);
-      return result;
     }
   }
 

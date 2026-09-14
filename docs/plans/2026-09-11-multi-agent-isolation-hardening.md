@@ -291,7 +291,35 @@ Include an anti-rationalization table. Seed it with the failure modes this plan 
 
 **Status:** Pending
 
-*(No tasks yet.)*
+#### Task 3.1.1: Fail closed when dependency audit cannot run
+
+- [ ] Done
+
+**Implementation:** When enabled Gate 1 detects dependency changes and has no audit command, emit an actionable failing audit check, run no command, and preserve the old baseline. When Gate 0 test-file enforcement cannot run `git status --porcelain`, emit a failing test-files check with execution metadata. Keep disabled policy behavior unchanged.
+
+**Files:** Modify `src/gates/gate1.ts`, `src/gates/gate0.ts`, and their tests.
+
+**Verification:** `npx vitest run src/gates/` and `npm run build`.
+
+#### Task 3.1.2: Make the project context own its single SyncManager
+
+- [ ] Done
+
+**Implementation:** Make `ProjectContextRegistry` the sole factory/cache for root-local managers. Derive default server managers, including sync, from its default context; do not independently construct a SyncManager in `createServer`. Assert repeated canonical root lookup reuses the same manager and different roots do not.
+
+**Files:** Modify `src/server.ts`, `src/context.ts`, `src/context.test.ts`, `src/tools/__tests__/multi-project.integration.test.ts`.
+
+**Verification:** `npx vitest run src/context.test.ts src/tools/__tests__/multi-project.integration.test.ts` and `npm run build`.
+
+#### Task 3.1.3: Add stable sync IDs and durable delivery outcomes
+
+- [ ] Done
+
+**Implementation:** Add required `event_id` to SyncEvent, generate it once at lifecycle emission, persist it in the journal, and retain it through retry/replay. Persist provider delivery outcomes keyed by `(provider, event_id)` so retry selects only failed deliveries after restart; at-least-once delivery remains provider-deduplicable by the stable ID.
+
+**Files:** Modify `src/sync/schema.ts`, `src/sync/manager.ts`, `src/state/manager.ts`, sync tests and provider factories that construct SyncEvent values.
+
+**Verification:** `npx vitest run src/sync/ src/tools/__tests__/sync.test.ts`, `npm test`, and `npm run build`.
 
 ### Epic 3.2: Pin release provenance to the validated commit
 
@@ -305,7 +333,35 @@ Include an anti-rationalization table. Seed it with the failure modes this plan 
 
 **Status:** Pending
 
-*(No tasks yet.)*
+#### Task 3.2.1: Pin release authorization and checkout to CI provenance
+
+- [ ] Done
+
+**Implementation:** Require successful same-repository `push` CI on `main`, then check out `${{ github.event.workflow_run.head_sha }}` with full history. A later push must not change release source; PR-originated CI must not enter the privileged release job.
+
+**Files:** Modify `.github/workflows/release.yml`.
+
+**Verification:** Static workflow assertions and `actionlint .github/workflows/*.yml` when available.
+
+#### Task 3.2.2: Serialize release publication without cancellation
+
+- [ ] Done
+
+**Implementation:** Add top-level release concurrency group `release-main` with `cancel-in-progress: false`. Pinned, older queued releases may fail visibly if superseded; they must never fall back to mutable `main`.
+
+**Files:** Modify `.github/workflows/release.yml`.
+
+**Verification:** Static concurrency assertions and `actionlint .github/workflows/release.yml` when available.
+
+#### Task 3.2.3: Pin workflow actions to reviewed immutable SHAs
+
+- [ ] Done
+
+**Implementation:** Replace every current action tag in CI, release, and PR validation workflows with reviewed 40-character commit SHAs and version comments. Pin `actions/checkout` and `actions/setup-node` v4 lines plus `amannn/action-semantic-pull-request` v5.
+
+**Files:** Modify `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/pr-validation.yml`.
+
+**Verification:** Search all workflow `uses:` references for full immutable SHAs, then run `actionlint` when available.
 
 ---
 
@@ -323,7 +379,45 @@ Include an anti-rationalization table. Seed it with the failure modes this plan 
 
 **Status:** Pending
 
-*(No tasks yet.)*
+#### Task 4.1.1: Centralize lifecycle adapter plumbing
+
+- [ ] Done
+
+**Implementation:** Create `src/tools/lifecycle-adapter.ts` with the shared optional `project_root` Zod parameter, normal lifecycle request-context resolver, and `responseResult`-backed text response helper. Replace local variants in gate, review, and recovery. Do not route cycle initialization/reload through it because their plan-derived root behavior is distinct.
+
+**Files:** Create adapter and tests; modify `src/tools/gate.ts`, `src/tools/review.ts`, `src/tools/recovery.ts`, response and multi-project tests.
+
+**Verification:** Run adapter, response, and multi-project tool tests, then build.
+
+#### Task 4.1.2: Extract task lifecycle policy from the gate adapter
+
+- [ ] Done
+
+**Implementation:** Move task start/complete policy, active Gate 0 tracking, and coordinator exports to `src/services/task-lifecycle.ts` with explicit dependencies. Make `gate.ts` MCP registration/context delegation only; recovery imports service state rather than a tool module. Preserve tool schemas, text, evidence, lease, and locking behavior.
+
+**Files:** Create `src/services/task-lifecycle.ts`; modify gate/recovery tools, service exports, and existing gate/transport tests.
+
+**Verification:** Run gate and transport tests, then build.
+
+#### Task 4.1.3: Extract review/acceptance/finalization policy
+
+- [ ] Done
+
+**Implementation:** Move review start/submit, acceptance start/submit, and phase advance policy to `src/services/review-lifecycle.ts`; leave `review.ts` as MCP registration and request-scoped dependency binding. Preserve archival behavior at the resolved root.
+
+**Files:** Create review service; modify review tool, service exports, review and multi-project tests.
+
+**Verification:** Run review and multi-project tests, then build.
+
+#### Task 4.1.4: Extract recovery and management policy
+
+- [ ] Done
+
+**Implementation:** Move reset, retry, task/epic/phase management, and diagnosis/reconciliation policy to `src/services/recovery-lifecycle.ts`; keep recovery tool registration-only. Preserve previews, destructive safeguards, evidence cleanup, diagnostics, and current response text.
+
+**Files:** Create recovery service; modify recovery tool, service exports, recovery/gate/multi-project/transport tests.
+
+**Verification:** Run affected tests, `npm test`, and build.
 
 ### Epic 4.2: Reconcile documentation and config with runtime
 
@@ -337,4 +431,32 @@ Include an anti-rationalization table. Seed it with the failure modes this plan 
 
 **Status:** Pending
 
-*(No tasks yet.)*
+#### Task 4.2.1: Add executable MCP inventory and correct tool docs
+
+- [ ] Done
+
+**Implementation:** Test the actual server tools/list inventory against the README MCP tools table. Correct obsolete architecture `gate.*` names and README lifecycle examples so required owner/attempt parameters are represented.
+
+**Files:** Modify `README.md`, `docs/architecture.md`; add focused tool-inventory test.
+
+**Verification:** Run inventory test, full tests, and build.
+
+#### Task 4.2.2: Correct language-pack cascade documentation
+
+- [ ] Done
+
+**Decision:** Do not implement language-pack loading in this plan. Replace public claims with the implemented cascade: defaults → global config → selected domain defaults → project config → environment overrides. Present language packs as discovery/workflow assets, not runtime loader layers; remove nonfunctional `lang` configuration examples.
+
+**Files:** Modify `README.md`, `docs/architecture.md`, `docs/gates.md`; loader comments only if needed for clarity.
+
+**Verification:** `npm test` and build.
+
+#### Task 4.2.3: Contract-test maintained config examples
+
+- [ ] Done
+
+**Implementation:** Turn `skills/config.example.yaml` and maintained README configuration blocks into isolated loader fixtures with semantic assertions. Reconcile documented Gate 8 default reviewers with actual defaults and remove nonfunctional language settings from examples.
+
+**Files:** Modify config loader tests, config example, README, and schema only for a demonstrated default mismatch.
+
+**Verification:** Run loader tests, full tests, and build.

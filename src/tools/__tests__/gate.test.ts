@@ -506,6 +506,28 @@ describe("gate tools", async () => {
       stateManager.transition("1.1.2", "doing");
     });
 
+    it("rejects legacy completion for a leased task", async () => {
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks[1];
+      task.lease = {
+        owner_id: "other-owner",
+        attempt_id: "other-attempt",
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      };
+      stateManager.save(state);
+
+      const result = await handleTaskComplete(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain('not owned by owner "legacy"');
+      expect(checkGate0Exit).not.toHaveBeenCalled();
+    });
+
     // 3. Runs gate 0 checks and transitions to done on pass
     it("transitions to done when gate 0 passes", async () => {
       checkGate0Exit.mockResolvedValue({

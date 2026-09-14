@@ -97,6 +97,29 @@ describe("SyncManager.retry", () => {
     expect(recovered.syncFn).toHaveBeenCalledWith(event);
   });
 
+  it("retries journaled events skipped while the circuit is open", async () => {
+    const provider = mockProvider("target", {
+      syncFn: async () => {
+        throw new Error("temporary failure");
+      },
+    });
+    const manager = new SyncManager(tmpDir, [provider], undefined, 1);
+
+    await manager.dispatch(makeEvent("task_started", { entity_id: "1.1.1" }));
+    await manager.dispatch(makeEvent("task_started", { entity_id: "1.1.2" }));
+    provider.syncFn.mockResolvedValue(undefined);
+    provider.syncFn.mockClear();
+
+    const results = await manager.retry("target", 2);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.success)).toBe(true);
+    expect(provider.syncFn.mock.calls.map((call: [SyncEvent]) => call[0].entity_id)).toEqual([
+      "1.1.1",
+      "1.1.2",
+    ]);
+  });
+
   it("returns error when provider not found", async () => {
     const manager = new SyncManager(tmpDir, []);
     const results = await manager.retry("nonexistent", 5);

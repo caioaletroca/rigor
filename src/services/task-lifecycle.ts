@@ -390,7 +390,7 @@ async function handleTaskCompleteUnlocked(
   }
 
   const legacyCompletion = params.owner_id === undefined && params.attempt_id === undefined;
-  if (!legacyCompletion && (params.owner_id === undefined || params.attempt_id === undefined || !task.lease || task.lease.owner_id !== params.owner_id || task.lease.attempt_id !== params.attempt_id)) {
+  if ((legacyCompletion && task.lease) || (!legacyCompletion && (params.owner_id === undefined || params.attempt_id === undefined || !task.lease || task.lease.owner_id !== params.owner_id || task.lease.attempt_id !== params.attempt_id))) {
     return textResult(`Task "${params.task_id}" is not owned by owner "${(params.owner_id ?? "legacy")}" with attempt "${(params.attempt_id ?? task.lease?.attempt_id ?? "legacy")}".`, true);
   }
   if (task.lease && !Number.isFinite(Date.parse(task.lease.lease_expires_at))) {
