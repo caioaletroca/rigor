@@ -4,6 +4,7 @@
  * Exposes sync layer state and management to MCP clients.
  */
 
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -170,7 +171,12 @@ export function registerSyncTools(
   registry?: ProjectContextRegistry,
   projectRoot?: string,
 ): void {
-  server.tool("sync_status", { project_root: z.string().optional().describe("Canonical project root for this request") }, (params) => {
+  const projectRootParam = z
+    .string()
+    .refine(isAbsolute, "project_root must be an absolute path")
+    .optional()
+    .describe("Canonical project root for this request");
+  server.tool("sync_status", { project_root: projectRootParam }, (params) => {
     const manager = params.project_root && registry ? registry.getByRoot(params.project_root).syncManager : syncManager;
     return handleSyncStatus(manager);
   });
@@ -178,7 +184,7 @@ export function registerSyncTools(
   server.tool(
     "sync_retry",
     {
-      project_root: z.string().optional().describe("Canonical project root for this request"),
+      project_root: projectRootParam,
       provider: z.string().describe("Name of the provider to retry events for"),
       count: z
         .number()
@@ -197,7 +203,7 @@ export function registerSyncTools(
   server.tool(
     "sync_replay",
     {
-      project_root: z.string().optional().describe("Canonical project root for this request"),
+      project_root: projectRootParam,
       provider: z
         .string()
         .describe("Name of the provider to replay all events to"),
@@ -211,7 +217,7 @@ export function registerSyncTools(
   server.tool(
     "sync_enable",
     {
-      project_root: z.string().optional().describe("Canonical project root for this request"),
+      project_root: projectRootParam,
       provider: z
         .string()
         .describe(
