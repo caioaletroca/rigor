@@ -211,8 +211,6 @@ gates:
       - security
       - logic
       - test-quality
-      - nil-safety
-      - consequences
     required_reviewers:
       - security
       - logic

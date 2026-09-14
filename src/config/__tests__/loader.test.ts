@@ -1,10 +1,41 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { loadConfig, migrateGate0Config, loadDomainPackDefaults, resolveVariables, getGlobalConfigPath } from "../loader.js";
 import { DEFAULTS } from "../schema.js";
 import type { RigorConfig } from "../schema.js";
+
+let globalConfigHome: string;
+const savedHomeVars: Record<string, string | undefined> = {};
+const HOME_VARS = ["APPDATA", "HOME", "USERPROFILE"] as const;
+
+beforeEach(() => {
+  globalConfigHome = mkdtempSync(join(tmpdir(), "rigor-global-home-"));
+  for (const name of HOME_VARS) {
+    savedHomeVars[name] = process.env[name];
+    process.env[name] = globalConfigHome;
+  }
+});
+
+afterEach(() => {
+  for (const name of HOME_VARS) {
+    const saved = savedHomeVars[name];
+    if (saved === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = saved;
+    }
+  }
+  rmSync(globalConfigHome, { recursive: true, force: true });
+});
+
+function writeGlobalConfigFile(content: string): void {
+  const path = getGlobalConfigPath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content, "utf-8");
+}
 
 describe("loadConfig", () => {
   let tmpDir: string;
@@ -246,26 +277,100 @@ sync:
 });
 
 // ---------------------------------------------------------------------------
+// Maintained configuration examples
+// ---------------------------------------------------------------------------
+
+describe("maintained configuration examples", () => {
+  const repositoryRoot = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "..",
+  );
+
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "rigor-config-example-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("loads config.example.yaml with documented defaults", () => {
+    const example = readFileSync(
+      join(repositoryRoot, "skills", "config.example.yaml"),
+      "utf-8",
+    );
+    writeConfigFile(tmpDir, example);
+
+    const config = loadConfig(tmpDir);
+
+    expect(config).toMatchObject({
+      commit: DEFAULTS.commit,
+      ship: DEFAULTS.ship,
+      gates: {
+        gate_0: {
+          coverage_threshold: 85,
+          require_test_files: true,
+          checks: [],
+        },
+        gate_8: {
+          reviewers: DEFAULTS.gates.gate_8.reviewers,
+          required_reviewers: ["security", "logic"],
+          max_critical_findings: 0,
+          max_high_findings: 0,
+        },
+        gate_9: DEFAULTS.gates.gate_9,
+      },
+      sync: DEFAULTS.sync,
+    });
+  });
+
+  it("loads the README configuration block with its documented policy", () => {
+    const readme = readFileSync(join(repositoryRoot, "README.md"), "utf-8");
+    const block = readme.match(/## Configuration\r?\n[\s\S]*?```yaml\r?\n([\s\S]*?)```/);
+    expect(block?.[1]).toBeDefined();
+    writeConfigFile(tmpDir, block![1]);
+
+    const config = loadConfig(tmpDir);
+
+    expect(config.domain).toBe("software");
+    expect(config.gates.gate_0.checks).toEqual([
+      {
+        name: "tests",
+        command: "npx vitest run --coverage",
+        metric: { parse: "auto", threshold: 85, label: "coverage" },
+      },
+      { name: "lint", command: "npx eslint ." },
+    ]);
+    expect(config.gates.gate_8.reviewers).toEqual(DEFAULTS.gates.gate_8.reviewers);
+    expect(config.gates.gate_8.required_reviewers).toEqual(["security", "logic"]);
+    expect(config.sync.providers["my-jira"].type).toBe("jira");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Config cascade (global + project)
 // ---------------------------------------------------------------------------
 
 describe("config cascade", () => {
   let tmpDir: string;
-  let globalDir: string;
-  let originalGetGlobal: string | undefined;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "rigor-cascade-test-"));
-    globalDir = mkdtempSync(join(tmpdir(), "rigor-global-test-"));
-
-    // Override APPDATA (Windows) or HOME to control global config location
-    originalGetGlobal = process.env.RIGOR_TEST_GLOBAL_CONFIG;
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
-    rmSync(globalDir, { recursive: true, force: true });
     delete process.env.RIGOR_SYNC_ENABLED;
+  });
+
+  it("reads global config only from the isolated test home", () => {
+    writeGlobalConfigFile("commit:\n  gpg_sign: true\n");
+
+    expect(loadConfig(tmpDir).commit.gpg_sign).toBe(true);
   });
 
   // -----------------------------------------------------------------------

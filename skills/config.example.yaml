@@ -115,28 +115,16 @@ gates:
   # Gate 8: Review (per epic)
   # These settings control the AI-powered code review phase.
   gate_8:
-    # Reviewer agents to dispatch (default: all ten)
+    # Reviewer agents to dispatch (default: four core reviewers)
     # Each reviewer analyzes the epic diff and returns structured findings.
     #
-    # Core reviewers (general-purpose):
+    # Core reviewers:
     #   code-quality, security, logic, test-quality
-    # Extended reviewers (specialized):
-    #   nil-safety, consequences, dead-code, performance, requirements
-    # Design reviewer (frontend only):
-    #   design-quality -- uses Impeccable audit + AI judgment for design consistency
-    #   Requires DESIGN.md for grounded review. Most useful for React/Next.js projects.
-    #   Not in required_reviewers by default -- its absence does not block Gate 8.
     reviewers:
       - code-quality
       - security
       - logic
       - test-quality
-      - nil-safety
-      - consequences
-      - dead-code
-      - performance
-      - requirements
-      - design-quality
 
     # Reviewers that MUST submit findings for the gate to pass (default: security, logic)
     # Other reviewers are informational -- their absence does not block the gate.
