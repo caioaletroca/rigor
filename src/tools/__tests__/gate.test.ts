@@ -700,6 +700,45 @@ describe("gate tools", async () => {
       expect(existsSync(evidenceManager.attemptPathFor("1.1.2", canonical!.gate_0_attempt!.id))).toBe(true);
     });
 
+    it("rejects legacy completion for leased tasks and enforces matching unexpired credentials", async () => {
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+      const lease = {
+        owner_id: "owner-a",
+        attempt_id: "attempt-a",
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      };
+      task.lease = lease;
+      stateManager.save(state);
+
+      const legacy = await handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
+      const mismatched = await handleTaskComplete(
+        { task_id: "1.1.2", owner_id: "owner-a", attempt_id: "wrong-attempt" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(legacy.isError).toBe(true);
+      expect(mismatched.isError).toBe(true);
+      expect(checkGate0Exit).not.toHaveBeenCalled();
+
+      const expiredState = stateManager.load()!;
+      expiredState.phases[0].epics[0].tasks.find((task) => task.id === "1.1.2")!.lease!.lease_expires_at = new Date(Date.now() - 1_000).toISOString();
+      stateManager.save(expiredState);
+
+      const expired = await handleTaskComplete(
+        { task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(expired.isError).toBe(true);
+      expect(extractText(expired)).toContain("lease expired");
+      expect(checkGate0Exit).not.toHaveBeenCalled();
+    });
+
     it("returns matching terminal evidence without rerunning Gate 0", async () => {
       checkGate0Exit.mockResolvedValue({
         passed: true,

@@ -6,6 +6,7 @@
  *                 the task to "done" or "failed".
  */
 
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -345,13 +346,16 @@ async function handleTaskCompleteUnlocked(
   }
 
   const legacyCompletion = params.owner_id === undefined && params.attempt_id === undefined;
-  if (!legacyCompletion && (params.owner_id === undefined || params.attempt_id === undefined || !task.lease || task.lease.owner_id !== params.owner_id || task.lease.attempt_id !== params.attempt_id)) {
+  if (
+    (legacyCompletion && task.lease) ||
+    (!legacyCompletion && (params.owner_id === undefined || params.attempt_id === undefined || !task.lease || task.lease.owner_id !== params.owner_id || task.lease.attempt_id !== params.attempt_id))
+  ) {
     return textResult(`Task "${params.task_id}" is not owned by owner "${(params.owner_id ?? "legacy")}" with attempt "${(params.attempt_id ?? task.lease?.attempt_id ?? "legacy")}".`, true);
   }
   if (task.lease && !Number.isFinite(Date.parse(task.lease.lease_expires_at))) {
     return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
   }
-  if (task.lease && Date.parse(task.lease.lease_expires_at) <= Date.now() && !legacyCompletion) {
+  if (task.lease && Date.parse(task.lease.lease_expires_at) <= Date.now()) {
     return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Start it with explicit takeover.`, true);
   }
 
@@ -651,7 +655,7 @@ export function registerGateTools(
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
- { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), takeover: z.boolean().optional(), lease_ms: z.number().int().positive().optional(), project_root: z.string().optional() },
+ { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), takeover: z.boolean().optional(), lease_ms: z.number().int().positive().optional(), project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional() },
      async (params) => {
        const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
        return handleTaskStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
@@ -661,7 +665,7 @@ export function registerGateTools(
   server.tool(
     "task_complete",
     "Complete a task — runs Gate 0 exit checks (tests, coverage, lint), saves evidence",
- { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: z.string().optional() },
+ { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional() },
      async (params) => {
        const ctx = context(params.project_root ?? stateManager.load()?.project_root ?? projectRoot);
        return handleTaskComplete(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);

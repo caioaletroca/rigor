@@ -30,6 +30,7 @@ All skills use the `rigor:` prefix. Language-specific skills use a `rigor:lang:`
 
 | Skill | Directory | Purpose | Status |
 |-------|-----------|---------|--------|
+| `rigor:architecture-review` | `skills/architecture-review/` | Read-only, evidence-backed assessment of current architecture | Draft |
 | `rigor:commit` | `skills/commit/` | Atomic commit grouping with scope enforcement | Done |
 | `rigor:new-skill` | `skills/new-skill/` | Scaffold a new Rigor skill with conventions enforcement | Done |
 | `rigor:pr` | `skills/pr/` | Open a GitHub PR with template filling and base verification | Done |

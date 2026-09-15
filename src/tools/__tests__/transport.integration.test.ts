@@ -75,6 +75,24 @@ describe("cross-client transport harness", () => {
     });
   });
 
+  it("rejects relative project_root at the MCP boundary while preserving omitted-root fallback", async () => {
+    const project = makeFixture("project-root-schema");
+    roots.push(project);
+
+    await withHarnessSessions([{ projectRoot: project, clientStyle: "opencode" }], async ([session]) => {
+      const initialized = await session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true });
+      expect(initialized.isError).toBeUndefined();
+
+      const invalid = await session.call("cycle_status", { project_root: "relative-project" });
+      expect(invalid.isError).toBe(true);
+      expect(text(invalid)).toContain("project_root must be an absolute path");
+
+      const status = await session.call("cycle_status");
+      expect(status.isError).toBeUndefined();
+      expect(text(status)).toContain(project);
+    });
+  });
+
   it("keeps representative multi-project operations within release budgets", async () => {
     const samples: number[] = [];
     const sampleCount = 5;

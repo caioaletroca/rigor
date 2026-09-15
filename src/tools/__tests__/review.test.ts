@@ -409,9 +409,10 @@ describe("review tools", async () => {
 
       expect(failed.isError).toBe(true);
       expect(extractText(failed)).toContain("findings were saved");
-      expect(restart.isError).toBe(true);
-      expect(extractText(restart)).toContain("without another review_start");
-      expect(passed.isError).toBeUndefined();
+       expect(restart.isError).toBe(true);
+       expect(extractText(restart)).toContain("without another review_start");
+       expect(stateManager.getEpic("1.1").status).toBe("doing");
+       expect(passed.isError).toBeUndefined();
       expect(evidenceManager.load("gate_8", "1.1")?.review_submissions)
         .toEqual(passingSubmissions());
     });
