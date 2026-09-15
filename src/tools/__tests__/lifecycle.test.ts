@@ -3,7 +3,7 @@ import { projectRootSchema, resolveRequestContext, responseResult } from "../lif
 import type { RequestContext } from "../../context.js";
 import type { StateManager } from "../../state/index.js";
 
-const projectRoot = "C:/workspace/project";
+const projectRoot = process.platform === "win32" ? "C:/workspace/project" : "/workspace/project";
 
 function context(): RequestContext {
   return {
@@ -30,7 +30,9 @@ describe("lifecycle adapter", () => {
       return resolved;
     } };
 
-    expect(resolveRequestContext(registry as never, {} as StateManager, "C:/fallback", projectRoot)).toBe(resolved);
+    const fallbackRoot = process.platform === "win32" ? "C:/fallback" : "/fallback";
+
+    expect(resolveRequestContext(registry as never, {} as StateManager, fallbackRoot, projectRoot)).toBe(resolved);
   });
 
   it("exposes the standard structured response helper", () => {
