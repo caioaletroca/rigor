@@ -23,6 +23,10 @@ Before `cycle_init`, agents MUST also establish the execution workspace and comm
 1. **Workspace:** use `rigor:worktree` and execute the cycle in an isolated worktree. This is mandatory for planned feature work and multi-agent execution. Skip only when already inside the feature's worktree or when the user explicitly chooses a quick fix on the current branch.
 2. **Commit cadence:** ask through the host's formal question mechanism whether to commit completed work per **task**, **epic**, or **phase**. Do not ask again unless the user requests a change. The cadence controls commit timing only; it never bypasses Gate 0, Gate 8, Gate 9, review, or push requirements.
 
+### Delegated implementation workspace rule
+
+When dispatching an implementation subagent, give it the active worktree's absolute path and require it to run `git rev-parse --show-toplevel` before editing. It may proceed only if the result exactly matches that path. A delegated subagent must not create, enter, inspect, or edit another worktree; invoke `rigor:worktree`; invoke `git worktree`; or edit the main checkout. On a mismatch, it must stop and report it without attempting to create a replacement workspace.
+
 The mode, workspace choice, and commit cadence are orchestration preferences only: never persist them in `.rigor/state.json` and never bypass an MCP gate. In either mode, stop for Gate 9 when configuration requires user approval; present the acceptance criteria through the host's formal user-question mechanism and wait for actual approval before submitting `user_approved: true`. Never infer approval from a free-form continuation message or silently set `user_approved: true`.
 
 In Continuous mode, Gate 8 failure is not a user-confirmation point. Read the findings, implement the safest compliant remediation, rerun required verification, and resubmit the review directly. Stop only when human direction is genuinely required: requirements or acceptance evidence are ambiguous, a rolling-wave phase has no elaborated tasks, recovery diagnosis cannot identify a safe action, a gate failure cannot be remediated safely, or there are two or more materially different viable implementation approaches whose choice affects requirements, compatibility, security, or architecture. Present those alternatives and ask the user to choose. Also stop if the user explicitly interrupts execution. Do not ask for continuation merely because a task, review, remediation, or phase passed or failed.
@@ -317,6 +321,8 @@ Only use this when the cycle is unrecoverable. Requires explicit confirmation.
 | Ignore gate failure messages | They contain the exact checks that failed; read them |
 | Ask the user whether to continue after a Gate 8 failure in Continuous mode | Gate 8 remediation and resubmission are part of the automatic cycle; continue unless materially different solutions require a decision |
 | Skip `cycle_diagnose` and go straight to `cycle_reset` | You may lose work that was recoverable |
+| Dispatch an implementation subagent without naming the active worktree and requiring a `git rev-parse --show-toplevel` match | The subagent can silently edit another worktree or the main checkout, forking the task away from the cycle's state |
+| Let a delegated subagent create its own worktree or branch | Its work lands outside the cycle's branch history and evidence, and must be re-verified before it can be trusted |
 
 ---
 

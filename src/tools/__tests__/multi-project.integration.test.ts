@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer } from "../../server.js";
 import { handleCycleInit, handleCycleStatus } from "../cycle.js";
-import { handleTaskManage, handleCycleDiagnose } from "../recovery.js";
+import { handleTaskManage, handleCycleDiagnose } from "../../services/recovery-lifecycle.js";
 
 interface TextContent {
   type: "text";

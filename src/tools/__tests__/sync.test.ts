@@ -74,6 +74,7 @@ describe("sync_status tool", () => {
     const manager = new SyncManager(tmpDir, [mockProvider("p")]);
 
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_started",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -104,6 +105,7 @@ describe("sync_status tool", () => {
     const manager = new SyncManager(tmpDir, [mockProvider("p1")]);
 
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_started",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -127,6 +129,7 @@ describe("sync_status tool", () => {
     const manager = new SyncManager(tmpDir, [failing], undefined, 2);
 
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_started",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -134,6 +137,7 @@ describe("sync_status tool", () => {
       timestamp: new Date().toISOString(),
     });
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_completed",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -171,11 +175,17 @@ describe("sync_retry tool", () => {
     expect(text).toContain("not enabled");
   });
 
-  it("retries events and reports results", async () => {
-    const provider = mockProvider("p1");
+  it("retries failed events and reports results", async () => {
+    let fail = true;
+    const provider = mockProvider("p1", {
+      syncFn: async () => {
+        if (fail) throw new Error("temporary failure");
+      },
+    });
     const manager = new SyncManager(tmpDir, [provider]);
 
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_started",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -183,6 +193,7 @@ describe("sync_retry tool", () => {
       timestamp: new Date().toISOString(),
     });
 
+    fail = false;
     const result = await handleSyncRetry(
       { provider: "p1", count: 1 },
       manager,
@@ -219,6 +230,7 @@ describe("sync_replay tool", () => {
     const manager = new SyncManager(tmpDir, [provider]);
 
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_started",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -226,6 +238,7 @@ describe("sync_replay tool", () => {
       timestamp: new Date().toISOString(),
     });
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_completed",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -271,6 +284,7 @@ describe("sync_enable tool", () => {
 
     // Trip circuit
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_started",
       entity_type: "task",
       entity_id: "1.1.1",
@@ -278,6 +292,7 @@ describe("sync_enable tool", () => {
       timestamp: new Date().toISOString(),
     });
     await manager.dispatch({
+      event_id: crypto.randomUUID(),
       type: "task_completed",
       entity_type: "task",
       entity_id: "1.1.1",

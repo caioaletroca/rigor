@@ -16,10 +16,12 @@ import type { RigorConfig } from "../config/index.js";
 import { inspectWorkspace, WorkspaceInspectionError } from "../workspace/index.js";
 import { parsePlan } from "../plan/index.js";
 import { EvidenceManager } from "../evidence/index.js";
-import { isGate0AttemptActive, isTaskCompletionActive } from "./gate.js";
+import { isGate0AttemptActive, isTaskCompletionActive } from "../services/task-lifecycle.js";
 import { ProjectContextRegistry, resolveProjectRoot as resolveCanonicalProjectRoot } from "../context.js";
 import type { ParsedPhase, ParsedEpic, ParsedTask } from "../plan/index.js";
 import { responseResult } from "./response.js";
+import { projectRootSchema } from "./lifecycle.js";
+import { withProjectMutationLock } from "../lifecycle/index.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -100,6 +102,19 @@ const WORKTREE_REMEDIATION =
   "Run rigor:worktree to create an isolated worktree and feature branch, then re-run cycle_init from it.";
 
 export function handleCycleInit(
+  params: CycleInitParams,
+  stateManager: StateManager,
+  projectRoot: string,
+  configOrRegistry?: RigorConfig | ProjectContextRegistry,
+  registry?: ProjectContextRegistry,
+): Promise<CallToolResult> {
+  const requestRoot = params.project_root ?? projectRoot;
+  const resolvedPath = isAbsolute(params.plan_path) ? params.plan_path : resolve(requestRoot, params.plan_path);
+  const effectiveRoot = resolveProjectRoot(resolvedPath, requestRoot);
+  return withProjectMutationLock(effectiveRoot, async () => handleCycleInitUnlocked(params, stateManager, projectRoot, configOrRegistry, registry));
+}
+
+function handleCycleInitUnlocked(
   params: CycleInitParams,
   stateManager: StateManager,
   projectRoot: string,
@@ -243,6 +258,20 @@ export interface CycleReloadParams {
  * evidence untouched; entities removed from the plan are left in place.
  */
 export function handleCycleReload(
+  params: CycleReloadParams,
+  stateManager: StateManager,
+  projectRoot: string,
+  registry?: ProjectContextRegistry,
+): Promise<CallToolResult> {
+  const loadedRoot = stateManager.load()?.project_root;
+  const requestRoot = params.project_root ?? loadedRoot ?? projectRoot;
+  const effectiveRoot = params.project_root
+    ? resolveCanonicalProjectRoot({ project_root: params.project_root, fallback_root: requestRoot }).project_root
+    : loadedRoot ?? projectRoot;
+  return withProjectMutationLock(effectiveRoot, async () => handleCycleReloadUnlocked(params, stateManager, projectRoot, registry));
+}
+
+function handleCycleReloadUnlocked(
   params: CycleReloadParams,
   stateManager: StateManager,
   projectRoot: string,
@@ -471,7 +500,7 @@ export function registerCycleTools(
     "Initialize a new development cycle from a plan.md file",
     {
       plan_path: z.string().describe("Absolute plan path, or relative to project_root or the legacy server --project-root fallback"),
-      project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional().describe("Absolute Git repository root; takes precedence over the server --project-root fallback"),
+      project_root: projectRootSchema.describe("Absolute Git repository root; takes precedence over the server --project-root fallback"),
       allow_shared_workspace: z.boolean().optional(),
     },
     async (params) => {
@@ -495,7 +524,7 @@ export function registerCycleTools(
          .string()
          .optional()
          .describe("Absolute plan path, or relative to project_root; defaults to the stored plan_path"),
-       project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional().describe("Absolute Git repository root; overrides the server default and anchors relative plan_path"),
+       project_root: projectRootSchema.describe("Absolute Git repository root; overrides the server default and anchors relative plan_path"),
     },
     async (params) => {
       const root = params.project_root ?? projectRoot;
@@ -510,7 +539,7 @@ export function registerCycleTools(
       description: "Show the current cycle status, progress, and active task",
       inputSchema: z
         .object({
-          project_root: z.string().refine(isAbsolute, "project_root must be an absolute path").optional().describe("Absolute Git repository root; defaults to the server --project-root"),
+          project_root: projectRootSchema,
         })
         .default({}),
     },

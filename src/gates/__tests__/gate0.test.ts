@@ -873,7 +873,7 @@ describe("checkGate0Exit", () => {
     expect(tf?.passed).toBe(true);
   });
 
-  it("skips require_test_files when git is unavailable / not a repo", async () => {
+  it("fails require_test_files with actionable command metadata when git status fails", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "eslint .",
@@ -887,8 +887,31 @@ describe("checkGate0Exit", () => {
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
     const tf = result.checks.find((c) => c.name === "test_files");
-    expect(tf?.passed).toBe(true);
-    expect(tf?.detail).toContain("Skipped");
+    expect(tf).toMatchObject({
+      passed: false,
+      command: "git status --porcelain",
+      exit_code: 128,
+      duration_ms: 50,
+    });
+    expect(tf?.detail).toContain("require_test_files");
+    expect(tf?.detail).toContain("Git is installed");
+    expect(result.passed).toBe(false);
+  });
+
+  it("does not run the test-files policy when require_test_files is false", async () => {
+    const config = makeConfig({
+      test_command: "",
+      lint_command: "eslint .",
+      require_test_files: false,
+    });
+
+    runCommand.mockResolvedValueOnce(okResult());
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(true);
+    expect(result.checks.find((c) => c.name === "test_files")).toBeUndefined();
+    expect(runCommand).toHaveBeenCalledTimes(1);
   });
 
   // -----------------------------------------------------------------------

@@ -88,6 +88,8 @@ describe("StateManager + SyncManager integration", () => {
     // Provider should have received cycle_initialized + task_started
     expect(provider.calls.length).toBeGreaterThanOrEqual(2);
     expect(provider.calls[0].type).toBe("cycle_initialized");
+    expect(provider.calls.every((event) => event.event_id.length > 0)).toBe(true);
+    expect(new Set(provider.calls.map((event) => event.event_id)).size).toBe(provider.calls.length);
     expect(provider.calls[1].type).toBe("task_started");
     expect(provider.calls[1].entity_id).toBe("1.1.1");
     expect(provider.calls[1].previous_status).toBe("pending");

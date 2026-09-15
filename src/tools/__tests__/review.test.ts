@@ -49,7 +49,8 @@ const {
   handleAcceptStart,
   handleAcceptSubmit,
   handlePhaseAdvance,
-} = await import("../review.js");
+} = await import("../../services/review-lifecycle.js");
+const { registerReviewTools } = await import("../review.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,6 +180,18 @@ const config: RigorConfig = DEFAULTS;
 // ---------------------------------------------------------------------------
 
 describe("review tools", async () => {
+  it("registers review lifecycle MCP schemas", () => {
+    const tool = vi.fn();
+    const registerTool = vi.fn();
+
+    registerReviewTools({ tool, registerTool } as never, {} as StateManager, {} as EvidenceManager, "C:/project");
+
+    expect(tool.mock.calls.map(([name]) => name)).toEqual(["review_start", "review_submit", "accept_start", "accept_submit"]);
+    expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["phase_advance"]);
+    expect(tool.mock.calls[0][2].epic_id.safeParse("").success).toBe(true);
+    expect(tool.mock.calls[3][2].user_approved.safeParse(undefined).success).toBe(true);
+  });
+
   let tempDir: string;
   let stateManager: StateManager;
   let evidenceManager: EvidenceManager;
@@ -654,7 +667,7 @@ describe("review tools", async () => {
       // Complete the single epic in phase 1
       await completeEpic("1.1");
 
-      const result = handlePhaseAdvance(stateManager);
+      const result = await handlePhaseAdvance(stateManager);
 
       expect(result.isError).toBeUndefined();
       const text = extractText(result);
@@ -677,7 +690,7 @@ describe("review tools", async () => {
     it("rejects when epics are incomplete", async () => {
       stateManager.init("test-plan.md", makePhases());
 
-      const result = handlePhaseAdvance(stateManager);
+      const result = await handlePhaseAdvance(stateManager);
 
       expect(result.isError).toBe(true);
       const text = extractText(result);
@@ -717,7 +730,7 @@ describe("review tools", async () => {
       // Complete the epic
       await completeEpic("1.1");
 
-      const result = handlePhaseAdvance(
+      const result = await handlePhaseAdvance(
         stateManager,
         evidenceManager,
         new ArchiveManager(tempDir),
@@ -758,7 +771,7 @@ describe("review tools", async () => {
         throw new Error("archive storage unavailable");
       });
 
-      const result = handlePhaseAdvance(
+      const result = await handlePhaseAdvance(
         stateManager,
         evidenceManager,
         new ArchiveManager(tempDir),

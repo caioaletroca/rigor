@@ -14,6 +14,7 @@ function makeEvent(
   overrides: Partial<SyncEvent> = {},
 ): SyncEvent {
   return {
+    event_id: crypto.randomUUID(),
     type,
     entity_type: "task",
     entity_id: "1.1.1",
@@ -52,30 +53,71 @@ describe("SyncManager.retry", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("retries the last N events to a named provider", async () => {
-    const provider = mockProvider("target");
+  it("retries the last N failed events to a named provider", async () => {
+    const provider = mockProvider("target", {
+      syncFn: async () => {
+        throw new Error("temporary failure");
+      },
+    });
     const manager = new SyncManager(tmpDir, [provider]);
 
-    // Dispatch 5 events
     for (let i = 0; i < 5; i++) {
       await manager.dispatch(
         makeEvent("task_started", { entity_id: `1.1.${i}` }),
       );
     }
+    provider.syncFn.mockResolvedValue(undefined);
     provider.syncFn.mockClear();
 
-    // Retry last 3
     const results = await manager.retry("target", 3);
 
     expect(results).toHaveLength(3);
     expect(results.every((r) => r.success)).toBe(true);
-    expect(provider.syncFn).toHaveBeenCalledTimes(3);
-
-    // Check it received the last 3 events
     const receivedIds = provider.syncFn.mock.calls.map(
       (call: [SyncEvent]) => call[0].entity_id,
     );
     expect(receivedIds).toEqual(["1.1.2", "1.1.3", "1.1.4"]);
+  });
+
+  it("retains failed delivery outcomes and event IDs after restart", async () => {
+    const event = makeEvent();
+    const failing = mockProvider("target", {
+      syncFn: async () => {
+        throw new Error("temporary failure");
+      },
+    });
+    await new SyncManager(tmpDir, [failing]).dispatch(event);
+
+    const recovered = mockProvider("target");
+    const manager = new SyncManager(tmpDir, [recovered]);
+    const results = await manager.retry("target", 1);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].success).toBe(true);
+    expect(recovered.syncFn).toHaveBeenCalledWith(event);
+  });
+
+  it("retries journaled events skipped while the circuit is open", async () => {
+    const provider = mockProvider("target", {
+      syncFn: async () => {
+        throw new Error("temporary failure");
+      },
+    });
+    const manager = new SyncManager(tmpDir, [provider], undefined, 1);
+
+    await manager.dispatch(makeEvent("task_started", { entity_id: "1.1.1" }));
+    await manager.dispatch(makeEvent("task_started", { entity_id: "1.1.2" }));
+    provider.syncFn.mockResolvedValue(undefined);
+    provider.syncFn.mockClear();
+
+    const results = await manager.retry("target", 2);
+
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.success)).toBe(true);
+    expect(provider.syncFn.mock.calls.map((call: [SyncEvent]) => call[0].entity_id)).toEqual([
+      "1.1.1",
+      "1.1.2",
+    ]);
   });
 
   it("returns error when provider not found", async () => {

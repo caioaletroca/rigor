@@ -44,7 +44,7 @@ export function resolveProjectRoot(options: {
   const fallback = canonicalize(options.fallback_root);
   if (options.project_root && !isAbsolute(options.project_root)) {
     throw new Error(
-      `Ambiguous project_root "${options.project_root}": use an absolute path or provide a Git-rooted request context.`,
+      `Invalid project_root "${options.project_root}": use an absolute path or provide a Git-rooted request context.`,
     );
   }
   if (options.project_root) {
@@ -96,18 +96,12 @@ export interface RequestContext {
 export class ProjectContextRegistry {
   private readonly contexts = new Map<string, RequestContext>();
 
-  constructor(
-    private readonly defaultRoot?: string,
-    private readonly syncManager?: SyncManager,
-  ) {}
+  constructor(private readonly defaultRoot?: string) {}
 
   get(options: Parameters<typeof resolveProjectRoot>[0]): RequestContext {
     const fallbackRoot = options.fallback_root ?? this.defaultRoot ?? process.cwd();
     const resolution = resolveProjectRoot({
       ...options,
-      project_root: options.project_root && !isAbsolute(options.project_root)
-        ? resolve(fallbackRoot, options.project_root)
-        : options.project_root,
       fallback_root: fallbackRoot,
     });
     const config = loadConfig(resolution.project_root);

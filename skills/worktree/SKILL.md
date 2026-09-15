@@ -9,6 +9,24 @@ description: >-
 
 Set up one isolated worktree and branch for one unit of work before implementation.
 
+## Step 0 -- Confirm whether a worktree may be created at all
+
+This skill creates a workspace. It is for the agent that owns the unit of work, not for a delegate executing inside an existing one.
+
+Before anything else, determine whether an assigned workspace already exists:
+
+- If the caller named an assigned worktree path, do NOT run this skill. Verify that path and work there.
+- If the current checkout is already the assigned worktree for this unit of work, stop and report that; never nest a new worktree inside it.
+- Only create a worktree when this agent owns the unit of work and no workspace has been assigned.
+
+A delegated implementer must verify its workspace instead of creating one:
+
+```bash
+git rev-parse --show-toplevel
+```
+
+Proceed only when that value matches the assigned path exactly. If it does not match, stop and report the mismatch; do not create, enter, or edit any other worktree, and do not "fix" the situation by branching a new one.
+
 ## Step 1 -- Select the worktree directory
 
 Use this priority order:
@@ -62,6 +80,8 @@ Report the created path, branch, install result, and baseline result before hand
 ## Non-Negotiables
 
 - One agent owns one worktree and branch.
+- A delegated agent uses only its assigned worktree and verifies `git rev-parse --show-toplevel` matches it before editing.
+- A delegated agent never runs `git worktree add`, invokes `rigor:worktree`, enters another worktree, or edits the main checkout.
 - Project-local worktree paths must be ignored before creation.
 - Base branch ambiguity requires the formal question.
 - Names must be checked for collisions before `git worktree add`.
@@ -75,6 +95,9 @@ Report the created path, branch, install result, and baseline result before hand
 - Running setup or tests in the main workspace instead of the newly created worktree.
 - Proceeding after a failing baseline without reporting it.
 - Committing `.gitignore` together with unrelated changes.
+- Creating a second worktree for a task that was already assigned one.
+- Editing the main checkout, or any worktree other than the assigned one, while implementing a delegated task.
+- Editing before confirming `git rev-parse --show-toplevel` matches the assigned path.
 
 ## Anti-Rationalization Table
 
@@ -86,3 +109,6 @@ Report the created path, branch, install result, and baseline result before hand
 | "Dependencies are already installed elsewhere" | Worktrees do not guarantee a valid or complete local dependency state. | Install in the new worktree using project conventions. |
 | "The baseline failure is unrelated" | Without a recorded baseline, new regressions cannot be distinguished. | Stop and report the failure before implementation. |
 | "Sharing saves a worktree" | Agents can overwrite files and invalidate each other's verification. | Enforce one agent per worktree and branch. |
+| "I can create my own worktree for this delegated task" | The parent cycle, branch history, and `.rigor` evidence belong to the assigned workspace; a new worktree silently forks the task. | Verify the assigned top-level path exactly and stop on mismatch. |
+| "The main checkout is close enough" | Main may contain unrelated changes and does not own the delegated cycle state. | Never edit it; use only the assigned worktree. |
+| "The assigned path is probably correct" | A wrong working directory makes every edit and gate result belong to another workspace. | Run `git rev-parse --show-toplevel` before editing and require an exact match. |

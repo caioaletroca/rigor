@@ -46,9 +46,10 @@ const {
   runCustomGates: ReturnType<typeof vi.fn>;
 };
 
-const { handleTaskStart, handleTaskComplete } = await import("../gate.js");
+const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../../services/task-lifecycle.js");
+const { registerGateTools } = await import("../gate.js");
 const { handleCycleStatus } = await import("../cycle.js");
-const { handleCycleDiagnose, handleCycleReset, handleTaskRetry } = await import("../recovery.js");
+const { handleCycleDiagnose, handleCycleReset, handleTaskRetry } = await import("../../services/recovery-lifecycle.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,6 +110,16 @@ const config: RigorConfig = DEFAULTS;
 // ---------------------------------------------------------------------------
 
 describe("gate tools", async () => {
+  it("registers the task lifecycle MCP schemas", () => {
+    const tool = vi.fn();
+
+    registerGateTools({ tool } as never, {} as StateManager, "C:/project");
+
+    expect(tool.mock.calls.map(([name]) => name)).toEqual(["task_start", "task_renew", "task_complete"]);
+    expect(tool.mock.calls[0][2].owner_id.safeParse("").success).toBe(false);
+    expect(tool.mock.calls[2][2].attempt_id.safeParse("").success).toBe(false);
+  });
+
   let tempDir: string;
   let stateManager: StateManager;
 
@@ -416,6 +427,76 @@ describe("gate tools", async () => {
   });
 
   // -----------------------------------------------------------------------
+  // task_renew
+  // -----------------------------------------------------------------------
+
+  describe("task_renew", () => {
+    async function startLease() {
+      await handleTaskStart({ task_id: "1.1.2", owner_id: "owner-a" }, stateManager, config, tempDir);
+      return stateManager.getTask("1.1.2").lease!;
+    }
+
+    it("renews only the matching live owner and attempt", async () => {
+      const lease = await startLease();
+      const before = Date.parse(lease.lease_expires_at);
+
+      const result = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBeUndefined();
+      expect(extractText(result)).toContain("lease renewed");
+      expect(Date.parse(stateManager.getTask("1.1.2").lease!.lease_expires_at)).toBeGreaterThanOrEqual(before);
+    });
+
+    it("rejects a stale owner or attempt without changing its replacement", async () => {
+      const lease = await startLease();
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+      task.lease = { owner_id: "owner-b", attempt_id: "attempt-b", lease_expires_at: new Date(Date.now() + 60_000).toISOString() };
+      stateManager.save(state);
+      const before = stateManager.getTask("1.1.2").lease;
+
+      const result = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("not renewed");
+      expect(stateManager.getTask("1.1.2").lease).toEqual(before);
+    });
+
+    it("serializes an expired renewal and takeover so the takeover keeps the lease", async () => {
+      const lease = await startLease();
+      const state = stateManager.load()!;
+      state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+      stateManager.save(state);
+
+      const [renewal, takeover] = await Promise.all([
+        handleTaskRenew({ task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id }, stateManager, tempDir),
+        handleTaskStart({ task_id: "1.1.2", owner_id: "owner-b", takeover: true }, stateManager, config, tempDir),
+      ]);
+
+      expect(renewal.isError).toBe(true);
+      expect(takeover.isError).toBeUndefined();
+      expect(stateManager.getTask("1.1.2").lease).toMatchObject({ owner_id: "owner-b" });
+    });
+
+    it("reports missing cycles and tasks as errors", async () => {
+      const empty = new StateManager(join(tempDir, "empty"));
+      const noCycle = await handleTaskRenew({ task_id: "1.1.2", owner_id: "owner-a", attempt_id: "attempt-a" }, empty, tempDir);
+      const noTask = await handleTaskRenew({ task_id: "9.9.9", owner_id: "owner-a", attempt_id: "attempt-a" }, stateManager, tempDir);
+
+      expect(noCycle.isError).toBe(true);
+      expect(noTask.isError).toBe(true);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // task_complete
   // -----------------------------------------------------------------------
 
@@ -423,6 +504,28 @@ describe("gate tools", async () => {
     beforeEach(() => {
       // Put task 1.1.2 into "doing" so it can be completed
       stateManager.transition("1.1.2", "doing");
+    });
+
+    it("rejects legacy completion for a leased task", async () => {
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks[1];
+      task.lease = {
+        owner_id: "other-owner",
+        attempt_id: "other-attempt",
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      };
+      stateManager.save(state);
+
+      const result = await handleTaskComplete(
+        { task_id: "1.1.2" },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain('not owned by owner "legacy"');
+      expect(checkGate0Exit).not.toHaveBeenCalled();
     });
 
     // 3. Runs gate 0 checks and transitions to done on pass
@@ -510,6 +613,7 @@ describe("gate tools", async () => {
       }));
 
       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
+      await vi.waitFor(() => expect(checkGate0Exit).toHaveBeenCalledTimes(1));
       const evidence = JSON.parse(readFileSync(join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json"), "utf-8"));
 
        expect(evidence.gate_0_attempt).toMatchObject({ version: 1 });
@@ -560,9 +664,11 @@ describe("gate tools", async () => {
         });
       });
 
-      const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
-      const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
-      const liveEvidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
+       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
+       await vi.waitFor(() => expect(checkGate0Exit).toHaveBeenCalledTimes(1));
+       const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
+       await vi.waitFor(() => expect(JSON.parse(readFileSync(evidencePath, "utf-8")).gate_0_attempt.current_check).toBeDefined());
+       const liveEvidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
 
       expect(liveEvidence.gate_0_attempt).toMatchObject({
         current_check: {
@@ -597,10 +703,11 @@ describe("gate tools", async () => {
 
       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
       const evidenceManager = new EvidenceManager(tempDir);
+      const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
+      await vi.waitFor(() => expect(JSON.parse(readFileSync(evidencePath, "utf-8")).gate_0_attempt.current_check).toBeDefined());
       const liveStatus = extractText(handleCycleStatus(stateManager, evidenceManager, tempDir));
-      const liveDiagnose = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+      const liveDiagnose = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
-       const evidencePath = join(tempDir, ".rigor", "evidence", "gate_0-task-1.1.2.json");
        const liveEvidence = readFileSync(evidencePath, "utf-8");
        expect(liveStatus).toContain("Active Task: 1.1.2 Second task");
        expect(liveStatus).toMatch(/Gate 0: executing tests \(\d+ms elapsed, timeout: 5000ms\)/);
@@ -621,7 +728,7 @@ describe("gate tools", async () => {
       await completion;
 
       const terminalStatus = extractText(handleCycleStatus(stateManager, evidenceManager));
-      const terminalDiagnose = extractText(handleCycleDiagnose(stateManager, evidenceManager, tempDir));
+      const terminalDiagnose = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
       expect(terminalStatus).not.toContain("Gate 0: executing");
       expect(terminalDiagnose).not.toContain("Executing Gate 0 attempts:");
     });
@@ -637,8 +744,8 @@ describe("gate tools", async () => {
 
       const completion = handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
       const evidenceManager = new EvidenceManager(tempDir);
-      const preview = handleCycleReset({ confirm: false }, stateManager, evidenceManager, tempDir);
-      const reset = handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir);
+      const preview = await handleCycleReset({ confirm: false }, stateManager, evidenceManager, tempDir);
+      const reset = await handleCycleReset({ confirm: true }, stateManager, evidenceManager, tempDir);
 
       expect(preview.isError).toBe(true);
       expect(reset.isError).toBe(true);
@@ -887,6 +994,55 @@ describe("gate tools", async () => {
       expect(task.status).toBe("failed");
       expect(task.gate_0.passed).toBe(false);
       expect(task.gate_0.evidence_path).toContain("gate_0-task-1.1.2.json");
+    });
+
+    it("rejects a taken-over attempt at the progress boundary without canonical mutation", async () => {
+      const initialState = stateManager.load()!;
+      initialState.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease = { owner_id: "owner-a", attempt_id: "attempt-a", lease_expires_at: new Date(Date.now() + 60_000).toISOString() };
+      stateManager.save(initialState);
+      const attemptId = "attempt-a";
+      checkGate0Exit.mockImplementationOnce(async (_taskId, _config, _projectRoot, options) => {
+        const state = stateManager.load()!;
+        const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+        task.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+        stateManager.save(state);
+        await handleTaskStart({ task_id: "1.1.2", owner_id: "owner-b", takeover: true }, stateManager, config, tempDir);
+        await options.onCheckStart({ check_name: "tests", command: "npm test" });
+        return { passed: true, checks: [{ name: "tests", passed: true, detail: "All tests passed" }] };
+      });
+
+      const result = await handleTaskComplete({ task_id: "1.1.2", owner_id: "owner-a", attempt_id: attemptId }, stateManager, config, tempDir);
+      const evidence = new EvidenceManager(tempDir);
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("stale");
+      expect(stateManager.getTask("1.1.2")).toMatchObject({ status: "doing", lease: { owner_id: "owner-b" } });
+      expect(evidence.load("gate_0", "1.1.2")?.gate_0_attempt?.finished_at).toBeUndefined();
+      expect(existsSync(evidence.attemptPathFor("1.1.2", attemptId))).toBe(true);
+    });
+
+    it("retains thrown stale attempt history without transitioning the takeover", async () => {
+      const initialState = stateManager.load()!;
+      initialState.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease = { owner_id: "owner-a", attempt_id: "attempt-a", lease_expires_at: new Date(Date.now() + 60_000).toISOString() };
+      stateManager.save(initialState);
+      const attemptId = "attempt-a";
+      checkGate0Exit.mockImplementationOnce(async () => {
+        const state = stateManager.load()!;
+        const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+        task.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+        stateManager.save(state);
+        await handleTaskStart({ task_id: "1.1.2", owner_id: "owner-b", takeover: true }, stateManager, config, tempDir);
+        throw new Error("runner unavailable");
+      });
+
+      const result = await handleTaskComplete({ task_id: "1.1.2", owner_id: "owner-a", attempt_id: attemptId }, stateManager, config, tempDir);
+      const evidence = new EvidenceManager(tempDir);
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("stale");
+      expect(stateManager.getTask("1.1.2")).toMatchObject({ status: "doing", lease: { owner_id: "owner-b" } });
+      expect(evidence.load("gate_0", "1.1.2")?.gate_0_attempt?.finished_at).toBeUndefined();
+      expect(evidence.latestTerminalGate0Attempt("1.1.2")?.gate_0_attempt).toMatchObject({ id: attemptId, outcome: "execution_error" });
     });
 
     // 6. Rejects task not in "doing" status

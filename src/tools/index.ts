@@ -8,9 +8,11 @@ export { ProjectContextRegistry, resolveProjectRoot } from "../context.js";
 export type { ProjectRootResolution, RequestContext } from "../context.js";
 export { handleCycleInit, handleCycleStatus } from "./cycle.js";
 
+export { projectRootSchema, resolveRequestContext, responseResult } from "./lifecycle.js";
+
 export { registerGateTools } from "./gate.js";
-export type { TaskStartParams, TaskCompleteParams } from "./gate.js";
-export { handleTaskStart, handleTaskComplete } from "./gate.js";
+export type { TaskStartParams, TaskCompleteParams, TaskRenewParams } from "../services/task-lifecycle.js";
+export { handleTaskStart, handleTaskComplete, handleTaskRenew } from "../services/task-lifecycle.js";
 
 export { registerReviewTools } from "./review.js";
 export type {
@@ -18,14 +20,14 @@ export type {
   ReviewSubmitParams,
   AcceptStartParams,
   AcceptSubmitParams,
-} from "./review.js";
+} from "../services/review-lifecycle.js";
 export {
   handleReviewStart,
   handleReviewSubmit,
   handleAcceptStart,
   handleAcceptSubmit,
   handlePhaseAdvance,
-} from "./review.js";
+} from "../services/review-lifecycle.js";
 
 export { registerRecoveryTools } from "./recovery.js";
 export type {
@@ -34,7 +36,7 @@ export type {
   TaskManageParams,
   EpicManageParams,
   PhaseManageParams,
-} from "./recovery.js";
+} from "../services/recovery-lifecycle.js";
 export {
   handleCycleReset,
   handleTaskRetry,
@@ -42,7 +44,7 @@ export {
   handleEpicManage,
   handlePhaseManage,
   handleCycleDiagnose,
-} from "./recovery.js";
+} from "../services/recovery-lifecycle.js";
 
 export { registerSyncTools, handleSyncStatus, handleSyncRetry, handleSyncReplay, handleSyncEnable } from "./sync.js";
 export type { SyncRetryParams, SyncReplayParams, SyncEnableParams } from "./sync.js";

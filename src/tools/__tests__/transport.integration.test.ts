@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { withHarnessSessions } from "../../testing/transport-harness.js";
+import { createHarnessSession, withHarnessSessions } from "../../testing/transport-harness.js";
 
 function makeFixture(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `rigor-transport-${name}-`));
@@ -26,6 +26,51 @@ describe("cross-client transport harness", () => {
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  it("matches the README MCP tool inventory to the actual server tools/list response", async () => {
+    const session = await createHarnessSession(process.cwd(), "opencode");
+    try {
+      const inventory = await session.client.listTools();
+      const documentedSection = readFileSync(join(process.cwd(), "README.md"), "utf-8")
+        .split("## MCP tools", 2)[1]
+        .split("## Configuration", 1)[0];
+      const documented = [...documentedSection.matchAll(/\| `([^`]+)` \|/g)]
+        .map((match) => match[1])
+        .sort();
+      const registered = inventory.tools.map((tool) => tool.name).sort();
+
+      expect(registered).toHaveLength(23);
+      expect(documented).toEqual(registered);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("rejects relative project roots for cycle and sync tools", async () => {
+    const project = makeFixture("relative-root");
+    roots.push(project);
+    const session = await createHarnessSession(project, "opencode");
+
+    try {
+      const requests: Array<[string, Record<string, unknown>]> = [
+        ["cycle_init", { plan_path: "plan.md", project_root: "relative-root" }],
+        ["cycle_reload", { project_root: "relative-root" }],
+        ["cycle_status", { project_root: "relative-root" }],
+        ["sync_status", { project_root: "relative-root" }],
+        ["sync_retry", { provider: "test", project_root: "relative-root" }],
+        ["sync_replay", { provider: "test", project_root: "relative-root" }],
+        ["sync_enable", { provider: "test", project_root: "relative-root" }],
+      ];
+
+      for (const [tool, params] of requests) {
+        const result = await session.call(tool, params);
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("project_root must be an absolute path");
+      }
+    } finally {
+      await session.close();
+    }
   });
 
   it("runs concurrent client-style lifecycle, gate, and recovery flows independently", async () => {
@@ -90,6 +135,44 @@ describe("cross-client transport harness", () => {
       const status = await session.call("cycle_status");
       expect(status.isError).toBeUndefined();
       expect(text(status)).toContain(project);
+    });
+  });
+
+  it("renews leases per project root and rejects stale attempts over the transport", async () => {
+    const projectA = makeFixture("renew-a");
+    const projectB = makeFixture("renew-b");
+    roots.push(projectA, projectB);
+
+    await withHarnessSessions([
+      { projectRoot: projectA, clientStyle: "opencode" },
+      { projectRoot: projectB, clientStyle: "claude" },
+    ], async (sessions) => {
+      await Promise.all(sessions.map((session) => session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true })));
+      await Promise.all(sessions.map((session, index) => session.call("task_start", { task_id: "1.1.2", owner_id: `owner-${index}` })));
+
+      const tools = await sessions[0].client.listTools();
+      expect(tools.tools.map((tool) => tool.name)).toContain("task_renew");
+
+      const leaseA = JSON.parse(readFileSync(join(projectA, ".rigor", "state.json"), "utf-8"))
+        .phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").lease;
+
+      const renewed = await sessions[0].call("task_renew", {
+        task_id: "1.1.2",
+        owner_id: leaseA.owner_id,
+        attempt_id: leaseA.attempt_id,
+        project_root: projectA,
+      });
+      expect(renewed.isError).toBeUndefined();
+      expect(text(renewed)).toContain("lease renewed");
+
+      const stale = await sessions[1].call("task_renew", {
+        task_id: "1.1.2",
+        owner_id: leaseA.owner_id,
+        attempt_id: leaseA.attempt_id,
+        project_root: projectB,
+      });
+      expect(stale.isError).toBe(true);
+      expect(text(stale)).toContain("not renewed");
     });
   });
 

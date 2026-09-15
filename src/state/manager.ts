@@ -13,16 +13,23 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join, basename } from "node:path";
-import { isValidTransition, ALL_STATUSES } from "./schema.js";
+import { isValidTransition, ALL_STATUSES, TASK_LEASE_DURATION_MS } from "./schema.js";
 import { EntityNotFoundError, InvalidTransitionError } from "./errors.js";
 import { validateState } from "./validator.js";
 import type { ValidationResult } from "./validator.js";
 import type {
   CycleState,
   EpicState,
+  LeaseFenceAssertion,
+  LeaseFenceMismatchReason,
+  LeaseFenceResult,
+  LeaseRenewalResult,
+  LegacyLeaseFenceResult,
   PhaseState,
   Status,
+  TaskLease,
   TaskState,
 } from "./schema.js";
 import type { SyncManager } from "../sync/index.js";
@@ -137,6 +144,7 @@ export class StateManager {
 
     // Fire cycle_initialized sync event
     this.emitSyncEvent({
+      event_id: randomUUID(),
       type: "cycle_initialized",
       entity_type: "cycle",
       entity_id: state.cycle_id,
@@ -184,6 +192,7 @@ export class StateManager {
     const eventType = transitionToEventType(entityType, toStatus);
     if (eventType) {
       this.emitSyncEvent({
+        event_id: randomUUID(),
         type: eventType,
         entity_type: entityType,
         entity_id: entityId,
@@ -229,6 +238,71 @@ export class StateManager {
   // -----------------------------------------------------------------------
   // Lookups
   // -----------------------------------------------------------------------
+
+  assertPersistedLease(assertion: LeaseFenceAssertion): LeaseFenceResult {
+    const state = this.load();
+    if (state === null) {
+      throw new EntityNotFoundError("task", assertion.task_id);
+    }
+
+    const task = this.findTask(state, assertion.task_id);
+    if (!task) {
+      throw new EntityNotFoundError("task", assertion.task_id);
+    }
+
+    if (task.status !== "doing") {
+      return this.leaseFenceMismatch(assertion.task_id, "status_changed");
+    }
+    if (!task.lease || !this.isValidLease(task.lease)) {
+      return this.leaseFenceMismatch(assertion.task_id, "malformed_timestamp");
+    }
+    if (task.lease.owner_id !== assertion.owner_id) {
+      return this.leaseFenceMismatch(assertion.task_id, "owner_changed");
+    }
+    if (task.lease.attempt_id !== assertion.attempt_id) {
+      return this.leaseFenceMismatch(assertion.task_id, "attempt_changed");
+    }
+    if (Date.parse(task.lease.lease_expires_at) <= (assertion.now ?? Date.now())) {
+      return this.leaseFenceMismatch(assertion.task_id, "lease_expired");
+    }
+
+    return { ok: true, state, task, lease: task.lease };
+  }
+
+  renewPersistedLease(assertion: LeaseFenceAssertion): LeaseRenewalResult {
+    const fence = this.assertPersistedLease(assertion);
+    if (!fence.ok) return fence;
+
+    const now = assertion.now ?? Date.now();
+    const renewed: TaskLease = {
+      ...fence.lease,
+      lease_expires_at: new Date(now + TASK_LEASE_DURATION_MS).toISOString(),
+    };
+    fence.task.lease = renewed;
+    this.save(fence.state);
+
+    return { ok: true, state: fence.state, task: fence.task, lease: renewed };
+  }
+
+  assertPersistedLegacyLease(taskId: string): LegacyLeaseFenceResult {
+    const state = this.load();
+    if (state === null) {
+      throw new EntityNotFoundError("task", taskId);
+    }
+
+    const task = this.findTask(state, taskId);
+    if (!task) {
+      throw new EntityNotFoundError("task", taskId);
+    }
+    if (task.status !== "doing") {
+      return this.leaseFenceMismatch(taskId, "status_changed");
+    }
+    if (task.lease && !this.isValidLease(task.lease)) {
+      return this.leaseFenceMismatch(taskId, "malformed_timestamp");
+    }
+
+    return { ok: true, state, task };
+  }
 
   /**
    * Find a task by id (e.g., "1.1.1"). Throws if not found.
@@ -300,6 +374,34 @@ export class StateManager {
    * - Two dot-separated segments (e.g. "1.1") = epic
    * - Three dot-separated segments (e.g. "1.1.1") = task
    */
+  private findTask(state: CycleState, taskId: string): TaskState | undefined {
+    for (const phase of state.phases) {
+      for (const epic of phase.epics) {
+        const task = epic.tasks.find((candidate) => candidate.id === taskId);
+        if (task) return task;
+      }
+    }
+    return undefined;
+  }
+
+  private isValidLease(lease: TaskLease): boolean {
+    return (
+      typeof lease.owner_id === "string" &&
+      lease.owner_id.length > 0 &&
+      typeof lease.attempt_id === "string" &&
+      lease.attempt_id.length > 0 &&
+      typeof lease.lease_expires_at === "string" &&
+      Number.isFinite(Date.parse(lease.lease_expires_at))
+    );
+  }
+
+  private leaseFenceMismatch(
+    taskId: string,
+    reason: LeaseFenceMismatchReason,
+  ): Exclude<LeaseFenceResult, { ok: true }> {
+    return { ok: false, recoverable: true, reason, task_id: taskId };
+  }
+
   private inferEntityType(entityId: string): SyncEntityType {
     const parts = entityId.split(".");
     if (parts.length >= 3) return "task";

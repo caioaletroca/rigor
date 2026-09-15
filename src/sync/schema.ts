@@ -40,6 +40,7 @@ export type SyncEntityType = "cycle" | "phase" | "epic" | "task";
  * A lifecycle event emitted by the state machine.
  */
 export interface SyncEvent {
+  event_id: string;
   type: SyncEventType;
   entity_type: SyncEntityType;
   entity_id: string;

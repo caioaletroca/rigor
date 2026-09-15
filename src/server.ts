@@ -9,12 +9,10 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadConfig } from "./config/index.js";
 import { ProjectContextRegistry } from "./context.js";
 import { StateManager } from "./state/index.js";
 import { EvidenceManager } from "./evidence/index.js";
 import { SyncManager } from "./sync/index.js";
-import { createProviders } from "./sync/factory.js";
 import {
   registerCycleTools,
   registerGateTools,
@@ -45,22 +43,9 @@ export interface ServerContext {
  * exercise tool registration without stdio.
  */
 export function createServer(projectRoot: string, sharedRegistry?: ProjectContextRegistry): ServerContext {
-  const config = loadConfig(projectRoot);
-
-  // Build sync layer if enabled
-  let syncManager: SyncManager | undefined;
-  if (config.sync?.enabled) {
-    const providers = createProviders(config.sync);
-    syncManager = new SyncManager(
-      projectRoot,
-      providers,
-      config.sync.primary,
-    );
-  }
-
-  const registry = sharedRegistry ?? new ProjectContextRegistry(projectRoot, syncManager);
-  const stateManager = registry.getByRoot(projectRoot).stateManager;
-  const evidenceManager = registry.getByRoot(projectRoot).evidenceManager;
+  const registry = sharedRegistry ?? new ProjectContextRegistry(projectRoot);
+  const context = registry.getByRoot(projectRoot);
+  const { stateManager, evidenceManager, syncManager, config } = context;
 
   const server = new McpServer(
     { name: "rigor-gate-server", version: "0.1.0" },

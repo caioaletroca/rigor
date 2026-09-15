@@ -285,9 +285,9 @@ describe("Gate 1 — infrastructure check", async () => {
   });
 
   // -----------------------------------------------------------------------
-  // 11. No audit command configured → still passes on dependency change
+  // 11. No audit command configured → fails and preserves baseline
   // -----------------------------------------------------------------------
-  it("passes with no audit command when dependencies change", async () => {
+  it("fails with actionable audit metadata and preserves the baseline when dependencies change without an audit command", async () => {
     const config = makeConfig({ enabled: true, audit_command: "" });
 
     writeFileSync(join(tempDir, "package.json"), '{ "name": "v1" }');
@@ -297,11 +297,13 @@ describe("Gate 1 — infrastructure check", async () => {
 
     const result = await checkGate1Exit(config, tempDir);
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
     expect(result.skipped).toBe(false);
-    expect(result.checks).toHaveLength(1);
-    expect(result.checks[0].name).toBe("dependency_changes");
+    const auditCheck = result.checks.find((c) => c.name === "audit");
+    expect(auditCheck).toMatchObject({ name: "audit", passed: false });
+    expect(auditCheck?.detail).toContain("gates.gate_1.audit_command");
     expect(runCommand).not.toHaveBeenCalled();
+    expect(detectDependencyChanges(tempDir).changed).toBe(true);
   });
 
   // -----------------------------------------------------------------------

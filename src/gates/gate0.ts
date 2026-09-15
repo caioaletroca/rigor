@@ -32,7 +32,7 @@ export interface Gate0Progress {
 }
 
 export interface Gate0Options {
-  onCheckStart?: (progress: Gate0Progress) => void;
+  onCheckStart?: (progress: Gate0Progress) => void | Promise<void>;
 }
 
 function formatDuration(durationMs: number | undefined): string {
@@ -81,7 +81,7 @@ export async function checkGate0Exit(
     }
 
     ranAnyCommand = true;
-    options.onCheckStart?.({
+    await options.onCheckStart?.({
       check_name: check.name,
       command: check.command,
       configured_timeout_ms: check.timeout_ms,
@@ -296,7 +296,7 @@ export async function evaluateTestFiles(
   projectRoot: string,
   options: Gate0Options = {},
 ): Promise<CheckResult> {
-  options.onCheckStart?.({
+  await options.onCheckStart?.({
     check_name: "test_files",
     command: "git status --porcelain",
   });
@@ -305,8 +305,12 @@ export async function evaluateTestFiles(
   if (result.exit_code !== 0) {
     return {
       name: "test_files",
-      passed: true,
-      detail: "Skipped: not a git repository or git unavailable",
+      passed: false,
+      detail:
+        "Could not evaluate require_test_files because `git status --porcelain` failed. Ensure Git is installed and this project is a Git working tree before retrying.",
+      command: "git status --porcelain",
+      exit_code: result.exit_code,
+      duration_ms: result.duration_ms,
     };
   }
 
