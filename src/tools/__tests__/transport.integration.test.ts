@@ -80,7 +80,7 @@ describe("cross-client transport harness", () => {
     roots.push(project);
 
     await withHarnessSessions([{ projectRoot: project, clientStyle: "opencode" }], async ([session]) => {
-      const initialized = await session.call("cycle_init", { plan_path: "plan.md" });
+      const initialized = await session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true });
       expect(initialized.isError).toBeUndefined();
 
       const invalid = await session.call("cycle_status", { project_root: "relative-project" });
