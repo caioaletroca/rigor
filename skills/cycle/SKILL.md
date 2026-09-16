@@ -44,7 +44,17 @@ In Continuous mode, Gate 8 failure is not a user-confirmation point. Read the fi
 
 ## Lifecycle Sequence
 
-Every lifecycle tool call must pass the active isolated worktree's absolute `project_root`; never rely on the MCP server default, which may point at another checkout. Use the same root for initialization, tasks, reviews, acceptance, reload, reset, and management calls. `cycle_status` and `cycle_diagnose` are currently server-root-bound, so use them only when the server is configured for this worktree.
+Every lifecycle tool call must pass the active isolated worktree's absolute `project_root`; never rely on the MCP server fallback root, which may point at another checkout. Use the same root for initialization, status, diagnostics, tasks, reviews, acceptance, phase advancement, reload, reset, and management calls.
+
+### Stale client schema recovery
+
+Before any lifecycle mutation, confirm the connected client exposes the required tool and `project_root` parameter:
+
+| Situation | Required action |
+|-----------|-----------------|
+| Client exposes the intended lifecycle tool and its `project_root` parameter | Call it with the active worktree's absolute `project_root`, even when the server fallback root differs. |
+| Client does not expose a tool or `project_root` parameter advertised by `rigor_status` | Reconnect OpenCode/MCP to refresh the client's cached tool schema, then verify the exposed schema before mutating state. |
+| `rigor_status` reports a fallback root different from the active worktree, but the client exposes the required root-aware schema | Continue with explicit `project_root`; do not restart Rigor solely because the fallback root differs. |
 
 ```
 cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/worktree" })
@@ -102,9 +112,9 @@ cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/workt
 
 The server parses the plan, creates initial state, and returns the cycle summary. If a cycle already exists for this worktree, diagnose it and use `cycle_reset` only as a last resort; never reset a foreign cycle.
 
-**Project root:** when you pass an **absolute** `plan_path` that sits inside a git repository whose root differs from the server's `--project-root`, `cycle_init` writes `.rigor/` state and evidence under the plan's git root (the reliable signal) and returns a `warning` plus the derived `project_root` in the summary. `cycle_status`/`task_*` still read the server root, so the warning is your cue to restart the server with the correct `--project-root`. A relative `plan_path`, or a plan outside any repo, keeps the server root unchanged.
+**Project root:** when you pass an **absolute** `plan_path` that sits inside a git repository whose root differs from the server's fallback root, `cycle_init` writes `.rigor/` state and evidence under the plan's git root and returns a `warning` plus the derived `project_root` in the summary. Continue every lifecycle call with that active worktree root explicitly. A differing fallback root does not require a Rigor restart when the client exposes the root-aware tool schema. Reconnect OpenCode/MCP only when `rigor_status` advertises a needed tool or parameter that the client does not expose. A relative `plan_path`, or a plan outside any repo, keeps the fallback root unchanged.
 
-After init, call `cycle_status` to see the full state and confirm Phase 1 tasks are ready.
+After init, call `cycle_status({ project_root: "C:/path/to/worktree" })` to see the full state and confirm Phase 1 tasks are ready.
 
 ---
 
@@ -115,7 +125,7 @@ For each task in order within the current phase:
 ### 2a. Start the task
 
 ```
-task_start({ task_id: "1.1.1" })
+task_start({ task_id: "1.1.1", project_root: "C:/path/to/worktree" })
 ```
 
 Entry criteria enforced by the server:
@@ -131,7 +141,7 @@ Read the plan's task description. Write the code, tests, and any supporting file
 ### 2c. Complete the task
 
 ```
-task_complete({ task_id: "1.1.1" })
+task_complete({ task_id: "1.1.1", project_root: "C:/path/to/worktree" })
 ```
 
 Gate 0 exit criteria enforced by the server:
@@ -142,7 +152,7 @@ Gate 0 exit criteria enforced by the server:
 
 **Duplicate completion calls:** Within one server, a duplicate `task_complete` while Gate 0 is running returns the active attempt identity and polling guidance; it never reruns checks. Poll `cycle_status` for progress, then call `task_complete` again only after the task reaches a terminal state. A duplicate request for a terminal `done` or `failed` task with matching persisted Gate 0 evidence returns that evidence idempotently without rerunning checks.
 
-**If Gate 0 fails:** The task transitions to `failed` (it does not remain in "doing"). Read the evidence, fix the failing check, then call `task_start({ task_id })` again -- its entry criteria accept a `failed` task -- to move it back to "doing" and retry. Never fabricate evidence to force a pass.
+**If Gate 0 fails:** The task transitions to `failed` (it does not remain in "doing"). Read the evidence, fix the failing check, then call `task_start({ task_id, project_root })` again -- its entry criteria accept a `failed` task -- to move it back to "doing" and retry. Never fabricate evidence to force a pass.
 
 ---
 
@@ -153,7 +163,7 @@ After all tasks in an epic pass Gate 0:
 ### 3a. Start review
 
 ```
-review_start({ epic_id: "1.1" })
+review_start({ epic_id: "1.1", project_root: "C:/path/to/worktree" })
 ```
 
 The server validates all tasks are done and passed Gate 0. Custom `pre_review` gates run if configured.
@@ -161,7 +171,7 @@ The server validates all tasks are done and passed Gate 0. Custom `pre_review` g
 ### 3b. Submit review findings
 
 ```
-review_submit({ epic_id: "1.1", submissions: "<JSON>" })
+review_submit({ epic_id: "1.1", submissions: "<JSON>", project_root: "C:/path/to/worktree" })
 ```
 
 The `submissions` parameter is a JSON array of `ReviewFindings` objects:
@@ -198,7 +208,7 @@ automatically.
 ### 4a. Start acceptance
 
 ```
-accept_start({ epic_id: "1.1" })
+accept_start({ epic_id: "1.1", project_root: "C:/path/to/worktree" })
 ```
 
 Validates Gate 8 passed.
@@ -209,7 +219,8 @@ Validates Gate 8 passed.
 accept_submit({
   epic_id: "1.1",
   criteria: "<JSON>",
-  user_approved: true
+  user_approved: true,
+  project_root: "C:/path/to/worktree"
 })
 ```
 
@@ -230,7 +241,7 @@ Gate 9 checks: all criteria met, user approval given (if required by config).
 After all epics in the current phase pass Gates 8 and 9:
 
 ```
-phase_advance()
+phase_advance({ project_root: "C:/path/to/worktree" })
 ```
 
 The server validates all epics are "done", marks the phase as complete, and activates the next phase. If this is the last phase, it snapshots the completed state and evidence under `.rigor/history/`, validates the archive, clears active artifacts, and finishes the cycle. If archival fails, active artifacts remain for recovery.
@@ -244,7 +255,7 @@ Rolling-wave plans leave later phases at epic level (no tasks) at plan time. The
 When execution reaches a phase whose epics still have no tasks, elaborate those tasks in the plan file, then:
 
 ```
-cycle_reload()   -- re-parse the plan, merge new phases/epics/tasks into the running cycle
+cycle_reload({ project_root: "C:/path/to/worktree" })   -- re-parse the plan, merge new phases/epics/tasks into the running cycle
 ```
 
 `cycle_reload` preserves the status and gate evidence of everything already in progress or done — it only **adds** newly-appeared entities. Do NOT use `cycle_reset` for this (that destroys all evidence). Run `cycle_reload` before `review_start` on any epic that was epic-level at init.
@@ -258,7 +269,7 @@ When something goes wrong, follow this order:
 ### 1. Diagnose first
 
 ```
-cycle_diagnose()
+cycle_diagnose({ project_root: "C:/path/to/worktree" })
 ```
 
 Returns cycle health (healthy/degraded/corrupt), stuck entities, failed tasks, validation errors, evidence audit, and actionable suggestions referencing the exact management tool and params to use. Read the report before taking action.
@@ -276,32 +287,32 @@ Three granular tools for targeted fixes. All use the preview/confirm pattern (se
 **task_manage** -- force_status, skip, retry, or reset_evidence for a single task:
 
 ```
-task_manage({ task_id: "1.1.1", action: "retry", confirm: true })
-task_manage({ task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true })
-task_manage({ task_id: "1.1.1", action: "skip", confirm: true })
-task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })
+task_manage({ task_id: "1.1.1", action: "retry", confirm: true, project_root: "C:/path/to/worktree" })
+task_manage({ task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true, project_root: "C:/path/to/worktree" })
+task_manage({ task_id: "1.1.1", action: "skip", confirm: true, project_root: "C:/path/to/worktree" })
+task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true, project_root: "C:/path/to/worktree" })
 ```
 
 **epic_manage** -- force_status, reset_tasks, or skip for an epic (with optional cascade to child tasks):
 
 ```
-epic_manage({ epic_id: "1.1", action: "force_status", target_status: "pending", cascade: true, confirm: true })
-epic_manage({ epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: true })
-epic_manage({ epic_id: "1.1", action: "skip", cascade: true, confirm: true })
+epic_manage({ epic_id: "1.1", action: "force_status", target_status: "pending", cascade: true, confirm: true, project_root: "C:/path/to/worktree" })
+epic_manage({ epic_id: "1.1", action: "reset_tasks", cascade: false, confirm: true, project_root: "C:/path/to/worktree" })
+epic_manage({ epic_id: "1.1", action: "skip", cascade: true, confirm: true, project_root: "C:/path/to/worktree" })
 ```
 
 **phase_manage** -- force_status or skip for a phase (skip always cascades to all child epics and tasks):
 
 ```
-phase_manage({ phase_id: "1", action: "skip", confirm: true })
-phase_manage({ phase_id: "1", action: "force_status", target_status: "done", confirm: true })
+phase_manage({ phase_id: "1", action: "skip", confirm: true, project_root: "C:/path/to/worktree" })
+phase_manage({ phase_id: "1", action: "force_status", target_status: "done", confirm: true, project_root: "C:/path/to/worktree" })
 ```
 
 ### 3. Reset as last resort
 
 ```
-cycle_reset({ confirm: false })  -- preview what will be lost
-cycle_reset({ confirm: true })   -- destroy state and evidence
+cycle_reset({ confirm: false, project_root: "C:/path/to/worktree" })  -- preview what will be lost
+cycle_reset({ confirm: true, project_root: "C:/path/to/worktree" })   -- destroy state and evidence
 ```
 
 Only use this when the cycle is unrecoverable. Requires explicit confirmation.
