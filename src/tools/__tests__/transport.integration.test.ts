@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { REGISTERED_TOOL_NAMES, RIGOR_SCHEMA_VERSION, ROOT_AWARE_LIFECYCLE_TOOLS } from "../server-info.js";
 import { createHarnessSession, withHarnessSessions } from "../../testing/transport-harness.js";
 
 function makeFixture(name: string): string {
@@ -40,8 +41,35 @@ describe("cross-client transport harness", () => {
         .sort();
       const registered = inventory.tools.map((tool) => tool.name).sort();
 
-      expect(registered).toHaveLength(23);
+      expect(registered).toEqual(REGISTERED_TOOL_NAMES);
       expect(documented).toEqual(registered);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("reports live server capabilities through tools/list and rigor_status", async () => {
+    const session = await createHarnessSession(process.cwd(), "opencode");
+    try {
+      const inventory = await session.client.listTools();
+      expect(inventory.tools.map((tool) => tool.name).sort()).toEqual(REGISTERED_TOOL_NAMES);
+
+      const result = await session.call("rigor_status", { client_schema_version: RIGOR_SCHEMA_VERSION });
+      const status = JSON.parse(text(result));
+      expect(status).toMatchObject({
+        schema_version: RIGOR_SCHEMA_VERSION,
+        fallback_root: process.cwd(),
+        reconnect_required: false,
+      });
+      expect(status.root_aware_lifecycle_tools).toEqual([...ROOT_AWARE_LIFECYCLE_TOOLS].sort());
+      expect(status.root_aware_lifecycle_tools).toEqual(expect.arrayContaining([
+        "cycle_status",
+        "cycle_diagnose",
+        "phase_advance",
+        "task_start",
+        "review_start",
+        "sync_status",
+      ]));
     } finally {
       await session.close();
     }

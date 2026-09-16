@@ -51,3 +51,14 @@ export type { SyncRetryParams, SyncReplayParams, SyncEnableParams } from "./sync
 
 export { registerScaffoldTools, handleNewLangPack, handleNewDomain, handleInstallCommands } from "./scaffold.js";
 export type { NewLangPackParams, NewDomainParams, InstallCommandsParams } from "./scaffold.js";
+
+export {
+  REGISTERED_TOOL_NAMES,
+  RIGOR_SCHEMA_VERSION,
+  RIGOR_SERVER_NAME,
+  RIGOR_SERVER_VERSION,
+  ROOT_AWARE_LIFECYCLE_TOOLS,
+  handleServerInfo,
+  registerServerInfoTool,
+} from "./server-info.js";
+export type { ServerInfoParams } from "./server-info.js";
