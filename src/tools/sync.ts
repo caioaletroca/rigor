@@ -172,7 +172,7 @@ export function registerSyncTools(
   registry?: ProjectContextRegistry,
   projectRoot?: string,
 ): void {
-  server.tool("sync_status", { project_root: projectRootSchema.describe("Canonical project root for this request") }, (params) => {
+  server.tool("sync_status", { project_root: projectRootSchema }, (params) => {
     const manager = params.project_root && registry ? registry.getByRoot(params.project_root).syncManager : syncManager;
     return handleSyncStatus(manager);
   });
@@ -180,7 +180,7 @@ export function registerSyncTools(
   server.tool(
     "sync_retry",
     {
-      project_root: projectRootSchema.describe("Canonical project root for this request"),
+      project_root: projectRootSchema,
       provider: z.string().describe("Name of the provider to retry events for"),
       count: z
         .number()
@@ -199,7 +199,7 @@ export function registerSyncTools(
   server.tool(
     "sync_replay",
     {
-      project_root: projectRootSchema.describe("Canonical project root for this request"),
+      project_root: projectRootSchema,
       provider: z
         .string()
         .describe("Name of the provider to replay all events to"),
@@ -213,7 +213,7 @@ export function registerSyncTools(
   server.tool(
     "sync_enable",
     {
-      project_root: projectRootSchema.describe("Canonical project root for this request"),
+      project_root: projectRootSchema,
       provider: z
         .string()
         .describe(

@@ -48,7 +48,7 @@ describe("cross-client transport harness", () => {
     }
   });
 
-  it("reports live server capabilities through tools/list and rigor_status", async () => {
+  it("reports and advertises the live root-aware lifecycle contract", async () => {
     const session = await createHarnessSession(process.cwd(), "opencode");
     try {
       const inventory = await session.client.listTools();
@@ -62,6 +62,8 @@ describe("cross-client transport harness", () => {
         reconnect_required: false,
       });
       expect(status.root_aware_lifecycle_tools).toEqual([...ROOT_AWARE_LIFECYCLE_TOOLS].sort());
+
+      const toolsByName = new Map(inventory.tools.map((tool) => [tool.name, tool]));
       expect(status.root_aware_lifecycle_tools).toEqual(expect.arrayContaining([
         "cycle_status",
         "cycle_diagnose",
@@ -70,21 +72,19 @@ describe("cross-client transport harness", () => {
         "review_start",
         "sync_status",
       ]));
-    } finally {
-      await session.close();
-    }
-  });
 
-  it("advertises project_root on every root-aware lifecycle tool", async () => {
-    const session = await createHarnessSession(process.cwd(), "opencode");
-    try {
-      const inventory = await session.client.listTools();
-      const rootAwareTools = new Map(inventory.tools.map((tool) => [tool.name, tool]));
-
-      for (const name of ROOT_AWARE_LIFECYCLE_TOOLS) {
-        expect(rootAwareTools.get(name)?.inputSchema, name).toMatchObject({
-          properties: { project_root: expect.anything() },
+      for (const name of status.root_aware_lifecycle_tools) {
+        const schema = toolsByName.get(name)?.inputSchema;
+        expect(schema, name).toMatchObject({
+          type: "object",
+          properties: {
+            project_root: {
+              type: "string",
+              description: expect.stringMatching(/absolute.*root/i),
+            },
+          },
         });
+        expect(schema?.required ?? [], name).not.toContain("project_root");
       }
     } finally {
       await session.close();
