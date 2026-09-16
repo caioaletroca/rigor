@@ -11,7 +11,7 @@ import { responseResult } from "../tools/lifecycle.js";
 import type { StateManager, TaskLease, LeaseFenceMismatchReason } from "../state/index.js";
 import { EntityNotFoundError, isValidTransition, TASK_LEASE_DURATION_MS } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
-import { loadConfig } from "../config/index.js";
+import { getGate0CheckProvenance, loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import type { GateEvidence } from "../evidence/index.js";
 import {
@@ -106,7 +106,17 @@ export async function handleTaskStart(
   const cfg = config ?? loadConfig(projectRoot);
   const gate0Readiness = evaluateGate0Readiness(cfg);
   if (!gate0Readiness.ready) {
-    return textResult(`Task ${params.task_id} blocked: ${gate0Readiness.detail}`, true);
+    const provenance = getGate0CheckProvenance(cfg);
+    const source = provenance.path
+      ? `${provenance.category} (${provenance.path})`
+      : provenance.category;
+    const overrideAdvice = provenance.category === "domain_defaults"
+      ? "Set a concrete gates.gate_0.checks list in the project config to override this domain check, or remove/resolve the domain check."
+      : "Set a concrete gates.gate_0.checks list in the project config to replace this command.";
+    return textResult(
+      `Task ${params.task_id} blocked: ${gate0Readiness.detail} Gate 0 check source: ${source}. ${overrideAdvice}`,
+      true,
+    );
   }
 
   // 1. Load state, verify cycle exists

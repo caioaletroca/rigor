@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
@@ -159,6 +159,44 @@ describe("gate tools", async () => {
       expect(stateManager.getTask("1.1.2").status).toBe("pending");
       expect(stateManager.getTask("1.1.2").lease).toBeUndefined();
       expect(existsSync(join(tempDir, ".rigor", "evidence"))).toBe(false);
+    });
+
+    it("identifies unresolved commands from project configuration with override advice", async () => {
+      evaluateGate0Readiness.mockReturnValueOnce({
+        ready: false,
+        unresolved_variables: ["lang.test_command"],
+        empty_checks: [],
+        detail: "Gate 0 has unresolved command variable(s): lang.test_command.",
+      });
+      mkdirSync(join(tempDir, ".rigor"), { recursive: true });
+      writeFileSync(join(tempDir, ".rigor", "config.yaml"), "gates:\n  gate_0:\n    checks:\n      - name: tests\n        command: \"${lang.test_command}\"\n", "utf-8");
+
+      const result = await handleTaskStart({ task_id: "1.1.2" }, stateManager, null, tempDir);
+
+      const text = extractText(result);
+      expect(text).toContain("lang.test_command");
+      expect(text).toContain(`project_config (${join(tempDir, ".rigor", "config.yaml")})`);
+      expect(text).toContain("Set a concrete gates.gate_0.checks list in the project config");
+    });
+
+    it("identifies unresolved commands from selected domain defaults with override advice", async () => {
+      evaluateGate0Readiness.mockReturnValueOnce({
+        ready: false,
+        unresolved_variables: ["lang.test_command"],
+        empty_checks: [],
+        detail: "Gate 0 has unresolved command variable(s): lang.test_command.",
+      });
+      mkdirSync(join(tempDir, "skills", "domain", "software"), { recursive: true });
+      mkdirSync(join(tempDir, ".rigor"), { recursive: true });
+      writeFileSync(join(tempDir, "skills", "domain", "software", "defaults.yaml"), "gates:\n  gate_0:\n    checks:\n      - name: tests\n        command: \"${lang.test_command}\"\n", "utf-8");
+      writeFileSync(join(tempDir, ".rigor", "config.yaml"), "domain: software\n", "utf-8");
+
+      const result = await handleTaskStart({ task_id: "1.1.2" }, stateManager, null, tempDir);
+
+      const text = extractText(result);
+      expect(text).toContain("lang.test_command");
+      expect(text).toContain(`domain_defaults (${join(tempDir, "skills", "domain", "software", "defaults.yaml")})`);
+      expect(text).toContain("override this domain check");
     });
 
     // 1. Transitions pending task to doing

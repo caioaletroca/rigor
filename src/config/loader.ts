@@ -12,6 +12,19 @@ import { parse } from "yaml";
 import { DEFAULTS } from "./schema.js";
 import type { RigorConfig, Check } from "./schema.js";
 
+export type Gate0CheckSourceCategory = "project_config" | "domain_defaults" | "core_defaults";
+
+export interface Gate0CheckProvenance {
+  category: Gate0CheckSourceCategory;
+  path?: string;
+}
+
+const gate0CheckProvenance = new WeakMap<RigorConfig, Gate0CheckProvenance>();
+
+export function getGate0CheckProvenance(config: RigorConfig): Gate0CheckProvenance {
+  return gate0CheckProvenance.get(config) ?? { category: "core_defaults" };
+}
+
 // ---------------------------------------------------------------------------
 // Deep merge helper
 // ---------------------------------------------------------------------------
@@ -254,6 +267,14 @@ function applyEnvOverrides(config: RigorConfig): void {
   }
 }
 
+function hasGate0Checks(config: Record<string, unknown>): boolean {
+  const gates = config["gates"];
+  if (!isPlainObject(gates)) return false;
+  const gate0 = gates["gate_0"];
+  if (!isPlainObject(gate0)) return false;
+  return ["checks", "test_command", "lint_command", "design_command"].some((key) => key in gate0);
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -282,25 +303,35 @@ export function loadConfig(projectRoot: string): RigorConfig {
   const projectPath = join(projectRoot, CONFIG_DIR, CONFIG_FILE);
   const projectConfig = readYamlFile(projectPath);
 
+  let gate0Source: Gate0CheckProvenance = { category: "core_defaults" };
+
   // If project config specifies a domain, load domain pack defaults
   // between core defaults and user config in the cascade.
   if (projectConfig) {
     const domain = projectConfig["domain"];
     if (typeof domain === "string" && domain !== "") {
-      const domainDefaults = loadDomainPackDefaults(domain, projectRoot);
+      const domainPath = resolveDomainPackPath(domain, projectRoot);
+      const domainDefaults = domainPath ? readYamlFile(domainPath) : null;
       if (domainDefaults) {
         base = deepMerge(base, domainDefaults);
+        if (hasGate0Checks(domainDefaults)) {
+          gate0Source = { category: "domain_defaults", path: domainPath! };
+        }
       }
     }
 
     // Merge project config on top (user always wins over domain pack + global)
     base = deepMerge(base, projectConfig);
+    if (hasGate0Checks(projectConfig)) {
+      gate0Source = { category: "project_config", path: projectPath };
+    }
   }
 
   const config = base as unknown as RigorConfig;
 
   // Migrate legacy Gate 0 fields to checks[] for backward compat.
   migrateGate0Config(config);
+  gate0CheckProvenance.set(config, gate0Source);
 
   // Layer 3: Env var overrides
   applyEnvOverrides(config);
