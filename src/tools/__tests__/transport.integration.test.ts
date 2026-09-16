@@ -10,7 +10,7 @@ function makeFixture(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `rigor-transport-${name}-`));
   execFileSync("git", ["init", "--quiet", root]);
   mkdirSync(join(root, ".rigor"));
-  writeFileSync(join(root, ".rigor", "config.yaml"), "workspace:\n  allow_override: true\n");
+  writeFileSync(join(root, ".rigor", "config.yaml"), "workspace:\n  allow_override: true\ngates:\n  gate_0:\n    allow_empty: true\n");
   cpSync(
     join(import.meta.dirname, "..", "..", "plan", "__tests__", "fixtures", "sample-plan.md"),
     join(root, "plan.md"),

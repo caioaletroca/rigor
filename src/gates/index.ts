@@ -1,5 +1,5 @@
-export { checkGate0Exit } from "./gate0.js";
-export type { Gate0Result } from "./gate0.js";
+export { checkGate0Exit, evaluateGate0Readiness } from "./gate0.js";
+export type { Gate0Result, Gate0Readiness } from "./gate0.js";
 
 export { checkGate1Exit, detectDependencyChanges, saveBaseline } from "./gate1.js";
 export type { Gate1Result } from "./gate1.js";
