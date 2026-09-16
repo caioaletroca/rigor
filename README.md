@@ -87,7 +87,7 @@ This creates `.rigor/config.yaml` with sensible defaults for your project.
 
 `--project-root` is the server fallback for clients that do not provide a root. In an isolated worktree, pass that worktree's absolute `project_root` on every lifecycle call; it overrides the fallback without restarting Rigor. Use `rigor_status` to see the live server capabilities, fallback root, and root-aware tools.
 
-Reconnect only if the connected client’s tool inventory is stale: `rigor_status` advertises a needed tool or `project_root` parameter that the client does not expose. A fallback-root mismatch alone is not a reason to reconnect or restart. Claude Code and OpenCode installs reference the shipped skills and update automatically; Hermes installs copied `SKILL.md` files, so rerun `rigor install --client hermes` to refresh them after an update.
+Reconnect only if the connected client’s tool inventory is stale: `rigor_status` advertises a needed tool or `project_root` parameter that the client does not expose. A fallback-root mismatch alone is not a reason to reconnect or restart. Claude Code and OpenCode installs reference the shipped skills and update automatically; Hermes installs copied `SKILL.md` files, so remove the existing copied Hermes skill and then rerun `rigor install --client hermes` after an update.
 
 ### Run a cycle
 

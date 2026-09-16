@@ -3,7 +3,12 @@ import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { REGISTERED_TOOL_NAMES, RIGOR_SCHEMA_VERSION, ROOT_AWARE_LIFECYCLE_TOOLS } from "../server-info.js";
+import {
+  NON_LIFECYCLE_TOOLS,
+  REGISTERED_TOOL_NAMES,
+  RIGOR_SCHEMA_VERSION,
+  ROOT_AWARE_LIFECYCLE_TOOLS,
+} from "../server-info.js";
 import { createHarnessSession, withHarnessSessions } from "../../testing/transport-harness.js";
 
 function makeFixture(name: string): string {
@@ -64,15 +69,16 @@ describe("cross-client transport harness", () => {
       expect(status.root_aware_lifecycle_tools).toEqual([...ROOT_AWARE_LIFECYCLE_TOOLS].sort());
 
       const toolsByName = new Map(inventory.tools.map((tool) => [tool.name, tool]));
-      expect(status.root_aware_lifecycle_tools).toEqual(expect.arrayContaining([
-        "cycle_status",
-        "cycle_diagnose",
-        "phase_advance",
-        "task_start",
-        "review_start",
-        "sync_status",
-      ]));
+      const lifecycleTools = inventory.tools
+        .map((tool) => tool.name)
+        .filter((name) => !NON_LIFECYCLE_TOOLS.includes(name as typeof NON_LIFECYCLE_TOOLS[number]))
+        .sort();
+      expect(status.root_aware_lifecycle_tools).toEqual(lifecycleTools);
 
+      for (const name of NON_LIFECYCLE_TOOLS) {
+        expect(toolsByName.get(name)?.inputSchema.properties ?? {}, name).not.toHaveProperty("project_root");
+      }
+ 
       for (const name of status.root_aware_lifecycle_tools) {
         const schema = toolsByName.get(name)?.inputSchema;
         expect(schema, name).toMatchObject({

@@ -31,12 +31,16 @@ export const ROOT_AWARE_LIFECYCLE_TOOLS = [
   "task_start",
 ] as const;
 
-export const REGISTERED_TOOL_NAMES = [
-  ...ROOT_AWARE_LIFECYCLE_TOOLS,
+export const NON_LIFECYCLE_TOOLS = [
   "install_commands",
   "new_domain",
   "new_lang_pack",
   "rigor_status",
+] as const;
+
+export const REGISTERED_TOOL_NAMES = [
+  ...ROOT_AWARE_LIFECYCLE_TOOLS,
+  ...NON_LIFECYCLE_TOOLS,
 ].sort();
 
 export interface ServerInfoParams {
