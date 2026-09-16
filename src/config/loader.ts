@@ -12,7 +12,7 @@ import { parse } from "yaml";
 import { DEFAULTS } from "./schema.js";
 import type { RigorConfig, Check } from "./schema.js";
 
-export type Gate0CheckSourceCategory = "project_config" | "domain_defaults" | "core_defaults";
+export type Gate0CheckSourceCategory = "project_config" | "domain_defaults" | "global_config" | "core_defaults";
 
 export interface Gate0CheckProvenance {
   category: Gate0CheckSourceCategory;
@@ -292,18 +292,21 @@ function hasGate0Checks(config: Record<string, unknown>): boolean {
 export function loadConfig(projectRoot: string): RigorConfig {
   let base = structuredClone(DEFAULTS) as unknown as Record<string, unknown>;
 
+  let gate0Source: Gate0CheckProvenance = { category: "core_defaults" };
+
   // Layer 1: Global config
   const globalPath = getGlobalConfigPath();
   const globalConfig = readYamlFile(globalPath);
   if (globalConfig) {
     base = deepMerge(base, globalConfig);
+    if (hasGate0Checks(globalConfig)) {
+      gate0Source = { category: "global_config", path: globalPath };
+    }
   }
 
   // Layer 2: Project config
   const projectPath = join(projectRoot, CONFIG_DIR, CONFIG_FILE);
   const projectConfig = readYamlFile(projectPath);
-
-  let gate0Source: Gate0CheckProvenance = { category: "core_defaults" };
 
   // If project config specifies a domain, load domain pack defaults
   // between core defaults and user config in the cascade.
