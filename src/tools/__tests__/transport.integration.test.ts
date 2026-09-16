@@ -75,6 +75,22 @@ describe("cross-client transport harness", () => {
     }
   });
 
+  it("advertises project_root on every root-aware lifecycle tool", async () => {
+    const session = await createHarnessSession(process.cwd(), "opencode");
+    try {
+      const inventory = await session.client.listTools();
+      const rootAwareTools = new Map(inventory.tools.map((tool) => [tool.name, tool]));
+
+      for (const name of ROOT_AWARE_LIFECYCLE_TOOLS) {
+        expect(rootAwareTools.get(name)?.inputSchema, name).toMatchObject({
+          properties: { project_root: expect.anything() },
+        });
+      }
+    } finally {
+      await session.close();
+    }
+  });
+
   it("rejects relative project roots for cycle and sync tools", async () => {
     const project = makeFixture("relative-root");
     roots.push(project);
@@ -118,7 +134,7 @@ describe("cross-client transport harness", () => {
       expect(initialized.every((result) => !result.isError)).toBe(true);
 
       const statuses = await Promise.all(
-        sessions.map((session) => session.call("cycle_status")),
+        sessions.map((session) => session.call("cycle_status", {})),
       );
       expect(text(statuses[0])).toContain(projectA);
       expect(text(statuses[1])).toContain(projectB);
@@ -142,7 +158,7 @@ describe("cross-client transport harness", () => {
       expect(recovered.every((result) => !result.isError)).toBe(true);
 
       const finalStatuses = await Promise.all(
-        sessions.map((session) => session.call("cycle_status")),
+        sessions.map((session) => session.call("cycle_status", {})),
       );
       expect(finalStatuses.every((result) => text(result).includes("Active Task: none"))).toBe(true);
     });
@@ -160,7 +176,7 @@ describe("cross-client transport harness", () => {
       expect(invalid.isError).toBe(true);
       expect(text(invalid)).toContain("project_root must be an absolute path");
 
-      const status = await session.call("cycle_status");
+      const status = await session.call("cycle_status", {});
       expect(status.isError).toBeUndefined();
       expect(text(status)).toContain(project);
     });
@@ -220,7 +236,7 @@ describe("cross-client transport harness", () => {
       async (sessions) => {
         const initialized = await Promise.all(sessions.map((session) => session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true })));
         expect(initialized.every((result) => !result.isError)).toBe(true);
-        const statuses = await Promise.all(sessions.map((session) => session.call("cycle_status")));
+        const statuses = await Promise.all(sessions.map((session) => session.call("cycle_status", {})));
         const statusText = statuses.map(text);
         for (let index = 0; index < statusText.length; index += 1) {
           expect(statusText[index]).toContain(fixtures[index]);

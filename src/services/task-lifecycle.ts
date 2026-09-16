@@ -314,9 +314,11 @@ export async function handleTaskRenew(
     }
 
     if (!renewal.ok) {
+      const guidance = renewal.reason === "lease_expired"
+        ? `Call task_start({ task_id: "${params.task_id}", owner_id: "<replacement-owner>", takeover: true, project_root: "${projectRoot}" }) to obtain a new lease.`
+        : "Canonical state was not modified. Inspect the current task status and lease owner before taking further action.";
       return textResult(
-        `Task "${params.task_id}" lease was not renewed for owner "${params.owner_id}" attempt "${params.attempt_id}" because ${LEASE_RENEWAL_REASONS[renewal.reason]}. ` +
-          `Canonical state was not modified; call task_start({ task_id: "${params.task_id}", owner_id: "<replacement-owner>", takeover: true }) to obtain a new lease.`,
+        `Task "${params.task_id}" lease was not renewed for owner "${params.owner_id}" attempt "${params.attempt_id}" because ${LEASE_RENEWAL_REASONS[renewal.reason]}. ${guidance}`,
         true,
       );
     }
@@ -412,7 +414,7 @@ async function handleTaskCompleteUnlocked(
     return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
   }
   if (task.lease && Date.parse(task.lease.lease_expires_at) <= Date.now() && !legacyCompletion) {
-    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id}", takeover: true }) to obtain a fresh attempt.`, true);
+    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id}", takeover: true, project_root: "${projectRoot}" }) to obtain a fresh attempt.`, true);
   }
 
   const key = completionKey(projectRoot, params.task_id);

@@ -542,7 +542,7 @@ describe("gate tools", async () => {
         tempDir,
       );
       expect(staleRenewal.isError).toBe(true);
-      expect(extractText(staleRenewal)).toContain('task_start({ task_id: "1.1.2", owner_id: "<replacement-owner>", takeover: true })');
+      expect(extractText(staleRenewal)).toContain(`task_start({ task_id: "1.1.2", owner_id: "<replacement-owner>", takeover: true, project_root: "${tempDir}" })`);
 
       const takeover = await handleTaskStart(
         { task_id: "1.1.2", owner_id: "owner-b", takeover: true },
@@ -621,6 +621,28 @@ describe("gate tools", async () => {
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain('not owned by owner "legacy"');
+      expect(checkGate0Exit).not.toHaveBeenCalled();
+    });
+
+    it("guides expired leased completion to a root-aware takeover without running Gate 0", async () => {
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+      const lease = task.lease = {
+        owner_id: "owner-a",
+        attempt_id: "attempt-a",
+        lease_expires_at: new Date(Date.now() - 1).toISOString(),
+      };
+      stateManager.save(state);
+
+      const result = await handleTaskComplete(
+        { task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain(`task_start({ task_id: "1.1.2", owner_id: "owner-a", takeover: true, project_root: "${tempDir}" })`);
       expect(checkGate0Exit).not.toHaveBeenCalled();
     });
 

@@ -294,7 +294,7 @@ function handleTaskManageUnlocked(
       return textResult(`Task "${params.task_id}" is owned by "${task.lease.owner_id}" until ${task.lease.lease_expires_at}.`, true);
     }
     if (!active && task.status === "doing" && params.confirm && !params.takeover && !matches) {
-      return textResult(`Task "${params.task_id}" lease expired. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id ?? "<replacement-owner>"}", takeover: true }) to obtain a fresh attempt.`, true);
+      return textResult(`Task "${params.task_id}" lease expired. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id ?? "<replacement-owner>"}", takeover: true, project_root: "${projectRoot}" }) to obtain a fresh attempt.`, true);
     }
   }
 
@@ -1108,11 +1108,11 @@ export async function handleCycleDiagnose(
         recovery.classification === "terminal_failed" ||
         recovery.classification === "post_task_unproven"
       ) {
-        lines.push(`    Suggestion: task_manage({ task_id: "${recovery.taskId}", action: "retry", confirm: true })`);
+        lines.push(`    Suggestion: task_manage({ task_id: "${recovery.taskId}", action: "retry", confirm: true, project_root: "${projectRoot}" })`);
       } else if (recovery.classification === "terminal_passed") {
         lines.push("    Reconciled to done; no action required.");
       } else {
-        lines.push(`    Suggestion: task_manage({ task_id: "${recovery.taskId}", action: "reset_evidence", confirm: true })`);
+        lines.push(`    Suggestion: task_manage({ task_id: "${recovery.taskId}", action: "reset_evidence", confirm: true, project_root: "${projectRoot}" })`);
       }
     }
   }
@@ -1122,7 +1122,7 @@ export async function handleCycleDiagnose(
     lines.push("Terminal Gate 0 evidence mismatches:");
     for (const mismatch of terminalEvidenceMismatches) {
       lines.push(`  task ${mismatch.taskId} (${mismatch.taskName}): ${mismatch.outcome ?? "unknown"} evidence conflicts with task status`);
-      lines.push(`    Suggestion: task_manage({ task_id: "${mismatch.taskId}", action: "reset_evidence", confirm: true })`);
+      lines.push(`    Suggestion: task_manage({ task_id: "${mismatch.taskId}", action: "reset_evidence", confirm: true, project_root: "${projectRoot}" })`);
     }
   }
 
@@ -1133,12 +1133,12 @@ export async function handleCycleDiagnose(
     for (const s of stuck) {
       lines.push(`  ${s.type} ${s.id} (${s.name}):`);
       if (s.type === "task") {
-        lines.push(`    Suggestion: task_manage({ task_id: "${s.id}", action: "force_status", target_status: "failed", confirm: true })`);
-        lines.push(`    Suggestion: task_manage({ task_id: "${s.id}", action: "retry", confirm: true })`);
+        lines.push(`    Suggestion: task_manage({ task_id: "${s.id}", action: "force_status", target_status: "failed", confirm: true, project_root: "${projectRoot}" })`);
+        lines.push(`    Suggestion: task_manage({ task_id: "${s.id}", action: "retry", confirm: true, project_root: "${projectRoot}" })`);
       } else if (s.type === "epic") {
-        lines.push(`    Suggestion: epic_manage({ epic_id: "${s.id}", action: "force_status", target_status: "pending", cascade: false, confirm: true })`);
+        lines.push(`    Suggestion: epic_manage({ epic_id: "${s.id}", action: "force_status", target_status: "pending", cascade: false, confirm: true, project_root: "${projectRoot}" })`);
       } else {
-        lines.push(`    Suggestion: phase_manage({ phase_id: "${s.id}", action: "force_status", target_status: "pending", confirm: true })`);
+        lines.push(`    Suggestion: phase_manage({ phase_id: "${s.id}", action: "force_status", target_status: "pending", confirm: true, project_root: "${projectRoot}" })`);
       }
     }
   }
@@ -1150,7 +1150,7 @@ export async function handleCycleDiagnose(
     lines.push("Failed tasks:");
     for (const t of unrecoveredFailedTasks) {
       lines.push(`  task ${t.id} (${t.name}):`);
-      lines.push(`    Suggestion: task_manage({ task_id: "${t.id}", action: "retry", confirm: true })`);
+      lines.push(`    Suggestion: task_manage({ task_id: "${t.id}", action: "retry", confirm: true, project_root: "${projectRoot}" })`);
     }
   }
 
@@ -1163,7 +1163,7 @@ export async function handleCycleDiagnose(
     for (const m of missingEvidence) {
       lines.push(`  ${m.message}`);
       if (m.entityType === "task") {
-        lines.push(`    Suggestion: task_manage({ task_id: "${m.entityId}", action: "reset_evidence", confirm: true })`);
+        lines.push(`    Suggestion: task_manage({ task_id: "${m.entityId}", action: "reset_evidence", confirm: true, project_root: "${projectRoot}" })`);
       }
     }
   }
