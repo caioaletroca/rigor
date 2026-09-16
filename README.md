@@ -141,6 +141,7 @@ gates:
 | `cycle_init` | Parse a plan.md and initialize cycle state |
 | `cycle_reload` | Re-parse the plan and merge new phases/epics/tasks into the running cycle (rolling-wave elaboration) without losing progress |
 | `cycle_status` | Current progress, active task, phase info |
+| `rigor_status` | Live server capabilities, fallback root, and root-aware lifecycle tools |
 
 ### Gate enforcement
 
