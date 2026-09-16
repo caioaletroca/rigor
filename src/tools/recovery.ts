@@ -83,7 +83,7 @@ export function registerRecoveryTools(
     "cycle_diagnose",
     {
       description: "Run diagnostics on the current cycle — validation, stuck detection, evidence audit",
-      inputSchema: z.object({ project_root: projectRootSchema }).default({}),
+      inputSchema: z.object({ project_root: projectRootSchema }),
     },
     async (params) => {
       const ctx = resolveRequestContext(registry, stateManager, projectRoot, params?.project_root);

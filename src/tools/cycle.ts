@@ -533,16 +533,10 @@ export function registerCycleTools(
     },
   );
 
-  server.registerTool(
+  server.tool(
     "cycle_status",
-    {
-      description: "Show the current cycle status, progress, and active task",
-      inputSchema: z
-        .object({
-          project_root: projectRootSchema,
-        })
-        .default({}),
-    },
+    "Show the current cycle status, progress, and active task",
+    { project_root: projectRootSchema },
     async (params) => {
       const root = params?.project_root ?? stateManager.load()?.project_root ?? projectRoot;
       const context = registry?.getByRoot(root);

@@ -468,7 +468,7 @@ describe("recovery tools", () => {
        expect(text).not.toContain("Executing Gate 0 attempts:");
        expect(text).toContain("Recovery:");
        expect(text).toContain("interrupted");
-       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
        expect(text).not.toContain("Stuck entities:");
        expect(stateManager.getTask("1.1.1").status).toBe("failed");
         expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
@@ -491,7 +491,7 @@ describe("recovery tools", () => {
 
          expect(text).toContain("interrupted");
          expect(text).not.toContain("stale");
-         expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+         expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
        });
 
        it("classifies an inactive old attempt as stale and recommends retry", async () => {
@@ -507,7 +507,7 @@ describe("recovery tools", () => {
 
          expect(text).toContain("stale");
          expect(text).toContain("interrupted");
-         expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+         expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
          expect(stateManager.getTask("1.1.1").status).toBe("failed");
        });
 
@@ -547,9 +547,9 @@ describe("recovery tools", () => {
         const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir, config));
 
         expect(text).toContain("post_task_unproven");
-        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
         expect(text).not.toContain("Terminal Gate 0 evidence mismatches:");
-        expect(text).not.toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+        expect(text).not.toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true');
         expect(stateManager.getTask("1.1.1").status).toBe("failed");
         expect(stateManager.getTask("1.1.1").gate_0.passed).toBe(false);
         expect(evidenceManager.load("custom_post_task", "1.1.1")).toBeNull();
@@ -644,7 +644,7 @@ describe("recovery tools", () => {
 
         expect(text).toContain("Terminal Gate 0 evidence mismatches:");
         expect(text).toContain("timed_out evidence conflicts with task status");
-        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true');
         expect(stateManager.getTask("1.1.1").status).toBe("done");
         expect(JSON.stringify(evidenceManager.load("gate_0", "1.1.1"))).toBe(before);
         expect(existsSync(evidencePath)).toBe(true);
@@ -662,7 +662,7 @@ describe("recovery tools", () => {
        const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
        expect(text).toContain("terminal_passed");
        expect(text).toContain("Reconciled to done; no action required.");
-       expect(text).not.toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+       expect(text).not.toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
      });
 
       it("summarizes latest and prior Gate 0 attempts", async () => {
@@ -693,7 +693,7 @@ describe("recovery tools", () => {
 
        const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
        expect(text).toContain("inconsistent");
-       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+       expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true');
      });
 
      it("reports corrupt status when validation errors exist", async () => {
@@ -778,8 +778,8 @@ describe("recovery tools", () => {
 
       const text = extractText(result);
       expect(text).toContain("Stuck entities:");
-      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true })');
-      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true');
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
     });
 
     it("suggests task_manage retry for failed tasks", async () => {
@@ -795,7 +795,7 @@ describe("recovery tools", () => {
 
       const text = extractText(result);
       expect(text).toContain("Failed tasks:");
-      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true })');
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
     });
 
     it("suggests epic_manage for stuck epics", async () => {
@@ -811,7 +811,7 @@ describe("recovery tools", () => {
 
       const text = extractText(result);
       expect(text).toContain("Stuck entities:");
-      expect(text).toContain('epic_manage({ epic_id: "1.1", action: "force_status", target_status: "pending", cascade: false, confirm: true })');
+      expect(text).toContain('epic_manage({ epic_id: "1.1", action: "force_status", target_status: "pending", cascade: false, confirm: true');
     });
 
     it("suggests task_manage reset_evidence for missing task evidence", async () => {
@@ -830,7 +830,7 @@ describe("recovery tools", () => {
       const text = extractText(result);
       expect(text).toContain("Evidence audit:");
       expect(text).toContain("Task 1.1.1: missing gate_0 evidence");
-      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true })');
+      expect(text).toContain('task_manage({ task_id: "1.1.1", action: "reset_evidence", confirm: true');
     });
 
     it("excludes skipped entities from progress totals", async () => {
@@ -906,7 +906,7 @@ describe("recovery tools", () => {
 
       const text = extractText(result);
       expect(text).toContain("Stuck entities:");
-      expect(text).toContain('phase_manage({ phase_id: "2", action: "force_status", target_status: "pending", confirm: true })');
+      expect(text).toContain('phase_manage({ phase_id: "2", action: "force_status", target_status: "pending", confirm: true');
     });
   });
 
@@ -939,6 +939,28 @@ describe("recovery tools", () => {
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("not found");
+    });
+
+    it("guides expired task management to a root-aware takeover", async () => {
+      const state = makeCycleState();
+      const task = state.phases[0].epics[0].tasks[0];
+      task.status = "doing";
+      task.lease = {
+        owner_id: "owner-a",
+        attempt_id: "attempt-a",
+        lease_expires_at: new Date(Date.now() - 1).toISOString(),
+      };
+      writeState(tempDir, state);
+
+      const result = await handleTaskManage(
+        { task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true, owner_id: "owner-b", attempt_id: "attempt-b" },
+        stateManager,
+        evidenceManager,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain(`task_start({ task_id: "1.1.1", owner_id: "owner-b", takeover: true, project_root: "${tempDir}" })`);
     });
 
     // ----- force_status -----
