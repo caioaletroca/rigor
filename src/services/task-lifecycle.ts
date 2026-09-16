@@ -17,6 +17,7 @@ import type { GateEvidence } from "../evidence/index.js";
 import {
   checkGate0Exit,
   checkGate1Exit,
+  evaluateGate0Readiness,
   runCustomGates,
 } from "../gates/index.js";
 import { runCommand } from "../executor/index.js";
@@ -103,6 +104,10 @@ export async function handleTaskStart(
   // Reload config fresh from disk when not explicitly supplied, so edits to
   // .rigor/config.yaml take effect without restarting the server.
   const cfg = config ?? loadConfig(projectRoot);
+  const gate0Readiness = evaluateGate0Readiness(cfg);
+  if (!gate0Readiness.ready) {
+    return textResult(`Task ${params.task_id} blocked: ${gate0Readiness.detail}`, true);
+  }
 
   // 1. Load state, verify cycle exists
   const state = stateManager.load();

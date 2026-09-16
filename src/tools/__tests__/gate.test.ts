@@ -22,6 +22,7 @@ import type { PhaseState } from "../../state/index.js";
 vi.mock("../../gates/index.js", () => ({
   checkGate0Exit: vi.fn(),
   checkGate1Exit: vi.fn().mockResolvedValue({ passed: true, checks: [], skipped: true }),
+  evaluateGate0Readiness: vi.fn().mockReturnValue({ ready: true, unresolved_variables: [], empty_checks: [], detail: "Gate 0 is ready." }),
   runCustomGates: vi.fn().mockResolvedValue({ passed: true, checks: [] }),
 }));
 
@@ -40,10 +41,12 @@ const {
   checkGate0Exit,
   checkGate1Exit,
   runCustomGates,
+  evaluateGate0Readiness,
 } = await import("../../gates/index.js") as {
   checkGate0Exit: ReturnType<typeof vi.fn>;
   checkGate1Exit: ReturnType<typeof vi.fn>;
   runCustomGates: ReturnType<typeof vi.fn>;
+  evaluateGate0Readiness: ReturnType<typeof vi.fn>;
 };
 
 const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../../services/task-lifecycle.js");
@@ -139,6 +142,25 @@ describe("gate tools", async () => {
   // -----------------------------------------------------------------------
 
   describe("task_start", async () => {
+    it("blocks an unready Gate 0 before commands, custom gates, Gate 1, leases, or evidence", async () => {
+      evaluateGate0Readiness.mockReturnValueOnce({
+        ready: false,
+        unresolved_variables: ["lang.test_command"],
+        empty_checks: [],
+        detail: "Gate 0 has unresolved command variable(s): lang.test_command.",
+      });
+
+      const result = await handleTaskStart({ task_id: "1.1.2" }, stateManager, config, tempDir);
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("lang.test_command");
+      expect(runCustomGates).not.toHaveBeenCalled();
+      expect(checkGate1Exit).not.toHaveBeenCalled();
+      expect(stateManager.getTask("1.1.2").status).toBe("pending");
+      expect(stateManager.getTask("1.1.2").lease).toBeUndefined();
+      expect(existsSync(join(tempDir, ".rigor", "evidence"))).toBe(false);
+    });
+
     // 1. Transitions pending task to doing
     it("transitions a pending task to doing", async () => {
       const result = await handleTaskStart(

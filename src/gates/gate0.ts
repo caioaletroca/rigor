@@ -35,6 +35,59 @@ export interface Gate0Options {
   onCheckStart?: (progress: Gate0Progress) => void | Promise<void>;
 }
 
+export interface Gate0Readiness {
+  ready: boolean;
+  unresolved_variables: string[];
+  empty_checks: string[];
+  detail: string;
+}
+
+export function evaluateGate0Readiness(config: RigorConfig): Gate0Readiness {
+  const checks = config.gates.gate_0.checks;
+  const unresolvedVariables = new Set<string>();
+  const emptyChecks: string[] = [];
+
+  for (const check of checks) {
+    if (check.command.trim() === "") {
+      emptyChecks.push(check.name);
+      continue;
+    }
+    for (const match of check.command.matchAll(/\$\{([^}]+)\}/g)) {
+      unresolvedVariables.add(match[1]);
+    }
+  }
+
+  const variables = [...unresolvedVariables];
+  if (variables.length > 0) {
+    return {
+      ready: false,
+      unresolved_variables: variables,
+      empty_checks: emptyChecks,
+      detail: `Gate 0 has unresolved command variable(s): ${variables.join(", ")}.`,
+    };
+  }
+  if (checks.length === 0 && config.gates.gate_0.allow_empty) {
+    return { ready: true, unresolved_variables: [], empty_checks: [], detail: "Gate 0 is intentionally empty." };
+  }
+  if (checks.length === 0) {
+    return {
+      ready: false,
+      unresolved_variables: [],
+      empty_checks: [],
+      detail: "No runnable Gate 0 checks (checks[] empty). Refusing to certify an unverified task.",
+    };
+  }
+  if (emptyChecks.length > 0) {
+    return {
+      ready: false,
+      unresolved_variables: [],
+      empty_checks: emptyChecks,
+      detail: `Gate 0 has non-runnable empty command(s): ${emptyChecks.join(", ")}.`,
+    };
+  }
+  return { ready: true, unresolved_variables: [], empty_checks: [], detail: "Gate 0 is ready." };
+}
+
 function formatDuration(durationMs: number | undefined): string {
   return durationMs === undefined ? "the configured timeout" : `${durationMs}ms`;
 }
@@ -64,10 +117,21 @@ export async function checkGate0Exit(
 
   const g0 = config.gates.gate_0;
   const requireTestFiles = g0.require_test_files;
+  const readiness = evaluateGate0Readiness(config);
 
-  // Track whether any check actually executed a command. An empty `checks`
-  // array — or checks whose commands are all empty/unresolved (e.g. unresolved
-  // ${lang.*} variables) — means nothing was verified.
+  if (!readiness.ready) {
+    return {
+      passed: false,
+      checks: [{ name: "gate_0", passed: false, detail: readiness.detail }],
+    };
+  }
+  if (g0.checks.length === 0) {
+    return {
+      passed: true,
+      checks: [{ name: "gate_0", passed: true, detail: "No runnable checks configured — passing because gates.gate_0.allow_empty is true." }],
+    };
+  }
+
   let ranAnyCommand = false;
 
   // -----------------------------------------------------------------------
