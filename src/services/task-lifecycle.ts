@@ -301,7 +301,7 @@ export async function handleTaskRenew(
     if (!renewal.ok) {
       return textResult(
         `Task "${params.task_id}" lease was not renewed for owner "${params.owner_id}" attempt "${params.attempt_id}" because ${LEASE_RENEWAL_REASONS[renewal.reason]}. ` +
-          "Canonical state was not modified; start the task again with explicit takeover to obtain a new lease.",
+          `Canonical state was not modified; call task_start({ task_id: "${params.task_id}", owner_id: "<replacement-owner>", takeover: true }) to obtain a new lease.`,
         true,
       );
     }
@@ -397,7 +397,7 @@ async function handleTaskCompleteUnlocked(
     return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
   }
   if (task.lease && Date.parse(task.lease.lease_expires_at) <= Date.now() && !legacyCompletion) {
-    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Start it with explicit takeover.`, true);
+    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id}", takeover: true }) to obtain a fresh attempt.`, true);
   }
 
   const key = completionKey(projectRoot, params.task_id);

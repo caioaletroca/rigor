@@ -470,6 +470,42 @@ describe("gate tools", async () => {
       expect(stateManager.getTask("1.1.2").lease).toEqual(before);
     });
 
+    it("recovers an expired lease with a fresh attempt that can renew", async () => {
+      const expiredLease = await startLease();
+      const state = stateManager.load()!;
+      state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+      stateManager.save(state);
+
+      const staleRenewal = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: expiredLease.owner_id, attempt_id: expiredLease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+      expect(staleRenewal.isError).toBe(true);
+      expect(extractText(staleRenewal)).toContain('task_start({ task_id: "1.1.2", owner_id: "<replacement-owner>", takeover: true })');
+
+      const takeover = await handleTaskStart(
+        { task_id: "1.1.2", owner_id: "owner-b", takeover: true },
+        stateManager,
+        config,
+        tempDir,
+      );
+      const replacementLease = stateManager.getTask("1.1.2").lease!;
+      expect(takeover.isError).toBeUndefined();
+      expect(replacementLease.attempt_id).not.toBe(expiredLease.attempt_id);
+      expect(replacementLease.takeover_history).toEqual([
+        expect.objectContaining({ owner_id: "owner-a", attempt_id: expiredLease.attempt_id }),
+      ]);
+
+      const renewal = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: replacementLease.owner_id, attempt_id: replacementLease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+      expect(renewal.isError).toBeUndefined();
+      expect(extractText(renewal)).toContain("lease renewed");
+    });
+
     it("serializes an expired renewal and takeover so the takeover keeps the lease", async () => {
       const lease = await startLease();
       const state = stateManager.load()!;

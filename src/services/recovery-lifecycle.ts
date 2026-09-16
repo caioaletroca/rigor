@@ -294,7 +294,7 @@ function handleTaskManageUnlocked(
       return textResult(`Task "${params.task_id}" is owned by "${task.lease.owner_id}" until ${task.lease.lease_expires_at}.`, true);
     }
     if (!active && task.status === "doing" && params.confirm && !params.takeover && !matches) {
-      return textResult(`Task "${params.task_id}" lease expired. Explicit takeover is required.`, true);
+      return textResult(`Task "${params.task_id}" lease expired. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id ?? "<replacement-owner>"}", takeover: true }) to obtain a fresh attempt.`, true);
     }
   }
 
