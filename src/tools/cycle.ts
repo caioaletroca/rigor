@@ -13,7 +13,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StateManager } from "../state/index.js";
 import type { PhaseState, EpicState, TaskState } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
-import { inspectWorkspace, WorkspaceInspectionError } from "../workspace/index.js";
+import { evaluateResolvedProjectReadiness } from "../services/project-readiness.js";
 import { parsePlan } from "../plan/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import { isGate0AttemptActive, isTaskCompletionActive } from "../services/task-lifecycle.js";
@@ -100,6 +100,7 @@ export interface CycleInitParams {
 
 const WORKTREE_REMEDIATION =
   "Run rigor:worktree to create an isolated worktree and feature branch, then re-run cycle_init from it.";
+const ROOT_REMEDIATION = "Pass the active worktree's absolute project_root.";
 
 export function handleCycleInit(
   params: CycleInitParams,
@@ -132,62 +133,60 @@ function handleCycleInitUnlocked(
   // server's configured root. State/evidence then land under the correct
   // repository even if `--project-root` was wrong. When they agree (or no repo
   // is found), the server-provided StateManager is used unchanged.
-  const effectiveRoot = resolveCanonicalProjectRoot({
+  const rootResolution = resolveCanonicalProjectRoot({
     project_root: params.project_root,
     plan_path: resolvedPath,
     fallback_root: projectRoot,
-  }).project_root;
+  });
+  const effectiveRoot = rootResolution.project_root;
   const usingDerivedRoot = effectiveRoot !== projectRoot;
   const context = contextRegistry?.getByRoot(effectiveRoot);
   const sm = context?.stateManager ?? (usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager);
   const effectiveConfig = context?.config ?? config;
 
-  if (effectiveConfig) {
-    if (params.allow_shared_workspace) {
-      if (!effectiveConfig.workspace.allow_override) {
-        return textResult(
-          "allow_shared_workspace is disabled by project config (workspace.allow_override is false).",
-          true,
-        );
-      }
-    } else if (
-      effectiveConfig.workspace.require_worktree ||
-      effectiveConfig.workspace.require_feature_branch
+  const readiness = evaluateResolvedProjectReadiness(rootResolution, effectiveConfig);
+  if (!readiness.gate_0.ready) {
+    const provenance = readiness.gate_0.provenance;
+    const source = provenance.path ? `${provenance.category} (${provenance.path})` : provenance.category;
+    return textResult(
+      `Cycle initialization blocked: ${readiness.gate_0.detail} Gate 0 check source: ${source}. ${ROOT_REMEDIATION}`,
+      true,
+    );
+  }
+
+  if (params.allow_shared_workspace) {
+    if (!readiness.config.workspace.allow_override) {
+      return textResult(
+        "allow_shared_workspace is disabled by project config (workspace.allow_override is false).",
+        true,
+      );
+    }
+  } else if (readiness.config.workspace.require_worktree || readiness.config.workspace.require_feature_branch) {
+    if (readiness.workspace_policy.inspection_failure) {
+      return textResult(readiness.workspace_policy.inspection_failure, true);
+    }
+    if (readiness.workspace?.detached) {
+      return textResult(
+        `A cycle cannot be anchored to a detached HEAD. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
+    }
+    if (
+      readiness.workspace?.branch !== null &&
+      readiness.workspace?.branch !== undefined &&
+      readiness.config.workspace.require_feature_branch &&
+      readiness.config.workspace.base_branches.includes(readiness.workspace.branch)
     ) {
-      let workspace;
-      try {
-        workspace = inspectWorkspace(effectiveRoot);
-      } catch (err) {
-        if (err instanceof WorkspaceInspectionError) {
-          return textResult(err.message, true);
-        }
-        throw err;
-      }
-
-      if (workspace.detached) {
-        return textResult(
-          `A cycle cannot be anchored to a detached HEAD. ${WORKTREE_REMEDIATION}`,
-          true,
-        );
-      }
-
-      if (
-        effectiveConfig.workspace.require_feature_branch &&
-        workspace.branch !== null &&
-        effectiveConfig.workspace.base_branches.includes(workspace.branch)
-      ) {
-        return textResult(
-          `Branch '${workspace.branch}' is an integration branch, not an agent workspace. ${WORKTREE_REMEDIATION}`,
-          true,
-        );
-      }
-
-      if (effectiveConfig.workspace.require_worktree && !workspace.is_linked_worktree) {
-        return textResult(
-          `A cycle must run in a dedicated worktree, not the main checkout. ${WORKTREE_REMEDIATION}`,
-          true,
-        );
-      }
+      return textResult(
+        `Branch '${readiness.workspace.branch}' is an integration branch, not an agent workspace. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
+    }
+    if (readiness.config.workspace.require_worktree && !readiness.workspace?.is_linked_worktree) {
+      return textResult(
+        `A cycle must run in a dedicated worktree, not the main checkout. ${WORKTREE_REMEDIATION}`,
+        true,
+      );
     }
   }
 

@@ -20,7 +20,10 @@ function makeProject(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `rigor-${name}-`));
   execFileSync("git", ["init", "--quiet", root]);
   mkdirSync(join(root, ".rigor"));
-  writeFileSync(join(root, ".rigor", "config.yaml"), "workspace:\n  allow_override: true\n");
+  writeFileSync(
+    join(root, ".rigor", "config.yaml"),
+    "gates:\n  gate_0:\n    checks:\n      - name: runtime\n        command: \"node --version\"\nworkspace:\n  allow_override: true\n",
+  );
   cpSync(join(import.meta.dirname, "..", "..", "plan", "__tests__", "fixtures", "sample-plan.md"), join(root, "plan.md"));
   return root;
 }
@@ -65,6 +68,25 @@ describe("multi-project server isolation", () => {
 
     const diagnosedB = await diagnose({ project_root: projectB });
     expect(text(diagnosedB as { content: Array<{ type: string; text?: string }> })).not.toContain("No active cycle");
+  });
+
+  it("uses an explicit ready worktree when the fallback root is unready", async () => {
+    const serverRoot = makeProject("unready-server-root");
+    const worktree = makeProject("ready-worktree");
+    roots.push(serverRoot, worktree);
+    writeFileSync(
+      join(serverRoot, ".rigor", "config.yaml"),
+      "gates:\n  gate_0:\n    checks:\n      - name: tests\n        command: \"${lang.test_command}\"\nworkspace:\n  allow_override: true\n",
+    );
+
+    const serverContext = createServer(serverRoot);
+    const tools = (serverContext.server as unknown as { _registeredTools: Record<string, { handler: (params?: unknown) => Promise<unknown> }> })._registeredTools;
+
+    const init = await tools.cycle_init.handler({ plan_path: "plan.md", project_root: worktree, allow_shared_workspace: true });
+    expect((init as { isError?: boolean }).isError).toBeUndefined();
+
+    const start = await tools.task_start.handler({ task_id: "1.1.2", owner_id: "owner", project_root: worktree });
+    expect((start as { isError?: boolean }).isError).toBeUndefined();
   });
 
   it("routes registered lifecycle tools to a non-default project after init", async () => {

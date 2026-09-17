@@ -11,7 +11,7 @@ import { responseResult } from "../tools/lifecycle.js";
 import type { StateManager, TaskLease, LeaseFenceMismatchReason } from "../state/index.js";
 import { EntityNotFoundError, isValidTransition, TASK_LEASE_DURATION_MS } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
-import { getGate0CheckProvenance, loadConfig } from "../config/index.js";
+import { loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import type { GateEvidence } from "../evidence/index.js";
 import {
@@ -20,6 +20,7 @@ import {
   evaluateGate0Readiness,
   runCustomGates,
 } from "../gates/index.js";
+import { evaluateResolvedProjectReadiness, gate0ReadinessBlockMessage } from "./project-readiness.js";
 import { runCommand } from "../executor/index.js";
 import { withProjectMutationLock } from "../lifecycle/index.js";
 
@@ -104,19 +105,12 @@ export async function handleTaskStart(
   // Reload config fresh from disk when not explicitly supplied, so edits to
   // .rigor/config.yaml take effect without restarting the server.
   const cfg = config ?? loadConfig(projectRoot);
-  const gate0Readiness = evaluateGate0Readiness(cfg);
-  if (!gate0Readiness.ready) {
-    const provenance = getGate0CheckProvenance(cfg);
-    const source = provenance.path
-      ? `${provenance.category} (${provenance.path})`
-      : provenance.category;
-    const overrideAdvice = provenance.category === "domain_defaults"
-      ? "Set a concrete gates.gate_0.checks list in the project config to override this domain check, or remove/resolve the domain check."
-      : "Set a concrete gates.gate_0.checks list in the project config to replace this command.";
-    return textResult(
-      `Task ${params.task_id} blocked: ${gate0Readiness.detail} Gate 0 check source: ${source}. ${overrideAdvice}`,
-      true,
-    );
+  const readiness = evaluateResolvedProjectReadiness(
+    { project_root: projectRoot, source: params.project_root ? "explicit" : "fallback" },
+    cfg,
+  );
+  if (!readiness.gate_0.ready) {
+    return textResult(gate0ReadinessBlockMessage(params.task_id, readiness), true);
   }
 
   // 1. Load state, verify cycle exists
