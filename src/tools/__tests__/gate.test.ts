@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
@@ -49,6 +50,7 @@ const {
   evaluateGate0Readiness: ReturnType<typeof vi.fn>;
 };
 
+const { runCommand } = await import("../../executor/index.js") as { runCommand: ReturnType<typeof vi.fn> };
 const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../../services/task-lifecycle.js");
 const { registerGateTools } = await import("../gate.js");
 const { handleCycleStatus } = await import("../cycle.js");
@@ -154,6 +156,34 @@ describe("gate tools", async () => {
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("lang.test_command");
+      expect(runCustomGates).not.toHaveBeenCalled();
+      expect(checkGate1Exit).not.toHaveBeenCalled();
+      expect(stateManager.getTask("1.1.2").status).toBe("pending");
+      expect(stateManager.getTask("1.1.2").lease).toBeUndefined();
+      expect(existsSync(join(tempDir, ".rigor", "evidence"))).toBe(false);
+    });
+
+    it("blocks required workspace policy before commands, custom gates, Gate 1, leases, and evidence", async () => {
+      execFileSync("git", ["init", "--quiet", tempDir]);
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: tempDir });
+      writeFileSync(join(tempDir, "initial"), "initial", "utf-8");
+      execFileSync("git", ["add", "initial"], { cwd: tempDir });
+      execFileSync("git", ["commit", "--quiet", "-m", "initial"], { cwd: tempDir });
+      const branch = execFileSync("git", ["branch", "--show-current"], { cwd: tempDir, encoding: "utf-8" }).trim();
+      const result = await handleTaskStart(
+        { task_id: "1.1.2" },
+        stateManager,
+        {
+          ...config,
+          workspace: { ...config.workspace, require_feature_branch: true, base_branches: [branch] },
+        },
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("dedicated linked worktree");
+      expect(runCommand).not.toHaveBeenCalled();
       expect(runCustomGates).not.toHaveBeenCalled();
       expect(checkGate1Exit).not.toHaveBeenCalled();
       expect(stateManager.getTask("1.1.2").status).toBe("pending");

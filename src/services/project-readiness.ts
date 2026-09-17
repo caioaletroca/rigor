@@ -82,6 +82,16 @@ export function evaluateResolvedProjectReadiness(
   };
 }
 
+export function workspacePolicyBlockMessage(
+  readiness: ProjectReadinessEvaluation,
+  remediation: string,
+  includeInspectionFailure = true,
+): string | undefined {
+  if (includeInspectionFailure && readiness.workspace_policy.inspection_failure) return readiness.workspace_policy.inspection_failure;
+  if (readiness.workspace_policy.failures.length === 0) return undefined;
+  return `${readiness.workspace_policy.failures[0]} ${remediation}`;
+}
+
 export function gate0ReadinessBlockMessage(taskId: string, readiness: ProjectReadinessEvaluation): string {
   const provenance = readiness.gate_0.provenance;
   const source = provenance.path ? `${provenance.category} (${provenance.path})` : provenance.category;
