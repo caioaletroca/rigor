@@ -19,6 +19,7 @@ export const ROOT_AWARE_LIFECYCLE_TOOLS = [
   "epic_manage",
   "phase_advance",
   "phase_manage",
+  "project_readiness",
   "review_start",
   "review_submit",
   "sync_enable",

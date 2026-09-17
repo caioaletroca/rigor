@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -92,6 +92,27 @@ describe("cross-client transport harness", () => {
         });
         expect(schema?.required ?? [], name).not.toContain("project_root");
       }
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("serves project readiness over live MCP without creating lifecycle artifacts", async () => {
+    const project = makeFixture("readiness");
+    roots.push(project);
+    const before = readdirSync(join(project, ".rigor")).sort();
+    const session = await createHarnessSession(process.cwd(), "opencode");
+
+    try {
+      const result = await session.call("project_readiness", { project_root: project });
+      const readiness = JSON.parse(text(result));
+      expect(result.isError).toBeUndefined();
+      expect(readiness).toMatchObject({
+        project_root: project,
+        root_source: "explicit",
+        gate_0: { ready: true, provenance: { category: "core_defaults" } },
+      });
+      expect(readdirSync(join(project, ".rigor")).sort()).toEqual(before);
     } finally {
       await session.close();
     }

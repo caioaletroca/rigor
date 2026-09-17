@@ -11,6 +11,8 @@ export { handleCycleInit, handleCycleStatus } from "./cycle.js";
 export { projectRootSchema, resolveRequestContext, responseResult } from "./lifecycle.js";
 
 export { registerGateTools } from "./gate.js";
+export { registerReadinessTool, handleProjectReadiness } from "./readiness.js";
+export type { ProjectReadinessParams } from "./readiness.js";
 export type { TaskStartParams, TaskCompleteParams, TaskRenewParams } from "../services/task-lifecycle.js";
 export { handleTaskStart, handleTaskComplete, handleTaskRenew } from "../services/task-lifecycle.js";
 

@@ -148,6 +148,7 @@ gates:
 | `cycle_reload` | Re-parse the plan and merge new phases/epics/tasks into the running cycle (rolling-wave elaboration) without losing progress |
 | `cycle_status` | Current progress, active task, phase info |
 | `rigor_status` | Live server capabilities, fallback root, and root-aware lifecycle tools |
+| `project_readiness` | Read-only effective-root, workspace-policy, and Gate 0 readiness preflight |
 
 ### Gate enforcement
 

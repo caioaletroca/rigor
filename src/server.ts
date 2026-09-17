@@ -16,6 +16,7 @@ import { SyncManager } from "./sync/index.js";
 import {
   registerCycleTools,
   registerGateTools,
+  registerReadinessTool,
   registerReviewTools,
   registerRecoveryTools,
   registerSyncTools,
@@ -56,6 +57,7 @@ export function createServer(projectRoot: string, sharedRegistry?: ProjectContex
 
   registerCycleTools(server, stateManager, config, projectRoot, registry);
   registerGateTools(server, stateManager, projectRoot, registry);
+  registerReadinessTool(server, projectRoot);
   registerReviewTools(server, stateManager, evidenceManager, projectRoot, registry);
   registerRecoveryTools(server, stateManager, evidenceManager, projectRoot, config, registry);
   registerSyncTools(server, syncManager, registry, projectRoot);
