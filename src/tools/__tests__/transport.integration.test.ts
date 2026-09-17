@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -9,7 +9,8 @@ import {
   RIGOR_SCHEMA_VERSION,
   ROOT_AWARE_LIFECYCLE_TOOLS,
 } from "../server-info.js";
-import { createHarnessSession, withHarnessSessions } from "../../testing/transport-harness.js";
+import { SyncManager } from "../../sync/manager.js";
+import { createHarnessRegistry, createHarnessSession, withHarnessSessions } from "../../testing/transport-harness.js";
 
 function makeFixture(name: string): string {
   const root = mkdtempSync(join(tmpdir(), `rigor-transport-${name}-`));
@@ -147,6 +148,78 @@ describe("cross-client transport harness", () => {
         expect(result.isError).toBe(true);
         expect(text(result)).toContain("project_root must be an absolute path");
       }
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("routes sync MCP tools to only the explicit project's manager, journal, and provider", async () => {
+    const projectA = makeFixture("sync-a");
+    const projectB = makeFixture("sync-b");
+    roots.push(projectA, projectB);
+    const providerA = vi.fn(async () => {});
+    let failProviderB = true;
+    const providerB = vi.fn(async () => {
+      if (failProviderB) throw new Error("retry target");
+    });
+
+    const registry = createHarnessRegistry(projectA).registry;
+    const managerA = registry.getByRoot(projectA).syncManager;
+    const managerB = registry.getByRoot(projectB).syncManager;
+    expect(managerA).toBeUndefined();
+    expect(managerB).toBeUndefined();
+
+    const contexts = new Map([
+      [projectA, { syncManager: new SyncManager(projectA, [{ name: "provider-a", sync: providerA }], "provider-a", 1) }],
+      [projectB, { syncManager: new SyncManager(projectB, [{ name: "provider-b", sync: providerB }], "provider-b", 1) }],
+    ]);
+    vi.spyOn(registry, "getByRoot").mockImplementation((root) => contexts.get(root) as ReturnType<typeof registry.getByRoot>);
+
+    const session = await createHarnessSession(projectA, "opencode", { registry });
+    try {
+      const target = contexts.get(projectB)!.syncManager!;
+      const other = contexts.get(projectA)!.syncManager!;
+      const event = {
+        event_id: crypto.randomUUID(),
+        type: "task_started" as const,
+        entity_type: "task" as const,
+        entity_id: "1.1.1",
+        cycle_id: "sync-routing",
+        timestamp: new Date().toISOString(),
+      };
+      await target.dispatch(event);
+      await other.dispatch({ ...event, event_id: crypto.randomUUID() });
+      failProviderB = false;
+      expect(providerA).toHaveBeenCalledTimes(1);
+      expect(providerB).toHaveBeenCalledTimes(1);
+
+      const status = await session.call("sync_status", { project_root: projectB });
+      expect(text(status)).toContain("provider-b");
+      expect(text(status)).toContain(join(projectB, ".rigor", "sync", "events.jsonl"));
+      expect(text(status)).not.toContain("provider-a");
+      expect(text(status)).not.toContain(projectA);
+
+      const retry = await session.call("sync_retry", { project_root: projectB, provider: "provider-b", count: 1 });
+      expect(text(retry)).toContain("1 succeeded");
+      expect(providerB).toHaveBeenCalledTimes(2);
+      expect(providerA).toHaveBeenCalledTimes(1);
+
+      const replay = await session.call("sync_replay", { project_root: projectB, provider: "provider-b" });
+      expect(text(replay)).toContain("1 succeeded");
+      expect(providerB).toHaveBeenCalledTimes(3);
+      expect(providerA).toHaveBeenCalledTimes(1);
+
+      const failing = vi.fn(async () => { throw new Error("trip circuit"); });
+      const disabledTarget = new SyncManager(projectB, [{ name: "disabled-b", sync: failing }], undefined, 1);
+      contexts.set(projectB, { syncManager: disabledTarget });
+      await disabledTarget.dispatch(event);
+      expect(disabledTarget.isProviderDisabled("disabled-b")).toBe(true);
+
+      const enabled = await session.call("sync_enable", { project_root: projectB, provider: "disabled-b" });
+      expect(text(enabled)).toContain("re-enabled");
+      expect(disabledTarget.isProviderDisabled("disabled-b")).toBe(false);
+      expect(other.isProviderDisabled("provider-a")).toBe(false);
+      expect(registry.getByRoot).toHaveBeenCalledWith(projectB);
     } finally {
       await session.close();
     }
