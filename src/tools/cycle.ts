@@ -153,6 +153,11 @@ function handleCycleInitUnlocked(
     );
   }
 
+  const workspacePolicyFailure = workspacePolicyBlockMessage(readiness, WORKTREE_REMEDIATION);
+  if (readiness.workspace_policy.inspection_failure && workspacePolicyFailure) {
+    return textResult(workspacePolicyFailure, true);
+  }
+
   if (params.allow_shared_workspace) {
     if (!readiness.config.workspace.allow_override) {
       return textResult(
@@ -160,9 +165,8 @@ function handleCycleInitUnlocked(
         true,
       );
     }
-  } else if (readiness.config.workspace.require_worktree || readiness.config.workspace.require_feature_branch) {
-    const workspacePolicyFailure = workspacePolicyBlockMessage(readiness, WORKTREE_REMEDIATION);
-    if (workspacePolicyFailure) return textResult(workspacePolicyFailure, true);
+  } else if (workspacePolicyFailure) {
+    return textResult(workspacePolicyFailure, true);
   }
 
   const existing = sm.load();

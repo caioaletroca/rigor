@@ -108,7 +108,10 @@ function makePhases(): PhaseState[] {
   ];
 }
 
-const config: RigorConfig = DEFAULTS;
+const config: RigorConfig = {
+  ...DEFAULTS,
+  workspace: { ...DEFAULTS.workspace, require_worktree: false, require_feature_branch: false },
+};
 
 // ---------------------------------------------------------------------------
 // Suite
@@ -163,6 +166,32 @@ describe("gate tools", async () => {
       expect(existsSync(join(tempDir, ".rigor", "evidence"))).toBe(false);
     });
 
+    it("blocks workspace inspection failures when worktree policy is enabled before commands, leases, or evidence", async () => {
+      const uninspectableRoot = mkdtempSync(join(tmpdir(), "rigor-uninspectable-workspace-"));
+      const uninspectableStateManager = new StateManager(uninspectableRoot);
+      uninspectableStateManager.init("test-plan.md", makePhases());
+
+      try {
+        const result = await handleTaskStart(
+          { task_id: "1.1.2" },
+          uninspectableStateManager,
+          { ...config, workspace: { ...config.workspace, require_worktree: true } },
+          uninspectableRoot,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("not a git repository");
+        expect(runCommand).not.toHaveBeenCalled();
+        expect(runCustomGates).not.toHaveBeenCalled();
+        expect(checkGate1Exit).not.toHaveBeenCalled();
+        expect(uninspectableStateManager.getTask("1.1.2").status).toBe("pending");
+        expect(uninspectableStateManager.getTask("1.1.2").lease).toBeUndefined();
+        expect(existsSync(join(uninspectableRoot, ".rigor", "evidence"))).toBe(false);
+      } finally {
+        rmSync(uninspectableRoot, { recursive: true, force: true });
+      }
+    });
+
     it("blocks required workspace policy before commands, custom gates, Gate 1, leases, and evidence", async () => {
       execFileSync("git", ["init", "--quiet", tempDir]);
       execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
@@ -176,7 +205,7 @@ describe("gate tools", async () => {
         stateManager,
         {
           ...config,
-          workspace: { ...config.workspace, require_feature_branch: true, base_branches: [branch] },
+          workspace: { ...config.workspace, require_worktree: true, require_feature_branch: true, base_branches: [branch] },
         },
         tempDir,
       );

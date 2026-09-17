@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { StateManager } from "../../state/index.js";
 import { EvidenceManager } from "../../evidence/index.js";
 import { handleCycleInit, handleCycleStatus, handleCycleReload } from "../cycle.js";
@@ -80,6 +81,11 @@ describe("cycle tools", () => {
       "gates:\n  gate_0:\n    checks:\n      - name: runtime\n        command: \"node --version\"\nworkspace:\n  require_worktree: false\n  require_feature_branch: false\n",
       "utf-8",
     );
+    execFileSync("git", ["init", "--quiet", tempDir]);
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: tempDir });
+    execFileSync("git", ["add", "."], { cwd: tempDir });
+    execFileSync("git", ["commit", "--quiet", "-m", "initial"], { cwd: tempDir });
     stateManager = new StateManager(tempDir);
   });
 
@@ -231,6 +237,33 @@ describe("cycle tools", () => {
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("allow_shared_workspace is disabled");
+    });
+
+    it("rejects workspace inspection failures before a permitted shared override can initialize state", async () => {
+      const uninspectableRoot = mkdtempSync(join(tmpdir(), "rigor-uninspectable-workspace-"));
+      const uninspectableStateManager = new StateManager(uninspectableRoot);
+      const planPath = join(uninspectableRoot, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+
+      try {
+        const result = await handleCycleInit(
+          { plan_path: planPath, allow_shared_workspace: true },
+          uninspectableStateManager,
+          uninspectableRoot,
+          {
+            ...TEST_CONFIG,
+            workspace: { ...TEST_CONFIG.workspace, require_worktree: true, allow_override: true },
+          },
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("not a git repository");
+        expect(uninspectableStateManager.load()).toBeNull();
+        expect(existsSync(join(uninspectableRoot, ".rigor", "state.json"))).toBe(false);
+        expect(existsSync(join(uninspectableRoot, ".rigor", "evidence"))).toBe(false);
+      } finally {
+        rmSync(uninspectableRoot, { recursive: true, force: true });
+      }
     });
 
     it("allows an explicit shared workspace override when project config permits it", async () => {

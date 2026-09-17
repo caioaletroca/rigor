@@ -116,7 +116,6 @@ export async function handleTaskStart(
     const workspacePolicyFailure = workspacePolicyBlockMessage(
       readiness,
       "Run rigor:worktree to create an isolated worktree and feature branch, then re-run task_start from it.",
-      false,
     );
     if (workspacePolicyFailure) return textResult(workspacePolicyFailure, true);
   }
