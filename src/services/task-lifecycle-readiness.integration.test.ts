@@ -71,9 +71,11 @@ gates:
     try {
       const result = await handleTaskStart({ task_id: "1.1.1", owner_id: "owner" }, stateManager, null, root);
       expect(result.isError).toBe(true);
-      const text = result.content.find((content) => content.type === "text")?.text;
-      expect(text).toContain(`global_config (${globalPath})`);
-      expect(text).not.toContain("core_defaults");
+       const text = result.content.find((content) => content.type === "text")?.text;
+       expect(text).toContain(`global_config (${globalPath})`);
+       expect(text).toContain("pass the active worktree's absolute project_root");
+       expect(text).not.toContain("core_defaults");
+       expect(text).not.toContain("restart");
     } finally {
       if (prior === null) rmSync(globalPath, { force: true });
       else writeFileSync(globalPath, prior, "utf-8");
