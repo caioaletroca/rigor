@@ -13,7 +13,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StateManager } from "../state/index.js";
 import type { PhaseState, EpicState, TaskState } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
-import { evaluateResolvedProjectReadiness } from "../services/project-readiness.js";
+import { evaluateResolvedProjectReadiness, workspacePolicyBlockMessage } from "../services/project-readiness.js";
 import { parsePlan } from "../plan/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import { isGate0AttemptActive, isTaskCompletionActive } from "../services/task-lifecycle.js";
@@ -111,33 +111,32 @@ export function handleCycleInit(
 ): Promise<CallToolResult> {
   const requestRoot = params.project_root ?? projectRoot;
   const resolvedPath = isAbsolute(params.plan_path) ? params.plan_path : resolve(requestRoot, params.plan_path);
-  const effectiveRoot = resolveProjectRoot(resolvedPath, requestRoot);
-  return withProjectMutationLock(effectiveRoot, async () => handleCycleInitUnlocked(params, stateManager, projectRoot, configOrRegistry, registry));
+  const rootResolution = resolveCanonicalProjectRoot({
+    project_root: params.project_root,
+    plan_path: resolvedPath,
+    fallback_root: projectRoot,
+  });
+  return withProjectMutationLock(rootResolution.project_root, async () =>
+    handleCycleInitUnlocked(params, stateManager, projectRoot, rootResolution, resolvedPath, configOrRegistry, registry),
+  );
 }
 
 function handleCycleInitUnlocked(
   params: CycleInitParams,
   stateManager: StateManager,
   projectRoot: string,
+  rootResolution: ReturnType<typeof resolveCanonicalProjectRoot>,
+  resolvedPath: string,
   configOrRegistry?: RigorConfig | ProjectContextRegistry,
   registry?: ProjectContextRegistry,
 ): CallToolResult {
   const config = configOrRegistry instanceof ProjectContextRegistry ? undefined : configOrRegistry;
   const contextRegistry = configOrRegistry instanceof ProjectContextRegistry ? configOrRegistry : registry;
-  const requestRoot = params.project_root ?? projectRoot;
-  const resolvedPath = isAbsolute(params.plan_path)
-    ? params.plan_path
-    : resolve(requestRoot, params.plan_path);
 
   // Prefer the plan's git root when an absolute plan path points outside the
   // server's configured root. State/evidence then land under the correct
   // repository even if `--project-root` was wrong. When they agree (or no repo
   // is found), the server-provided StateManager is used unchanged.
-  const rootResolution = resolveCanonicalProjectRoot({
-    project_root: params.project_root,
-    plan_path: resolvedPath,
-    fallback_root: projectRoot,
-  });
   const effectiveRoot = rootResolution.project_root;
   const usingDerivedRoot = effectiveRoot !== projectRoot;
   const context = contextRegistry?.getByRoot(effectiveRoot);
@@ -162,32 +161,8 @@ function handleCycleInitUnlocked(
       );
     }
   } else if (readiness.config.workspace.require_worktree || readiness.config.workspace.require_feature_branch) {
-    if (readiness.workspace_policy.inspection_failure) {
-      return textResult(readiness.workspace_policy.inspection_failure, true);
-    }
-    if (readiness.workspace?.detached) {
-      return textResult(
-        `A cycle cannot be anchored to a detached HEAD. ${WORKTREE_REMEDIATION}`,
-        true,
-      );
-    }
-    if (
-      readiness.workspace?.branch !== null &&
-      readiness.workspace?.branch !== undefined &&
-      readiness.config.workspace.require_feature_branch &&
-      readiness.config.workspace.base_branches.includes(readiness.workspace.branch)
-    ) {
-      return textResult(
-        `Branch '${readiness.workspace.branch}' is an integration branch, not an agent workspace. ${WORKTREE_REMEDIATION}`,
-        true,
-      );
-    }
-    if (readiness.config.workspace.require_worktree && !readiness.workspace?.is_linked_worktree) {
-      return textResult(
-        `A cycle must run in a dedicated worktree, not the main checkout. ${WORKTREE_REMEDIATION}`,
-        true,
-      );
-    }
+    const workspacePolicyFailure = workspacePolicyBlockMessage(readiness, WORKTREE_REMEDIATION);
+    if (workspacePolicyFailure) return textResult(workspacePolicyFailure, true);
   }
 
   const existing = sm.load();

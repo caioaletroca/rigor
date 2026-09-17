@@ -104,9 +104,13 @@ describe("cross-client transport harness", () => {
     const session = await createHarnessSession(process.cwd(), "opencode");
 
     try {
-      const result = await session.call("project_readiness", { project_root: project });
-      const readiness = JSON.parse(text(result));
-      expect(result.isError).toBeUndefined();
+      const result = await session.call("project_readiness", { project_root: "relative-root" });
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("project_root must be an absolute path");
+
+      const explicitResult = await session.call("project_readiness", { project_root: project });
+      const readiness = JSON.parse(text(explicitResult));
+      expect(explicitResult.isError).toBeUndefined();
       expect(readiness).toMatchObject({
         project_root: project,
         root_source: "explicit",

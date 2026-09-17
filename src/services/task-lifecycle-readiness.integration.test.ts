@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../state/index.js";
@@ -61,9 +61,11 @@ gates:
 
   it("reports the global config path for unresolved global Gate 0 commands", async () => {
     const root = mkdtempSync(join(tmpdir(), "rigor-task-start-readiness-"));
+    const globalHome = mkdtempSync(join(tmpdir(), "rigor-global-config-home-"));
+    const priorAppData = process.env.APPDATA;
+    process.env.APPDATA = globalHome;
     const stateManager = new StateManager(root);
     const globalPath = getGlobalConfigPath();
-    const prior = existsSync(globalPath) ? readFileSync(globalPath, "utf-8") : null;
     stateManager.init("plan.md", makePhases());
     mkdirSync(dirname(globalPath), { recursive: true });
     writeFileSync(globalPath, "gates:\n  gate_0:\n    checks:\n      - name: tests\n        command: '${lang.test_command}'\n", "utf-8");
@@ -71,15 +73,16 @@ gates:
     try {
       const result = await handleTaskStart({ task_id: "1.1.1", owner_id: "owner" }, stateManager, null, root);
       expect(result.isError).toBe(true);
-       const text = result.content.find((content) => content.type === "text")?.text;
-       expect(text).toContain(`global_config (${globalPath})`);
-       expect(text).toContain("pass the active worktree's absolute project_root");
-       expect(text).not.toContain("core_defaults");
-       expect(text).not.toContain("restart");
+      const text = result.content.find((content) => content.type === "text")?.text;
+      expect(text).toContain(`global_config (${globalPath})`);
+      expect(text).toContain("pass the active worktree's absolute project_root");
+      expect(text).not.toContain("core_defaults");
+      expect(text).not.toContain("restart");
     } finally {
-      if (prior === null) rmSync(globalPath, { force: true });
-      else writeFileSync(globalPath, prior, "utf-8");
+      if (priorAppData === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = priorAppData;
       rmSync(root, { recursive: true, force: true });
+      rmSync(globalHome, { recursive: true, force: true });
     }
   });
 

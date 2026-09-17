@@ -20,7 +20,7 @@ import {
   evaluateGate0Readiness,
   runCustomGates,
 } from "../gates/index.js";
-import { evaluateResolvedProjectReadiness, gate0ReadinessBlockMessage } from "./project-readiness.js";
+import { evaluateResolvedProjectReadiness, gate0ReadinessBlockMessage, workspacePolicyBlockMessage } from "./project-readiness.js";
 import { runCommand } from "../executor/index.js";
 import { withProjectMutationLock } from "../lifecycle/index.js";
 
@@ -111,6 +111,14 @@ export async function handleTaskStart(
   );
   if (!readiness.gate_0.ready) {
     return textResult(gate0ReadinessBlockMessage(params.task_id, readiness), true);
+  }
+  if (readiness.config.workspace.require_worktree || readiness.config.workspace.require_feature_branch) {
+    const workspacePolicyFailure = workspacePolicyBlockMessage(
+      readiness,
+      "Run rigor:worktree to create an isolated worktree and feature branch, then re-run task_start from it.",
+      false,
+    );
+    if (workspacePolicyFailure) return textResult(workspacePolicyFailure, true);
   }
 
   // 1. Load state, verify cycle exists
