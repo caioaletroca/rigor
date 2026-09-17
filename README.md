@@ -83,11 +83,18 @@ rigor init
 
 This creates `.rigor/config.yaml` with sensible defaults for your project.
 
-### Troubleshooting project routing
+### Project routing and readiness
 
-`--project-root` is the server fallback for clients that do not provide a root. In an isolated worktree, pass that worktree's absolute `project_root` on every lifecycle call; it overrides the fallback without restarting Rigor. Use `rigor_status` to see the live server capabilities, fallback root, and root-aware tools.
+`--project-root` is a backward-compatible server fallback for callers that provide no root. Normal multi-project and worktree operation passes the active worktree's absolute `project_root` on every lifecycle call; this overrides the fallback without rewriting global MCP/OpenCode configuration, handing off the session, or restarting Rigor.
 
-Reconnect only if the connected client’s tool inventory is stale: `rigor_status` advertises a needed tool or `project_root` parameter that the client does not expose. A fallback-root mismatch alone is not a reason to reconnect or restart. Claude Code and OpenCode installs reference the shipped skills and update automatically; Hermes installs copied `SKILL.md` files, so remove the existing copied Hermes skill and then rerun `rigor install --client hermes` after an update.
+Before initializing a cycle, use this sequence:
+
+1. Call `rigor_status` to inspect the connected server's capabilities and fallback root.
+2. Call `project_readiness({ project_root: "/absolute/path/to/worktree", plan_path: "docs/plans/my-plan.md" })`. It is read-only: it creates no state, leases, evidence, or command executions.
+3. If readiness identifies an invalid workspace policy or unresolved Gate 0 command, correct it in that worktree only, then run `project_readiness` again. `allow_shared_workspace` is a narrow workspace-policy exception; it never accepts an invalid root or bypasses Gate 0 readiness.
+4. Call `cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "/absolute/path/to/worktree" })` only after readiness passes.
+
+Reconnect only when the connected client's tool inventory is stale: `rigor_status` advertises a needed tool or `project_root` parameter that the client does not expose. A fallback-root mismatch alone is not a reason to reconnect or restart. Claude Code and OpenCode installs reference the shipped skills and update automatically; Hermes installs copied `SKILL.md` files, so remove the existing copied Hermes skill and then rerun `rigor install --client hermes` after an update.
 
 ### Run a cycle
 

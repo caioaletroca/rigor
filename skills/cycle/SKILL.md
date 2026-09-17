@@ -44,7 +44,17 @@ In Continuous mode, Gate 8 failure is not a user-confirmation point. Read the fi
 
 ## Lifecycle Sequence
 
-Every lifecycle tool call must pass the active isolated worktree's absolute `project_root`; never rely on the MCP server fallback root, which may point at another checkout. Use the same root for initialization, status, diagnostics, tasks, reviews, acceptance, phase advancement, reload, reset, and management calls.
+Every lifecycle tool call must pass the active isolated worktree's absolute `project_root`; never rely on the MCP server fallback root, which may point at another checkout. The fallback is backward-compatible only for callers that omit a root; per-request absolute roots are normal operation. Use the same root for readiness, initialization, status, diagnostics, tasks, reviews, acceptance, phase advancement, reload, reset, and management calls.
+
+Before `cycle_init`, use this exact sequence:
+
+1. Call `rigor_status` to inspect live capabilities and the configured fallback root.
+2. Confirm the connected client exposes `project_readiness`, `cycle_init`, and their `project_root` parameters.
+3. Call `project_readiness({ project_root: "C:/path/to/worktree", plan_path: "docs/plans/my-plan.md" })`. It is read-only: it creates no state, leases, or evidence and executes no Gate 0 commands.
+4. Correct any workspace-policy or Gate 0 readiness failure locally in the active worktree, then rerun `project_readiness`. `allow_shared_workspace` is only a narrow workspace-policy exception; it never bypasses invalid-root or Gate 0 readiness failures.
+5. Call `cycle_init` with the same absolute worktree root only after preflight passes.
+
+Do not rewrite global MCP/OpenCode configuration, hand off the session to another worktree, or restart Rigor as a fallback-root workaround.
 
 ### Stale client schema recovery
 
@@ -54,9 +64,18 @@ Before any lifecycle mutation, confirm the connected client exposes the required
 |-----------|-----------------|
 | Client exposes the intended lifecycle tool and its `project_root` parameter | Call it with the active worktree's absolute `project_root`, even when the server fallback root differs. |
 | Client does not expose a tool or `project_root` parameter advertised by `rigor_status` | Reconnect OpenCode/MCP to refresh the client's cached tool schema, then verify the exposed schema before mutating state. |
-| `rigor_status` reports a fallback root different from the active worktree, but the client exposes the required root-aware schema | Continue with explicit `project_root`; do not restart Rigor solely because the fallback root differs. |
+| `rigor_status` reports a fallback root different from the active worktree, but the client exposes the required root-aware schema | Continue with explicit `project_root`; do not restart Rigor solely because the fallback root differs. Do not rewrite global configuration or hand off the session. |
 
 ```
+rigor_status({})
+  |
+  v
+project_readiness({ project_root: "C:/path/to/worktree", plan_path: "docs/plans/my-plan.md" })
+  |
+  v
+[correct failures locally in the active worktree and rerun readiness]
+  |
+  v
 cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "C:/path/to/worktree" })
   |
   v
