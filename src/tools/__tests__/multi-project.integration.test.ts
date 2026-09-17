@@ -22,9 +22,13 @@ function makeProject(name: string): string {
   mkdirSync(join(root, ".rigor"));
   writeFileSync(
     join(root, ".rigor", "config.yaml"),
-    "gates:\n  gate_0:\n    checks:\n      - name: runtime\n        command: \"node --version\"\nworkspace:\n  allow_override: true\n",
+    "gates:\n  gate_0:\n    checks:\n      - name: runtime\n        command: \"node --version\"\nworkspace:\n  allow_override: true\n  require_worktree: false\n  require_feature_branch: false\n",
   );
   cpSync(join(import.meta.dirname, "..", "..", "plan", "__tests__", "fixtures", "sample-plan.md"), join(root, "plan.md"));
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: root });
+  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", ["commit", "--quiet", "-m", "initial"], { cwd: root });
   return root;
 }
 

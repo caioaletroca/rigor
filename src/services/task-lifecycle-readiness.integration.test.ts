@@ -91,6 +91,9 @@ gates:
     const stateManager = new StateManager(root);
     stateManager.init("plan.md", makePhases());
     writeConfig(root, `
+workspace:
+  require_worktree: false
+  require_feature_branch: false
 gates:
   gate_0:
     checks:
