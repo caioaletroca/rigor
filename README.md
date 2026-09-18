@@ -83,6 +83,19 @@ rigor init
 
 This creates `.rigor/config.yaml` with sensible defaults for your project.
 
+### Project routing and readiness
+
+`--project-root` is a backward-compatible server fallback for callers that provide no root. Normal multi-project and worktree operation passes the active worktree's absolute `project_root` on every lifecycle call; this overrides the fallback without rewriting global MCP/OpenCode configuration, handing off the session, or restarting Rigor.
+
+Before initializing a cycle, use this sequence:
+
+1. Call `rigor_status` to inspect the connected server's capabilities and fallback root.
+2. Call `project_readiness({ project_root: "/absolute/path/to/worktree", plan_path: "docs/plans/my-plan.md" })`. It is read-only: it creates no state, leases, evidence, or command executions.
+3. If readiness identifies an invalid workspace policy or unresolved Gate 0 command, correct it in that worktree only, then run `project_readiness` again. `allow_shared_workspace` is a narrow workspace-policy exception; it never accepts an invalid root or bypasses Gate 0 readiness.
+4. Call `cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "/absolute/path/to/worktree" })` only after readiness passes.
+
+Reconnect only when the connected client's tool inventory is stale: `rigor_status` advertises a needed tool or `project_root` parameter that the client does not expose. A fallback-root mismatch alone is not a reason to reconnect or restart. Claude Code and OpenCode installs reference the shipped skills and update automatically; Hermes installs copied `SKILL.md` files, so remove the existing copied Hermes skill and then rerun `rigor install --client hermes` after an update.
+
 ### Run a cycle
 
 Pseudocode; replace placeholder values with values from the active cycle and `task_start` response.
@@ -141,6 +154,8 @@ gates:
 | `cycle_init` | Parse a plan.md and initialize cycle state |
 | `cycle_reload` | Re-parse the plan and merge new phases/epics/tasks into the running cycle (rolling-wave elaboration) without losing progress |
 | `cycle_status` | Current progress, active task, phase info |
+| `rigor_status` | Live server capabilities, fallback root, and root-aware lifecycle tools |
+| `project_readiness` | Read-only effective-root, workspace-policy, and Gate 0 readiness preflight |
 
 ### Gate enforcement
 

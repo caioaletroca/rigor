@@ -101,10 +101,12 @@ export async function handleAcceptSubmit(params: AcceptSubmitParams, stateManage
   return withProjectMutationLock(projectRoot, async () => {
     const revalidated = prepareAcceptSubmit(params, stateManager);
     if ("content" in revalidated) return revalidated;
-    const evidence: GateEvidence = { gate: "gate_9", entity_id: params.epic_id, passed: result.passed, timestamp: new Date().toISOString(), checks: result.checks };
+    const passed = result.passed && (custom?.passed ?? true);
+    const checks = custom && !custom.passed ? [...result.checks, ...custom.checks] : result.checks;
+    const evidence: GateEvidence = { gate: "gate_9", entity_id: params.epic_id, passed, timestamp: new Date().toISOString(), checks };
     const path = evidenceManager.save(evidence);
-    const state = stateManager.load(); if (state) { for (const phase of state.phases) for (const current of phase.epics) if (current.id === params.epic_id) current.gate_9 = { passed: result.passed, evidence_path: path }; stateManager.save(state); }
-    if (custom && !custom.passed) { evidenceManager.save({ gate: "custom_post_accept", entity_id: params.epic_id, passed: false, timestamp: new Date().toISOString(), checks: custom.checks }); return textResult([`Epic ${params.epic_id} passed Gate 9 but failed post_accept custom gate.`, "", ...custom.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`), "", `Evidence: ${path}`].join("\n"), true); }
+    const state = stateManager.load(); if (state) { for (const phase of state.phases) for (const current of phase.epics) if (current.id === params.epic_id) current.gate_9 = { passed, evidence_path: path }; stateManager.save(state); }
+    if (custom && !custom.passed) return textResult([`Epic ${params.epic_id} passed Gate 9 but failed post_accept custom gate.`, "", ...custom.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`), "", `Evidence: ${path}`].join("\n"), true);
     if (result.passed) stateManager.transition(params.epic_id, "done");
     const lines = [result.passed ? `Gate 9 PASSED for epic ${params.epic_id}. Epic is now done.` : `Gate 9 FAILED for epic ${params.epic_id}.`, "", "Checks:", ...result.checks.map((check) => `  [${check.passed ? "PASS" : "FAIL"}] ${check.name}: ${check.detail}`), "", `Criteria met: ${result.criteria_met}/${result.criteria_total}`]; if (!result.passed) { const unmet = criteria.filter((criterion) => !criterion.met); if (unmet.length) lines.push("", "Unmet criteria:", ...unmet.map((criterion) => `  - ${criterion.criterion}`)); if (cfg.gates.gate_9.require_user_approval && !params.user_approved) lines.push("", "User approval: required but not given"); } lines.push("", `Evidence: ${path}`); return textResult(lines.join("\n"), !result.passed);
   });

@@ -105,6 +105,8 @@ describe("review lifecycle service", () => {
     expect(result.isError).toBe(true);
     expect(extractText(result)).toContain("failed post_accept custom gate");
     expect(stateManager.getEpic("1.1").status).toBe("doing");
+    expect(stateManager.getEpic("1.1").gate_9.passed).toBe(false);
+    expect(evidenceManager.load("gate_9", "1.1")?.passed).toBe(false);
   });
 
   it("revalidates review eligibility after the pre-review custom gate", async () => {

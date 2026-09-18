@@ -6,7 +6,8 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import {
   handleNewLangPack,
@@ -390,8 +391,9 @@ describe("mergeSkills", () => {
 // install_commands -- domain gating (per-project, writes into a temp root)
 // ---------------------------------------------------------------------------
 
-describe("install_commands domain gating", () => {
+describe("install_commands", () => {
   let projectRoot: string;
+  const rigorRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
   beforeEach(() => {
     projectRoot = mkdtempSync(join(tmpdir(), "rigor-install-gating-test-"));
@@ -410,6 +412,40 @@ describe("install_commands domain gating", () => {
       "utf-8",
     );
   }
+
+  it.each([
+    ["opencode", ".opencode", "commands"],
+    ["claude", ".claude", "commands"],
+  ] as const)("creates a %s command that references the canonical cycle SKILL.md", async (client, clientDir, commandsDir) => {
+    const result = await handleInstallCommands({ client, global: false }, projectRoot);
+    const commandPath = join(projectRoot, clientDir, commandsDir, "rigor-cycle.md");
+
+    expect(result.isError).toBeUndefined();
+    expect(readFileSync(commandPath, "utf-8")).toContain(`@${join(rigorRoot, "skills", "cycle", "SKILL.md")}`);
+  });
+
+  it("copies the canonical cycle SKILL.md for Hermes and includes rigor_status", async () => {
+    const result = await handleInstallCommands({ client: "hermes", global: false }, projectRoot);
+    const copiedSkillPath = join(projectRoot, ".hermes", "skills", "software-development", "rigor-cycle", "SKILL.md");
+
+    expect(result.isError).toBeUndefined();
+    expect(readFileSync(copiedSkillPath, "utf-8")).toBe(
+      readFileSync(join(rigorRoot, "skills", "cycle", "SKILL.md"), "utf-8"),
+    );
+    const copiedSkill = readFileSync(copiedSkillPath, "utf-8");
+    expect(copiedSkill).toContain("rigor_status");
+    expect(copiedSkill).toContain("do not restart Rigor solely because the fallback root differs");
+  });
+
+  it("gives Hermes update and reinstall guidance while preserving existing skills", async () => {
+    await handleInstallCommands({ client: "hermes", global: false }, projectRoot);
+    const result = await handleInstallCommands({ client: "hermes", global: false }, projectRoot);
+    const text = extractText(result);
+
+    expect(text).toContain("Skipped");
+    expect(text).toContain("Skills copied as self-contained SKILL.md files");
+    expect(text).toContain("To update, re-run install_commands (delete existing to overwrite).");
+  });
 
   it("installs the domain-scoped rigor:worktree command when domain=software", async () => {
     writeConfig("software");

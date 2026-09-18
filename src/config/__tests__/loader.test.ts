@@ -3,7 +3,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "nod
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { loadConfig, migrateGate0Config, loadDomainPackDefaults, resolveVariables, getGlobalConfigPath } from "../loader.js";
+import {
+  loadConfig,
+  migrateGate0Config,
+  loadDomainPackDefaults,
+  resolveVariables,
+  getGlobalConfigPath,
+  getGate0CheckProvenance,
+} from "../loader.js";
 import { DEFAULTS } from "../schema.js";
 import type { RigorConfig } from "../schema.js";
 
@@ -639,6 +646,10 @@ domain: software
     expect(config.gates.gate_0.checks[0].name).toBe("tests");
     expect(config.gates.gate_0.checks[1].name).toBe("lint");
     expect(config.gates.gate_0.require_test_files).toBe(true);
+    expect(getGate0CheckProvenance(config)).toEqual({
+      category: "domain_defaults",
+      path: join(tmpDir, "skills", "domain", "software", "defaults.yaml"),
+    });
     // Core defaults for other sections should be preserved
     expect(config.commit).toEqual(DEFAULTS.commit);
     expect(config.ship).toEqual(DEFAULTS.ship);
@@ -674,6 +685,67 @@ gates:
     expect(config.gates.gate_0.checks[0].name).toBe("custom-test");
     expect(config.gates.gate_0.checks[0].command).toBe("my-test-runner");
     expect(config.gates.gate_0.require_test_files).toBe(false);
+    expect(getGate0CheckProvenance(config)).toEqual({
+      category: "project_config",
+      path: join(tmpDir, ".rigor", "config.yaml"),
+    });
+  });
+
+  it("tracks global legacy Gate 0 commands as their source", () => {
+    writeGlobalConfigFile(`
+gates:
+  gate_0:
+    test_command: "node --version"
+    lint_command: "node --version"
+`);
+
+    const config = loadConfig(tmpDir);
+
+    expect(config.gates.gate_0.checks).toEqual([
+      expect.objectContaining({ name: "tests", command: "node --version" }),
+      expect.objectContaining({ name: "lint", command: "node --version" }),
+    ]);
+    expect(getGate0CheckProvenance(config)).toEqual({
+      category: "global_config",
+      path: getGlobalConfigPath(),
+    });
+  });
+
+  it("tracks project legacy Gate 0 commands as their source", () => {
+    writeConfigFile(tmpDir, `
+gates:
+  gate_0:
+    test_command: "node --version"
+`);
+
+    const config = loadConfig(tmpDir);
+
+    expect(config.gates.gate_0.checks).toEqual([
+      expect.objectContaining({ name: "tests", command: "node --version" }),
+    ]);
+    expect(getGate0CheckProvenance(config)).toEqual({
+      category: "project_config",
+      path: join(tmpDir, ".rigor", "config.yaml"),
+    });
+  });
+
+  it("tracks domain legacy Gate 0 commands as their source", () => {
+    writeDomainPack(tmpDir, "software", `
+gates:
+  gate_0:
+    lint_command: "node --version"
+`);
+    writeConfigFile(tmpDir, "domain: software\n");
+
+    const config = loadConfig(tmpDir);
+
+    expect(config.gates.gate_0.checks).toEqual([
+      expect.objectContaining({ name: "lint", command: "node --version" }),
+    ]);
+    expect(getGate0CheckProvenance(config)).toEqual({
+      category: "domain_defaults",
+      path: join(tmpDir, "skills", "domain", "software", "defaults.yaml"),
+    });
   });
 
   it("returns core defaults when domain is not set", () => {

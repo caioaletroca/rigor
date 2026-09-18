@@ -13,7 +13,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StateManager } from "../state/index.js";
 import type { PhaseState, EpicState, TaskState } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
-import { inspectWorkspace, WorkspaceInspectionError } from "../workspace/index.js";
+import { evaluateResolvedProjectReadiness, workspacePolicyBlockMessage } from "../services/project-readiness.js";
 import { parsePlan } from "../plan/index.js";
 import { EvidenceManager } from "../evidence/index.js";
 import { isGate0AttemptActive, isTaskCompletionActive } from "../services/task-lifecycle.js";
@@ -100,6 +100,7 @@ export interface CycleInitParams {
 
 const WORKTREE_REMEDIATION =
   "Run rigor:worktree to create an isolated worktree and feature branch, then re-run cycle_init from it.";
+const ROOT_REMEDIATION = "Pass the active worktree's absolute project_root.";
 
 export function handleCycleInit(
   params: CycleInitParams,
@@ -110,85 +111,62 @@ export function handleCycleInit(
 ): Promise<CallToolResult> {
   const requestRoot = params.project_root ?? projectRoot;
   const resolvedPath = isAbsolute(params.plan_path) ? params.plan_path : resolve(requestRoot, params.plan_path);
-  const effectiveRoot = resolveProjectRoot(resolvedPath, requestRoot);
-  return withProjectMutationLock(effectiveRoot, async () => handleCycleInitUnlocked(params, stateManager, projectRoot, configOrRegistry, registry));
+  const rootResolution = resolveCanonicalProjectRoot({
+    project_root: params.project_root,
+    plan_path: resolvedPath,
+    fallback_root: projectRoot,
+  });
+  return withProjectMutationLock(rootResolution.project_root, async () =>
+    handleCycleInitUnlocked(params, stateManager, projectRoot, rootResolution, resolvedPath, configOrRegistry, registry),
+  );
 }
 
 function handleCycleInitUnlocked(
   params: CycleInitParams,
   stateManager: StateManager,
   projectRoot: string,
+  rootResolution: ReturnType<typeof resolveCanonicalProjectRoot>,
+  resolvedPath: string,
   configOrRegistry?: RigorConfig | ProjectContextRegistry,
   registry?: ProjectContextRegistry,
 ): CallToolResult {
   const config = configOrRegistry instanceof ProjectContextRegistry ? undefined : configOrRegistry;
   const contextRegistry = configOrRegistry instanceof ProjectContextRegistry ? configOrRegistry : registry;
-  const requestRoot = params.project_root ?? projectRoot;
-  const resolvedPath = isAbsolute(params.plan_path)
-    ? params.plan_path
-    : resolve(requestRoot, params.plan_path);
 
   // Prefer the plan's git root when an absolute plan path points outside the
   // server's configured root. State/evidence then land under the correct
   // repository even if `--project-root` was wrong. When they agree (or no repo
   // is found), the server-provided StateManager is used unchanged.
-  const effectiveRoot = resolveCanonicalProjectRoot({
-    project_root: params.project_root,
-    plan_path: resolvedPath,
-    fallback_root: projectRoot,
-  }).project_root;
+  const effectiveRoot = rootResolution.project_root;
   const usingDerivedRoot = effectiveRoot !== projectRoot;
   const context = contextRegistry?.getByRoot(effectiveRoot);
   const sm = context?.stateManager ?? (usingDerivedRoot ? new StateManager(effectiveRoot) : stateManager);
   const effectiveConfig = context?.config ?? config;
 
-  if (effectiveConfig) {
-    if (params.allow_shared_workspace) {
-      if (!effectiveConfig.workspace.allow_override) {
-        return textResult(
-          "allow_shared_workspace is disabled by project config (workspace.allow_override is false).",
-          true,
-        );
-      }
-    } else if (
-      effectiveConfig.workspace.require_worktree ||
-      effectiveConfig.workspace.require_feature_branch
-    ) {
-      let workspace;
-      try {
-        workspace = inspectWorkspace(effectiveRoot);
-      } catch (err) {
-        if (err instanceof WorkspaceInspectionError) {
-          return textResult(err.message, true);
-        }
-        throw err;
-      }
+  const readiness = evaluateResolvedProjectReadiness(rootResolution, effectiveConfig);
+  if (!readiness.gate_0.ready) {
+    const provenance = readiness.gate_0.provenance;
+    const source = provenance.path ? `${provenance.category} (${provenance.path})` : provenance.category;
+    return textResult(
+      `Cycle initialization blocked: ${readiness.gate_0.detail} Gate 0 check source: ${source}. ${ROOT_REMEDIATION}`,
+      true,
+    );
+  }
 
-      if (workspace.detached) {
-        return textResult(
-          `A cycle cannot be anchored to a detached HEAD. ${WORKTREE_REMEDIATION}`,
-          true,
-        );
-      }
+  const workspacePolicyFailure = workspacePolicyBlockMessage(readiness, WORKTREE_REMEDIATION);
+  if (readiness.workspace_policy.inspection_failure && workspacePolicyFailure) {
+    return textResult(workspacePolicyFailure, true);
+  }
 
-      if (
-        effectiveConfig.workspace.require_feature_branch &&
-        workspace.branch !== null &&
-        effectiveConfig.workspace.base_branches.includes(workspace.branch)
-      ) {
-        return textResult(
-          `Branch '${workspace.branch}' is an integration branch, not an agent workspace. ${WORKTREE_REMEDIATION}`,
-          true,
-        );
-      }
-
-      if (effectiveConfig.workspace.require_worktree && !workspace.is_linked_worktree) {
-        return textResult(
-          `A cycle must run in a dedicated worktree, not the main checkout. ${WORKTREE_REMEDIATION}`,
-          true,
-        );
-      }
+  if (params.allow_shared_workspace) {
+    if (!readiness.config.workspace.allow_override) {
+      return textResult(
+        "allow_shared_workspace is disabled by project config (workspace.allow_override is false).",
+        true,
+      );
     }
+  } else if (workspacePolicyFailure) {
+    return textResult(workspacePolicyFailure, true);
   }
 
   const existing = sm.load();
@@ -533,16 +511,10 @@ export function registerCycleTools(
     },
   );
 
-  server.registerTool(
+  server.tool(
     "cycle_status",
-    {
-      description: "Show the current cycle status, progress, and active task",
-      inputSchema: z
-        .object({
-          project_root: projectRootSchema,
-        })
-        .default({}),
-    },
+    "Show the current cycle status, progress, and active task",
+    { project_root: projectRootSchema },
     async (params) => {
       const root = params?.project_root ?? stateManager.load()?.project_root ?? projectRoot;
       const context = registry?.getByRoot(root);

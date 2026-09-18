@@ -17,8 +17,10 @@ import type { GateEvidence } from "../evidence/index.js";
 import {
   checkGate0Exit,
   checkGate1Exit,
+  evaluateGate0Readiness,
   runCustomGates,
 } from "../gates/index.js";
+import { evaluateResolvedProjectReadiness, gate0ReadinessBlockMessage, workspacePolicyBlockMessage } from "./project-readiness.js";
 import { runCommand } from "../executor/index.js";
 import { withProjectMutationLock } from "../lifecycle/index.js";
 
@@ -103,6 +105,20 @@ export async function handleTaskStart(
   // Reload config fresh from disk when not explicitly supplied, so edits to
   // .rigor/config.yaml take effect without restarting the server.
   const cfg = config ?? loadConfig(projectRoot);
+  const readiness = evaluateResolvedProjectReadiness(
+    { project_root: projectRoot, source: params.project_root ? "explicit" : "fallback" },
+    cfg,
+  );
+  if (!readiness.gate_0.ready) {
+    return textResult(gate0ReadinessBlockMessage(params.task_id, readiness), true);
+  }
+  if (readiness.config.workspace.require_worktree || readiness.config.workspace.require_feature_branch) {
+    const workspacePolicyFailure = workspacePolicyBlockMessage(
+      readiness,
+      "Run rigor:worktree to create an isolated worktree and feature branch, then re-run task_start from it.",
+    );
+    if (workspacePolicyFailure) return textResult(workspacePolicyFailure, true);
+  }
 
   // 1. Load state, verify cycle exists
   const state = stateManager.load();
@@ -299,9 +315,11 @@ export async function handleTaskRenew(
     }
 
     if (!renewal.ok) {
+      const guidance = renewal.reason === "lease_expired"
+        ? `Call task_start({ task_id: "${params.task_id}", owner_id: "<replacement-owner>", takeover: true, project_root: "${projectRoot}" }) to obtain a new lease.`
+        : "Canonical state was not modified. Inspect the current task status and lease owner before taking further action.";
       return textResult(
-        `Task "${params.task_id}" lease was not renewed for owner "${params.owner_id}" attempt "${params.attempt_id}" because ${LEASE_RENEWAL_REASONS[renewal.reason]}. ` +
-          "Canonical state was not modified; start the task again with explicit takeover to obtain a new lease.",
+        `Task "${params.task_id}" lease was not renewed for owner "${params.owner_id}" attempt "${params.attempt_id}" because ${LEASE_RENEWAL_REASONS[renewal.reason]}. ${guidance}`,
         true,
       );
     }
@@ -397,7 +415,7 @@ async function handleTaskCompleteUnlocked(
     return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
   }
   if (task.lease && Date.parse(task.lease.lease_expires_at) <= Date.now() && !legacyCompletion) {
-    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Start it with explicit takeover.`, true);
+    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id}", takeover: true, project_root: "${projectRoot}" }) to obtain a fresh attempt.`, true);
   }
 
   const key = completionKey(projectRoot, params.task_id);

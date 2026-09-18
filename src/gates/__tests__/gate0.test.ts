@@ -33,7 +33,7 @@ const { parseCoverage, parseMetric } = await import("../../executor/index.js") a
   parseMetric: ReturnType<typeof vi.fn>;
 };
 
-const { checkGate0Exit } = await import("../gate0.js");
+const { checkGate0Exit, evaluateGate0Readiness } = await import("../gate0.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,6 +87,48 @@ function failResult(exitCode: number = 1): CommandResult {
 describe("checkGate0Exit", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("reports unresolved variables and never executes placeholder commands", async () => {
+    const config = makeConfig({
+      checks: [{ name: "tests", command: "${lang.test_command}" }],
+      require_test_files: false,
+      allow_empty: true,
+    });
+
+    expect(evaluateGate0Readiness(config)).toMatchObject({
+      ready: false,
+      unresolved_variables: ["lang.test_command"],
+    });
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(false);
+    expect(result.checks[0].detail).toContain("lang.test_command");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects mixed concrete and unresolved commands before executing either", async () => {
+    const config = makeConfig({
+      checks: [
+        { name: "tests", command: "npm test" },
+        { name: "lint", command: "${lang.lint_command}" },
+      ],
+      require_test_files: false,
+    });
+
+    const result = await checkGate0Exit("1.1.1", config, "/project");
+
+    expect(result.passed).toBe(false);
+    expect(result.checks[0].detail).toContain("lang.lint_command");
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("permits allow_empty only for an intentionally empty checks list", () => {
+    expect(evaluateGate0Readiness(makeConfig({ checks: [], allow_empty: true }))).toMatchObject({ ready: true });
+    expect(evaluateGate0Readiness(makeConfig({ checks: [{ name: "lint", command: "" }], allow_empty: true }))).toMatchObject({
+      ready: false,
+      empty_checks: ["lint"],
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -508,9 +550,9 @@ describe("checkGate0Exit", () => {
   });
 
   // -----------------------------------------------------------------------
-  // 16. Skips checks with empty commands (unresolved variables)
+  // 16. Empty commands make the entire gate non-runnable
   // -----------------------------------------------------------------------
-  it("skips checks with empty command strings", async () => {
+  it("rejects mixed empty and concrete command strings without executing either", async () => {
     const config = makeConfig({
       test_command: "",
       lint_command: "",
@@ -521,21 +563,11 @@ describe("checkGate0Exit", () => {
       ],
     });
 
-    runCommand.mockResolvedValue(okResult());
-
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    expect(result.passed).toBe(true);
-    // Only lint should have run, tests was skipped
-    expect(runCommand).toHaveBeenCalledTimes(1);
-    expect(runCommand).toHaveBeenCalledWith("eslint .", { cwd: "/project" });
-
-    const lintCheck = result.checks.find((c) => c.name === "lint");
-    expect(lintCheck?.passed).toBe(true);
-
-    // The empty tests check should not appear in results
-    const testsCheck = result.checks.find((c) => c.name === "tests");
-    expect(testsCheck).toBeUndefined();
+    expect(result.passed).toBe(false);
+    expect(result.checks[0].detail).toContain("tests");
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it("FAILS when the only check has a whitespace-only command", async () => {
@@ -550,9 +582,8 @@ describe("checkGate0Exit", () => {
 
     const result = await checkGate0Exit("1.1.1", config, "/project");
 
-    // The only check was skipped, so nothing ran — must not certify.
     expect(result.passed).toBe(false);
-    expect(result.checks[0].detail).toContain("No runnable Gate 0 checks");
+    expect(result.checks[0].detail).toContain("non-runnable empty command");
     expect(runCommand).not.toHaveBeenCalled();
   });
 

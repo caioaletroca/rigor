@@ -30,7 +30,7 @@ export function registerReviewTools(server: McpServer, stateManager: StateManage
     const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
     return handleAcceptSubmit(params, ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
   });
-  server.registerTool("phase_advance", { description: "Advance to the next phase — verifies all epics in current phase are done", inputSchema: z.object({ project_root: projectRootSchema }).default({}) }, async (params) => {
+  server.registerTool("phase_advance", { description: "Advance to the next phase — verifies all epics in current phase are done", inputSchema: z.object({ project_root: projectRootSchema }) }, async (params) => {
     const ctx = resolveRequestContext(registry, stateManager, projectRoot, params?.project_root);
     return handlePhaseAdvance(ctx?.stateManager ?? stateManager, ctx?.evidenceManager ?? evidenceManager, ctx ? new ArchiveManager(ctx.project_root) : archiveManager, ctx?.project_root ?? projectRoot);
   });

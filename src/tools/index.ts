@@ -11,6 +11,8 @@ export { handleCycleInit, handleCycleStatus } from "./cycle.js";
 export { projectRootSchema, resolveRequestContext, responseResult } from "./lifecycle.js";
 
 export { registerGateTools } from "./gate.js";
+export { registerReadinessTool, handleProjectReadiness } from "./readiness.js";
+export type { ProjectReadinessParams } from "./readiness.js";
 export type { TaskStartParams, TaskCompleteParams, TaskRenewParams } from "../services/task-lifecycle.js";
 export { handleTaskStart, handleTaskComplete, handleTaskRenew } from "../services/task-lifecycle.js";
 
@@ -51,3 +53,14 @@ export type { SyncRetryParams, SyncReplayParams, SyncEnableParams } from "./sync
 
 export { registerScaffoldTools, handleNewLangPack, handleNewDomain, handleInstallCommands } from "./scaffold.js";
 export type { NewLangPackParams, NewDomainParams, InstallCommandsParams } from "./scaffold.js";
+
+export {
+  REGISTERED_TOOL_NAMES,
+  RIGOR_SCHEMA_VERSION,
+  RIGOR_SERVER_NAME,
+  RIGOR_SERVER_VERSION,
+  ROOT_AWARE_LIFECYCLE_TOOLS,
+  handleServerInfo,
+  registerServerInfoTool,
+} from "./server-info.js";
+export type { ServerInfoParams } from "./server-info.js";

@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../../state/index.js";
@@ -22,6 +23,7 @@ import type { PhaseState } from "../../state/index.js";
 vi.mock("../../gates/index.js", () => ({
   checkGate0Exit: vi.fn(),
   checkGate1Exit: vi.fn().mockResolvedValue({ passed: true, checks: [], skipped: true }),
+  evaluateGate0Readiness: vi.fn().mockReturnValue({ ready: true, unresolved_variables: [], empty_checks: [], detail: "Gate 0 is ready." }),
   runCustomGates: vi.fn().mockResolvedValue({ passed: true, checks: [] }),
 }));
 
@@ -40,12 +42,15 @@ const {
   checkGate0Exit,
   checkGate1Exit,
   runCustomGates,
+  evaluateGate0Readiness,
 } = await import("../../gates/index.js") as {
   checkGate0Exit: ReturnType<typeof vi.fn>;
   checkGate1Exit: ReturnType<typeof vi.fn>;
   runCustomGates: ReturnType<typeof vi.fn>;
+  evaluateGate0Readiness: ReturnType<typeof vi.fn>;
 };
 
+const { runCommand } = await import("../../executor/index.js") as { runCommand: ReturnType<typeof vi.fn> };
 const { handleTaskStart, handleTaskComplete, handleTaskRenew } = await import("../../services/task-lifecycle.js");
 const { registerGateTools } = await import("../gate.js");
 const { handleCycleStatus } = await import("../cycle.js");
@@ -103,7 +108,10 @@ function makePhases(): PhaseState[] {
   ];
 }
 
-const config: RigorConfig = DEFAULTS;
+const config: RigorConfig = {
+  ...DEFAULTS,
+  workspace: { ...DEFAULTS.workspace, require_worktree: false, require_feature_branch: false },
+};
 
 // ---------------------------------------------------------------------------
 // Suite
@@ -139,6 +147,117 @@ describe("gate tools", async () => {
   // -----------------------------------------------------------------------
 
   describe("task_start", async () => {
+    it("blocks an unready Gate 0 before commands, custom gates, Gate 1, leases, or evidence", async () => {
+      evaluateGate0Readiness.mockReturnValueOnce({
+        ready: false,
+        unresolved_variables: ["lang.test_command"],
+        empty_checks: [],
+        detail: "Gate 0 has unresolved command variable(s): lang.test_command.",
+      });
+
+      const result = await handleTaskStart({ task_id: "1.1.2" }, stateManager, config, tempDir);
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("lang.test_command");
+      expect(runCustomGates).not.toHaveBeenCalled();
+      expect(checkGate1Exit).not.toHaveBeenCalled();
+      expect(stateManager.getTask("1.1.2").status).toBe("pending");
+      expect(stateManager.getTask("1.1.2").lease).toBeUndefined();
+      expect(existsSync(join(tempDir, ".rigor", "evidence"))).toBe(false);
+    });
+
+    it("blocks workspace inspection failures when worktree policy is enabled before commands, leases, or evidence", async () => {
+      const uninspectableRoot = mkdtempSync(join(tmpdir(), "rigor-uninspectable-workspace-"));
+      const uninspectableStateManager = new StateManager(uninspectableRoot);
+      uninspectableStateManager.init("test-plan.md", makePhases());
+
+      try {
+        const result = await handleTaskStart(
+          { task_id: "1.1.2" },
+          uninspectableStateManager,
+          { ...config, workspace: { ...config.workspace, require_worktree: true } },
+          uninspectableRoot,
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("not a git repository");
+        expect(runCommand).not.toHaveBeenCalled();
+        expect(runCustomGates).not.toHaveBeenCalled();
+        expect(checkGate1Exit).not.toHaveBeenCalled();
+        expect(uninspectableStateManager.getTask("1.1.2").status).toBe("pending");
+        expect(uninspectableStateManager.getTask("1.1.2").lease).toBeUndefined();
+        expect(existsSync(join(uninspectableRoot, ".rigor", "evidence"))).toBe(false);
+      } finally {
+        rmSync(uninspectableRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("blocks required workspace policy before commands, custom gates, Gate 1, leases, and evidence", async () => {
+      execFileSync("git", ["init", "--quiet", tempDir]);
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: tempDir });
+      writeFileSync(join(tempDir, "initial"), "initial", "utf-8");
+      execFileSync("git", ["add", "initial"], { cwd: tempDir });
+      execFileSync("git", ["commit", "--quiet", "-m", "initial"], { cwd: tempDir });
+      const branch = execFileSync("git", ["branch", "--show-current"], { cwd: tempDir, encoding: "utf-8" }).trim();
+      const result = await handleTaskStart(
+        { task_id: "1.1.2" },
+        stateManager,
+        {
+          ...config,
+          workspace: { ...config.workspace, require_worktree: true, require_feature_branch: true, base_branches: [branch] },
+        },
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain("dedicated linked worktree");
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(runCustomGates).not.toHaveBeenCalled();
+      expect(checkGate1Exit).not.toHaveBeenCalled();
+      expect(stateManager.getTask("1.1.2").status).toBe("pending");
+      expect(stateManager.getTask("1.1.2").lease).toBeUndefined();
+      expect(existsSync(join(tempDir, ".rigor", "evidence"))).toBe(false);
+    });
+
+    it("identifies unresolved commands from project configuration with override advice", async () => {
+      evaluateGate0Readiness.mockReturnValueOnce({
+        ready: false,
+        unresolved_variables: ["lang.test_command"],
+        empty_checks: [],
+        detail: "Gate 0 has unresolved command variable(s): lang.test_command.",
+      });
+      mkdirSync(join(tempDir, ".rigor"), { recursive: true });
+      writeFileSync(join(tempDir, ".rigor", "config.yaml"), "gates:\n  gate_0:\n    checks:\n      - name: tests\n        command: \"${lang.test_command}\"\n", "utf-8");
+
+      const result = await handleTaskStart({ task_id: "1.1.2" }, stateManager, null, tempDir);
+
+      const text = extractText(result);
+      expect(text).toContain("lang.test_command");
+      expect(text).toContain(`project_config (${join(tempDir, ".rigor", "config.yaml")})`);
+      expect(text).toContain("Set a concrete gates.gate_0.checks list in the project config");
+    });
+
+    it("identifies unresolved commands from selected domain defaults with override advice", async () => {
+      evaluateGate0Readiness.mockReturnValueOnce({
+        ready: false,
+        unresolved_variables: ["lang.test_command"],
+        empty_checks: [],
+        detail: "Gate 0 has unresolved command variable(s): lang.test_command.",
+      });
+      mkdirSync(join(tempDir, "skills", "domain", "software"), { recursive: true });
+      mkdirSync(join(tempDir, ".rigor"), { recursive: true });
+      writeFileSync(join(tempDir, "skills", "domain", "software", "defaults.yaml"), "gates:\n  gate_0:\n    checks:\n      - name: tests\n        command: \"${lang.test_command}\"\n", "utf-8");
+      writeFileSync(join(tempDir, ".rigor", "config.yaml"), "domain: software\n", "utf-8");
+
+      const result = await handleTaskStart({ task_id: "1.1.2" }, stateManager, null, tempDir);
+
+      const text = extractText(result);
+      expect(text).toContain("lang.test_command");
+      expect(text).toContain(`domain_defaults (${join(tempDir, "skills", "domain", "software", "defaults.yaml")})`);
+      expect(text).toContain("override this domain check");
+    });
+
     // 1. Transitions pending task to doing
     it("transitions a pending task to doing", async () => {
       const result = await handleTaskStart(
@@ -470,6 +589,42 @@ describe("gate tools", async () => {
       expect(stateManager.getTask("1.1.2").lease).toEqual(before);
     });
 
+    it("recovers an expired lease with a fresh attempt that can renew", async () => {
+      const expiredLease = await startLease();
+      const state = stateManager.load()!;
+      state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!.lease!.lease_expires_at = new Date(Date.now() - 1).toISOString();
+      stateManager.save(state);
+
+      const staleRenewal = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: expiredLease.owner_id, attempt_id: expiredLease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+      expect(staleRenewal.isError).toBe(true);
+      expect(extractText(staleRenewal)).toContain(`task_start({ task_id: "1.1.2", owner_id: "<replacement-owner>", takeover: true, project_root: "${tempDir}" })`);
+
+      const takeover = await handleTaskStart(
+        { task_id: "1.1.2", owner_id: "owner-b", takeover: true },
+        stateManager,
+        config,
+        tempDir,
+      );
+      const replacementLease = stateManager.getTask("1.1.2").lease!;
+      expect(takeover.isError).toBeUndefined();
+      expect(replacementLease.attempt_id).not.toBe(expiredLease.attempt_id);
+      expect(replacementLease.takeover_history).toEqual([
+        expect.objectContaining({ owner_id: "owner-a", attempt_id: expiredLease.attempt_id }),
+      ]);
+
+      const renewal = await handleTaskRenew(
+        { task_id: "1.1.2", owner_id: replacementLease.owner_id, attempt_id: replacementLease.attempt_id },
+        stateManager,
+        tempDir,
+      );
+      expect(renewal.isError).toBeUndefined();
+      expect(extractText(renewal)).toContain("lease renewed");
+    });
+
     it("serializes an expired renewal and takeover so the takeover keeps the lease", async () => {
       const lease = await startLease();
       const state = stateManager.load()!;
@@ -525,6 +680,28 @@ describe("gate tools", async () => {
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain('not owned by owner "legacy"');
+      expect(checkGate0Exit).not.toHaveBeenCalled();
+    });
+
+    it("guides expired leased completion to a root-aware takeover without running Gate 0", async () => {
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+      const lease = task.lease = {
+        owner_id: "owner-a",
+        attempt_id: "attempt-a",
+        lease_expires_at: new Date(Date.now() - 1).toISOString(),
+      };
+      stateManager.save(state);
+
+      const result = await handleTaskComplete(
+        { task_id: "1.1.2", owner_id: lease.owner_id, attempt_id: lease.attempt_id },
+        stateManager,
+        config,
+        tempDir,
+      );
+
+      expect(result.isError).toBe(true);
+      expect(extractText(result)).toContain(`task_start({ task_id: "1.1.2", owner_id: "owner-a", takeover: true, project_root: "${tempDir}" })`);
       expect(checkGate0Exit).not.toHaveBeenCalled();
     });
 

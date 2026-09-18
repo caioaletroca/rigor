@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { StateManager } from "../../state/index.js";
 import { EvidenceManager } from "../../evidence/index.js";
 import { handleCycleInit, handleCycleStatus, handleCycleReload } from "../cycle.js";
@@ -38,6 +39,10 @@ const FIXTURE_DIR = join(
 const SAMPLE_PLAN = join(FIXTURE_DIR, "sample-plan.md");
 const TEST_CONFIG = {
   ...DEFAULTS,
+  gates: {
+    ...DEFAULTS.gates,
+    gate_0: { ...DEFAULTS.gates.gate_0, allow_empty: true },
+  },
   workspace: {
     ...DEFAULTS.workspace,
     require_worktree: false,
@@ -70,6 +75,17 @@ describe("cycle tools", () => {
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "rigor-cycle-test-"));
+    mkdirSync(join(tempDir, ".rigor"), { recursive: true });
+    writeFileSync(
+      join(tempDir, ".rigor", "config.yaml"),
+      "gates:\n  gate_0:\n    checks:\n      - name: runtime\n        command: \"node --version\"\nworkspace:\n  require_worktree: false\n  require_feature_branch: false\n",
+      "utf-8",
+    );
+    execFileSync("git", ["init", "--quiet", tempDir]);
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tempDir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: tempDir });
+    execFileSync("git", ["add", "."], { cwd: tempDir });
+    execFileSync("git", ["commit", "--quiet", "-m", "initial"], { cwd: tempDir });
     stateManager = new StateManager(tempDir);
   });
 
@@ -178,6 +194,36 @@ describe("cycle tools", () => {
       expect(text).toContain("rigor:worktree");
     });
 
+    it("rejects an unready Gate 0 before state initialization, even with allow_shared_workspace", async () => {
+      const planPath = join(tempDir, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+
+      const result = await handleCycleInit(
+        { plan_path: planPath, allow_shared_workspace: true },
+        stateManager,
+        tempDir,
+        {
+          ...TEST_CONFIG,
+          gates: {
+            ...TEST_CONFIG.gates,
+            gate_0: {
+              ...TEST_CONFIG.gates.gate_0,
+              allow_empty: false,
+              checks: [{ name: "tests", command: "${lang.test_command}" }],
+            },
+          },
+        },
+      );
+
+      expect(result.isError).toBe(true);
+      const text = extractText(result);
+      expect(text).toContain("lang.test_command");
+      expect(text).toContain("Pass the active worktree's absolute project_root.");
+      expect(text).not.toContain("restart");
+      expect(stateManager.load()).toBeNull();
+      expect(existsSync(join(tempDir, ".rigor", "state.json"))).toBe(false);
+    });
+
     it("rejects a shared workspace override when project config disables it", async () => {
       const result = await handleCycleInit(
         { plan_path: "plan.md", allow_shared_workspace: true },
@@ -191,6 +237,33 @@ describe("cycle tools", () => {
 
       expect(result.isError).toBe(true);
       expect(extractText(result)).toContain("allow_shared_workspace is disabled");
+    });
+
+    it("rejects workspace inspection failures before a permitted shared override can initialize state", async () => {
+      const uninspectableRoot = mkdtempSync(join(tmpdir(), "rigor-uninspectable-workspace-"));
+      const uninspectableStateManager = new StateManager(uninspectableRoot);
+      const planPath = join(uninspectableRoot, "plan.md");
+      cpSync(SAMPLE_PLAN, planPath);
+
+      try {
+        const result = await handleCycleInit(
+          { plan_path: planPath, allow_shared_workspace: true },
+          uninspectableStateManager,
+          uninspectableRoot,
+          {
+            ...TEST_CONFIG,
+            workspace: { ...TEST_CONFIG.workspace, require_worktree: true, allow_override: true },
+          },
+        );
+
+        expect(result.isError).toBe(true);
+        expect(extractText(result)).toContain("not a git repository");
+        expect(uninspectableStateManager.load()).toBeNull();
+        expect(existsSync(join(uninspectableRoot, ".rigor", "state.json"))).toBe(false);
+        expect(existsSync(join(uninspectableRoot, ".rigor", "evidence"))).toBe(false);
+      } finally {
+        rmSync(uninspectableRoot, { recursive: true, force: true });
+      }
     });
 
     it("allows an explicit shared workspace override when project config permits it", async () => {

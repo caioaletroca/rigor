@@ -16,10 +16,14 @@ import { SyncManager } from "./sync/index.js";
 import {
   registerCycleTools,
   registerGateTools,
+  registerReadinessTool,
   registerReviewTools,
   registerRecoveryTools,
   registerSyncTools,
   registerScaffoldTools,
+  registerServerInfoTool,
+  RIGOR_SERVER_NAME,
+  RIGOR_SERVER_VERSION,
 } from "./tools/index.js";
 import type { RigorConfig } from "./config/index.js";
 
@@ -48,15 +52,17 @@ export function createServer(projectRoot: string, sharedRegistry?: ProjectContex
   const { stateManager, evidenceManager, syncManager, config } = context;
 
   const server = new McpServer(
-    { name: "rigor-gate-server", version: "0.1.0" },
+    { name: RIGOR_SERVER_NAME, version: RIGOR_SERVER_VERSION },
   );
 
   registerCycleTools(server, stateManager, config, projectRoot, registry);
   registerGateTools(server, stateManager, projectRoot, registry);
+  registerReadinessTool(server, projectRoot);
   registerReviewTools(server, stateManager, evidenceManager, projectRoot, registry);
   registerRecoveryTools(server, stateManager, evidenceManager, projectRoot, config, registry);
   registerSyncTools(server, syncManager, registry, projectRoot);
   registerScaffoldTools(server, projectRoot);
+  registerServerInfoTool(server, projectRoot);
 
   return { server, stateManager, evidenceManager, syncManager, registry, config };
 }
