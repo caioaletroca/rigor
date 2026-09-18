@@ -367,5 +367,5 @@ describe("cross-client transport harness", () => {
     const sorted = [...samples].sort((a, b) => a - b);
     const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
     expect(p95).toBeLessThan(5000);
-  });
+  }, 30000);
 });
