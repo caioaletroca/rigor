@@ -14,14 +14,15 @@ function status(result: ReturnType<typeof handleServerInfo>): Record<string, unk
 
 describe("server info tool", () => {
   it("reports the canonical fallback root and sorted root-aware lifecycle tools", () => {
-    const result = handleServerInfo({}, "C:\\projects\\rigor\\.");
+    const fallbackRoot = process.platform === "win32" ? "C:\\projects\\rigor\\." : "/projects/rigor/.";
+    const result = handleServerInfo({}, fallbackRoot);
     const body = status(result);
 
     expect(body).toMatchObject({
       server_name: RIGOR_SERVER_NAME,
       server_version: RIGOR_SERVER_VERSION,
       schema_version: RIGOR_SCHEMA_VERSION,
-      fallback_root: "C:\\projects\\rigor",
+      fallback_root: process.platform === "win32" ? "C:\\projects\\rigor" : "/projects/rigor",
       reconnect_required: false,
     });
     expect(body.root_aware_lifecycle_tools).toEqual([...ROOT_AWARE_LIFECYCLE_TOOLS].sort());
