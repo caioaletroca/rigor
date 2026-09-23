@@ -192,14 +192,12 @@ export function handleTaskRetry(
     for (const phase of freshState.phases) {
       for (const epic of phase.epics) {
         for (const t of epic.tasks) {
-          if (t.id === params.task_id) {
-            t.gate_0 = { passed: false };
-            delete t.worker;
-          }
+          if (t.id === params.task_id) t.gate_0 = { passed: false };
         }
       }
     }
     stateManager.save(freshState);
+    stateManager.clearTaskWorker(params.task_id);
   }
 
   // 7. Return confirmation with previous failure reason

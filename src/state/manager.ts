@@ -255,6 +255,16 @@ export class StateManager {
     }
   }
 
+  clearTaskWorker(taskId: string): CycleState {
+    const state = this.load();
+    if (state === null) throw new EntityNotFoundError("task", taskId);
+    const task = this.findTask(state, taskId);
+    if (!task) throw new EntityNotFoundError("task", taskId);
+    delete task.worker;
+    this.save(state);
+    return state;
+  }
+
   /**
    * Find a task by id (e.g., "1.1.1"). Throws if not found.
    */
