@@ -186,19 +186,8 @@ export function handleTaskRetry(
   // 5. Clear only the current Gate 0 summary; terminal attempt history is retained.
   evidenceManager.delete("gate_0", params.task_id);
 
-  // 6. Reset the task's gate_0 field in state
-  const freshState = stateManager.load();
-  if (freshState !== null) {
-    for (const phase of freshState.phases) {
-      for (const epic of phase.epics) {
-        for (const t of epic.tasks) {
-          if (t.id === params.task_id) t.gate_0 = { passed: false };
-        }
-      }
-    }
-    stateManager.save(freshState);
-    stateManager.clearTaskWorker(params.task_id);
-  }
+  // 6. Reset the task's Gate 0 summary and advisory worker in one state write.
+  stateManager.resetTaskForRetry(params.task_id);
 
   // 7. Return confirmation with previous failure reason
   const lines: string[] = [];

@@ -334,11 +334,15 @@ describe("recovery tools", () => {
       evidenceManager.saveTerminalGate0Attempt(evidenceManager.load("gate_0", "1.1.1")!);
 
       state.phases[0].epics[0].tasks[0].status = "failed";
-      state.phases[0].epics[0].tasks[0].gate_0 = {
-        passed: false,
-        evidence_path: evidencePath,
-      };
-      writeState(tempDir, state);
+       state.phases[0].epics[0].tasks[0].gate_0 = {
+         passed: false,
+         evidence_path: evidencePath,
+       };
+       state.phases[0].epics[0].tasks[0].worker = {
+         owner_id: "owner-a",
+         started_at: new Date().toISOString(),
+       };
+       writeState(tempDir, state);
 
       const result = handleTaskRetry(
         { task_id: "1.1.1" },
@@ -360,8 +364,9 @@ describe("recovery tools", () => {
       // Verify gate_0 was reset in state
       const updatedState = stateManager.load();
       const task = updatedState?.phases[0].epics[0].tasks[0];
-      expect(task?.gate_0.passed).toBe(false);
-      expect(task?.gate_0.evidence_path).toBeUndefined();
+       expect(task?.gate_0.passed).toBe(false);
+       expect(task?.gate_0.evidence_path).toBeUndefined();
+       expect(task?.worker).toBeUndefined();
     });
 
     it("handles failed task with no prior evidence gracefully", async () => {

@@ -255,11 +255,12 @@ export class StateManager {
     }
   }
 
-  clearTaskWorker(taskId: string): CycleState {
+  resetTaskForRetry(taskId: string): CycleState {
     const state = this.load();
     if (state === null) throw new EntityNotFoundError("task", taskId);
     const task = this.findTask(state, taskId);
     if (!task) throw new EntityNotFoundError("task", taskId);
+    task.gate_0 = { passed: false };
     delete task.worker;
     this.save(state);
     return state;
