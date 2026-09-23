@@ -290,6 +290,32 @@ describe("cross-client transport harness", () => {
     });
   });
 
+  it("discards legacy lease data before transport lifecycle operations", async () => {
+    const project = makeFixture("legacy-lease");
+    roots.push(project);
+
+    await withHarnessSessions([{ projectRoot: project, clientStyle: "opencode" }], async ([session]) => {
+      await session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true });
+      const statePath = join(project, ".rigor", "state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf-8"));
+      state.phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").lease = {
+        owner_id: "owner-a",
+        attempt_id: "attempt-a",
+        lease_expires_at: "not-a-timestamp",
+        takeover_history: [{ owner_id: "owner-z", attempt_id: "attempt-z", lease_expires_at: "2020-01-01T00:00:00.000Z", taken_over_at: "2020-01-01T00:00:00.000Z" }],
+      };
+      writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+
+      const started = await session.call("task_start", { task_id: "1.1.2", owner_id: "owner-b" });
+      expect(started.isError).toBeUndefined();
+
+      const migrated = JSON.parse(readFileSync(statePath, "utf-8"));
+      const task = migrated.phases[0].epics[0].tasks.find((candidate: { id: string }) => candidate.id === "1.1.2");
+      expect(task).not.toHaveProperty("lease");
+      expect(task.worker.owner_id).toBe("owner-b");
+    });
+  });
+
   it("records advisory workers per project root without exposing renewal", async () => {
     const projectA = makeFixture("worker-a");
     const projectB = makeFixture("worker-b");
