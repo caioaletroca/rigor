@@ -225,6 +225,7 @@ describe("validateState", () => {
   });
 
   it.each([
+    ["null worker", null, "worker must be an object"],
     ["empty owner_id", { owner_id: "", started_at: "2026-09-22T12:00:00.000Z" }, "owner_id"],
     ["non-string owner_id", { owner_id: 7, started_at: "2026-09-22T12:00:00.000Z" }, "owner_id"],
     ["unparseable started_at", { owner_id: "owner-a", started_at: "not-a-date" }, "started_at"],

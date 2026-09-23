@@ -191,6 +191,7 @@ export class StateManager {
 
     const previousStatus = entity.status;
     entity.status = toStatus;
+    this.clearWorkerWhenNotDoing(entity, toStatus);
     this.save(state);
 
     // Fire sync event for the transition
@@ -237,8 +238,21 @@ export class StateManager {
     }
 
     entity.status = toStatus;
+    this.clearWorkerWhenNotDoing(entity, toStatus);
     this.save(state);
     return state;
+  }
+
+  /**
+   * Advisory worker metadata describes who is currently working a task, so it
+   * is meaningful only while that task is "doing". Any transition away from
+   * "doing" — completion, failure, retry, force_status, skip, or reset —
+   * drops it.
+   */
+  private clearWorkerWhenNotDoing(entity: { status: Status }, toStatus: Status): void {
+    if (toStatus !== "doing") {
+      delete (entity as TaskState).worker;
+    }
   }
 
   /**

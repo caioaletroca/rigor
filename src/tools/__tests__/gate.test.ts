@@ -127,6 +127,7 @@ describe("gate tools", async () => {
     expect(tool.mock.calls[0][2].owner_id.safeParse(undefined).success).toBe(true);
     expect(tool.mock.calls[0][2]).not.toHaveProperty("takeover");
     expect(tool.mock.calls[0][2]).not.toHaveProperty("lease_ms");
+    expect(tool.mock.calls[0][2]).not.toHaveProperty("attempt_id");
     expect(tool.mock.calls[1][2]).not.toHaveProperty("owner_id");
     expect(tool.mock.calls[1][2]).not.toHaveProperty("attempt_id");
   });
@@ -306,6 +307,16 @@ describe("gate tools", async () => {
 
       expect(result.isError).toBeUndefined();
       expect(extractText(result)).not.toContain("Coordinate file ownership");
+    });
+
+    it("preserves the worker and does not warn when a doing task is started without an owner", async () => {
+      await handleTaskStart({ task_id: "1.1.2", owner_id: "owner-a" }, stateManager, config, tempDir);
+
+      const result = await handleTaskStart({ task_id: "1.1.2" }, stateManager, config, tempDir);
+
+      expect(result.isError).toBeUndefined();
+      expect(extractText(result)).not.toContain("Coordinate file ownership");
+      expect(stateManager.getTask("1.1.2").worker?.owner_id).toBe("owner-a");
     });
 
     // 3. Rejects when no cycle exists
@@ -497,16 +508,20 @@ describe("gate tools", async () => {
   // -----------------------------------------------------------------------
 
   describe("task_complete", async () => {
+    function seedWorker(ownerId: string): void {
+      const state = stateManager.load()!;
+      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
+      task.worker = { owner_id: ownerId, started_at: new Date().toISOString() };
+      stateManager.save(state);
+    }
+
     beforeEach(() => {
       // Put task 1.1.2 into "doing" so it can be completed
       stateManager.transition("1.1.2", "doing");
     });
 
     it("completes a task started by another worker without ownership checks", async () => {
-      const state = stateManager.load()!;
-      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
-      task.worker = { owner_id: "other-owner", started_at: new Date().toISOString() };
-      stateManager.save(state);
+      seedWorker("other-owner");
       checkGate0Exit.mockResolvedValue({
         passed: true,
         checks: [{ name: "tests", passed: true, detail: "All tests passed" }],
@@ -523,10 +538,7 @@ describe("gate tools", async () => {
       ["a Gate 0 pass", true, "done"],
       ["a Gate 0 failure", false, "failed"],
     ] as const)("clears advisory worker metadata on %s", async (_label, passed, status) => {
-      const state = stateManager.load()!;
-      const task = state.phases[0].epics[0].tasks.find((candidate) => candidate.id === "1.1.2")!;
-      task.worker = { owner_id: "owner-a", started_at: new Date().toISOString() };
-      stateManager.save(state);
+      seedWorker("owner-a");
       checkGate0Exit.mockResolvedValue({
         passed,
         checks: [{ name: "tests", passed, detail: passed ? "ok" : "failing" }],
@@ -972,6 +984,7 @@ describe("gate tools", async () => {
     });
 
     it("records an execution error and fails the task when the gate runner throws", async () => {
+      seedWorker("owner-a");
       checkGate0Exit.mockRejectedValue(new Error("runner unavailable"));
 
       const result = await handleTaskComplete({ task_id: "1.1.2" }, stateManager, config, tempDir);
@@ -985,6 +998,7 @@ describe("gate tools", async () => {
       expect(task.status).toBe("failed");
       expect(task.gate_0.passed).toBe(false);
       expect(task.gate_0.evidence_path).toContain("gate_0-task-1.1.2.json");
+      expect(task.worker).toBeUndefined();
     });
 
     it("refuses to promote a result when the task leaves doing at the progress boundary", async () => {
@@ -1052,6 +1066,7 @@ describe("gate tools", async () => {
 
     // 8. Transitions to failed when post_task custom gate fails
     it("transitions to failed when post_task custom gate fails", async () => {
+      seedWorker("owner-a");
       checkGate0Exit.mockResolvedValue({
         passed: true,
         checks: [
@@ -1088,10 +1103,11 @@ describe("gate tools", async () => {
        const gate0Evidence = new EvidenceManager(tempDir).load("gate_0", "1.1.2");
        expect(task.status).toBe("failed");
        expect(task.gate_0).toMatchObject({ passed: false, evidence_path: expect.any(String) });
-       expect(gate0Evidence).toMatchObject({
+        expect(gate0Evidence).toMatchObject({
          passed: true,
          gate_0_attempt: { outcome: "passed", finished_at: expect.any(String) },
        });
+       expect(task.worker).toBeUndefined();
      });
 
       it("returns persisted terminal results after post_task custom gate failure", async () => {

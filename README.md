@@ -98,14 +98,14 @@ Reconnect only when the connected client's tool inventory is stale: `rigor_statu
 
 ### Run a cycle
 
-Pseudocode; replace placeholder values with values from the active cycle and `task_start` response.
+Pseudocode; replace placeholder values with values from the active cycle.
 
 ```
 1. Write a plan (or use rigor:plan to generate one)
 2. cycle_init({ plan_path, project_root }) → Load the plan into Rigor
-3. task_start({ task_id, owner_id, project_root }) → Begin a task; retain its attempt_id
+3. task_start({ task_id, project_root }) → Begin a task (optional owner_id records an advisory worker)
 4. ... write code, tests ...
-5. task_complete({ task_id, owner_id, attempt_id, project_root }) → Gate 0 checks (tests, coverage, lint)
+5. task_complete({ task_id, project_root }) → Gate 0 checks (tests, coverage, lint)
 6. review_start({ epic_id, project_root }) → Start code review (all tasks must pass)
 7. review_submit({ epic_id, submissions, project_root }) → Gate 8 (reviewer findings aggregated)
 8. accept_start({ epic_id, project_root }) → Start acceptance

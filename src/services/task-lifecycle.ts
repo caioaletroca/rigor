@@ -165,7 +165,6 @@ export async function handleTaskStart(
   }
 
   const ownerId = params.owner_id?.trim() ? params.owner_id.trim() : undefined;
-  const priorWorker = task.worker;
   const resumingDoing = task.status === "doing";
   if (task.status !== "pending" && task.status !== "failed" && !resumingDoing) {
     return textResult(
@@ -250,16 +249,17 @@ export async function handleTaskStart(
     if (!currentTask || (currentTask.status !== "pending" && currentTask.status !== "failed" && currentTask.status !== "doing")) {
       return textResult(`Task "${params.task_id}" changed before it could be started.`, true);
     }
+    const priorWorker = currentTask.worker;
     currentTask.status = "doing";
-    currentTask.worker = worker;
+    if (worker) currentTask.worker = worker;
     stateManager.save(currentState);
-    return null;
+    return { priorWorker };
   });
-  if (commitResult) return commitResult;
+  if (commitResult instanceof Object && "content" in commitResult) return commitResult;
 
   const lines = [`Task ${params.task_id} started: ${task.name}`, "Status: doing"];
-  if (priorWorker && ownerId && priorWorker.owner_id !== ownerId) {
-    lines.push(`Warning: task ${params.task_id} was started by "${priorWorker.owner_id}" at ${priorWorker.started_at} in this workspace. Coordinate file ownership or use separate worktrees.`);
+  if (commitResult.priorWorker && ownerId && commitResult.priorWorker.owner_id !== ownerId) {
+    lines.push(`Warning: task ${params.task_id} was started by "${commitResult.priorWorker.owner_id}" at ${commitResult.priorWorker.started_at} in this workspace. Coordinate file ownership or use separate worktrees.`);
   }
   if (warnings.length > 0) lines.push(...warnings);
   return textResult(lines.join("\n"));

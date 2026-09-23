@@ -575,6 +575,36 @@ describe("StateManager", () => {
       expect(second.phases[0].epics[0].tasks[0]).not.toHaveProperty("lease");
     });
 
+    it.each([
+      ["done", (m: StateManager) => m.transition("1.1.1", "done")],
+      ["failed", (m: StateManager) => m.transition("1.1.1", "failed")],
+      ["pending via forceTransition", (m: StateManager) => m.forceTransition("1.1.1", "pending")],
+      ["skipped via forceTransition", (m: StateManager) => m.forceTransition("1.1.1", "skipped")],
+    ])("clears worker metadata when a task transitions to %s", (_label, move) => {
+      const state = mgr.init("plan.md", makeSamplePhases());
+      const task = state.phases[0].epics[0].tasks[0];
+      task.status = "doing";
+      task.worker = { owner_id: "owner-a", started_at: "2026-09-22T12:00:00.000Z" };
+      mgr.save(state);
+
+      move(mgr);
+
+      expect(mgr.getTask("1.1.1").worker).toBeUndefined();
+    });
+
+    it("retains worker metadata when a task transitions into doing", () => {
+      const state = mgr.init("plan.md", makeSamplePhases());
+      state.phases[0].epics[0].tasks[0].worker = {
+        owner_id: "owner-a",
+        started_at: "2026-09-22T12:00:00.000Z",
+      };
+      mgr.save(state);
+
+      mgr.transition("1.1.1", "doing");
+
+      expect(mgr.getTask("1.1.1").worker?.owner_id).toBe("owner-a");
+    });
+
     it("preserves unrelated task state while migrating", () => {
       writeRawState((task) => {
         task.lease = { owner_id: "owner-a", attempt_id: "attempt-a", lease_expires_at: "x" };
