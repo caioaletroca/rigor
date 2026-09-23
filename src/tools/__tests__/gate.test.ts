@@ -125,6 +125,10 @@ describe("gate tools", async () => {
 
     expect(tool.mock.calls.map(([name]) => name)).toEqual(["task_start", "task_complete"]);
     expect(tool.mock.calls[0][2].owner_id.safeParse(undefined).success).toBe(true);
+    expect(tool.mock.calls[0][2].owner_id.safeParse("a".repeat(128)).success).toBe(true);
+    expect(tool.mock.calls[0][2].owner_id.safeParse("a".repeat(129)).success).toBe(false);
+    expect(tool.mock.calls[0][2].owner_id.safeParse("owner name").success).toBe(false);
+    expect(tool.mock.calls[0][2].owner_id.safeParse("owner\nname").success).toBe(false);
     expect(tool.mock.calls[0][2]).not.toHaveProperty("takeover");
     expect(tool.mock.calls[0][2]).not.toHaveProperty("lease_ms");
     expect(tool.mock.calls[0][2]).not.toHaveProperty("attempt_id");
