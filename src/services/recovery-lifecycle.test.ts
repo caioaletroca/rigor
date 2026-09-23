@@ -443,11 +443,12 @@ describe("recovery tools", () => {
 
     it("reports an unfinished persisted Gate 0 attempt as stuck when it is not in-process", async () => {
       const state = makeCycleState();
-      state.phases[0].epics[0].tasks[0].status = "doing";
-      writeState(tempDir, state);
-      evidenceManager.save({
-        gate: "gate_0",
-        entity_id: "1.1.1",
+       state.phases[0].epics[0].tasks[0].status = "doing";
+       state.phases[0].epics[0].tasks[0].worker = { owner_id: "owner-a", started_at: new Date().toISOString() };
+       writeState(tempDir, state);
+       evidenceManager.save({
+         gate: "gate_0",
+         entity_id: "1.1.1",
         passed: false,
         timestamp: new Date().toISOString(),
         checks: [],
@@ -594,8 +595,9 @@ describe("recovery tools", () => {
         const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
         expect(text).toContain("interrupted");
-        expect(stateManager.getTask("1.1.1").status).toBe("failed");
-        expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
+       expect(stateManager.getTask("1.1.1").status).toBe("failed");
+       expect(stateManager.getTask("1.1.1").worker).toBeUndefined();
+         expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
           id: "attempt-retry",
           outcome: "interrupted",
           finished_at: expect.any(String),

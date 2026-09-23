@@ -124,6 +124,24 @@
 **Done when:** Retry and recovery clear advisory worker metadata; diagnostics report interrupted evidence without calling a task lease stuck; task management has no owner/attempt/takeover schema drift; all recovery guidance offers ordinary retry/start actions.
 **Status:** Pending
 
+#### Task 2.1.1: Verify advisory recovery and remove stale lease language
+
+- [ ] Done
+
+**Context:** Phase 1 removed `TaskLease` and ownership fields from the public task tools. `handleTaskRetry` already clears `worker` at `src/services/recovery-lifecycle.ts:186-203`; diagnostic reconciliation transitions terminal tasks through `StateManager.transition` at `:771-875`, which now centrally clears workers on every non-`doing` transition (`src/state/manager.ts:177-213`, `:224-241`). `TaskManageParams` no longer declares owner/attempt/takeover at `src/services/recovery-lifecycle.ts:219-225`.
+
+**Implementation vision:** Audit every recovery action and diagnostic suggestion for expired-lease, takeover, owner, or attempt-ownership semantics. Keep Gate-0 attempt evidence IDs, which are evidence history rather than ownership fences. Ensure retry, reset, force-status, skip, and interrupted Gate-0 reconciliation leave no worker on a task that is no longer `doing`. Update stale test labels/messages that describe advisory worker behavior as leases, but retain legacy-lease fixture wording where it specifically documents migration input.
+
+**Files:**
+- Modify: `src/services/recovery-lifecycle.ts:132-212`, `:219-390`, `:771-875`
+- Modify: `src/services/recovery-lifecycle.test.ts`
+- Modify: `src/services/task-lifecycle-readiness.integration.test.ts:34`
+- Test: `src/services/recovery-lifecycle.test.ts`
+
+**Verification:** `npm run build && npx vitest run src/services/recovery-lifecycle.test.ts src/services/task-lifecycle-readiness.integration.test.ts` exits 0. Tests prove recovery of an interrupted/stale Gate-0 attempt reaches a terminal task without worker metadata; retry and administrative task actions clear workers; suggestions use only ordinary `task_manage retry`/`task_start` calls.
+
+**Done when:** Recovery has no operational lease, expiry, takeover, owner-fence, or attempt-fence behavior; evidence-attempt history remains intact and terminal tasks cannot retain advisory worker metadata.
+
 ### Epic 2.2: Verify state/evidence compatibility
 
 **Goal:** Upgraded projects and existing evidence histories operate safely after the lease model is removed.
@@ -131,6 +149,23 @@
 **Dependencies:** Epic 2.1
 **Done when:** Legacy `state.json` fixtures with live, expired, malformed, and takeover-history leases load without lifecycle errors; no legacy lease data is re-saved; interrupted attempt reconciliation preserves historical evidence and clears advisory worker state.
 **Status:** Pending
+
+#### Task 2.2.1: Exercise legacy state through recovery and transport boundaries
+
+- [ ] Done
+
+**Context:** `StateManager.migrate()` strips an unknown legacy `lease` property while loading state at `src/state/manager.ts:77-91`; unit coverage currently verifies raw state migration at `src/state/__tests__/manager.test.ts:488-622`. Completion already proves it ignores legacy lease data at `src/tools/__tests__/gate.test.ts:837-856`. Transport tests assert separate project roots retain independent workers and omit `task_renew` at `src/tools/__tests__/transport.integration.test.ts:293-318`.
+
+**Implementation vision:** Add integration coverage that writes legacy lease-bearing state directly, then invokes recovery/diagnostic and normal lifecycle operations through their public service or transport boundary. Cover live, expired, malformed, and takeover-history legacy shapes without interpreting their expiry; the only permitted outcome is lease removal on load and normal status/evidence behavior. For an interrupted Gate-0 attempt carrying an advisory worker, assert reconciliation writes terminal attempt history, transitions to `failed`, and clears worker. Assert a subsequent save does not restore legacy lease data.
+
+**Files:**
+- Modify: `src/services/recovery-lifecycle.test.ts`
+- Modify: `src/tools/__tests__/transport.integration.test.ts`
+- Modify: `src/state/__tests__/manager.test.ts`
+
+**Verification:** `npm run build && npx vitest run src/state/__tests__/manager.test.ts src/services/recovery-lifecycle.test.ts src/tools/__tests__/transport.integration.test.ts` exits 0. The full configured Gate 0 suite (`npx vitest run src/`) also exits 0.
+
+**Done when:** An upgraded worktree never rejects lifecycle/recovery work because of legacy lease data, never persists that data after a save, and preserves Gate-0 evidence history while clearing terminal advisory workers.
 
 ---
 

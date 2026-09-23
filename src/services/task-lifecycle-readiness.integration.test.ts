@@ -31,7 +31,7 @@ describe("task_start Gate 0 readiness integration", () => {
   it.each([
     ["unresolved", "- name: tests\n        command: '${lang.test_command}'"],
     ["mixed", "- name: runnable\n        command: \"node --version\"\n      - name: unresolved\n        command: '${lang.lint_command}'"],
-  ])("blocks %s configured commands before custom gates, leases, and evidence", async (_name, checks) => {
+  ])("blocks %s configured commands before custom gates, worker metadata, and evidence", async (_name, checks) => {
     const root = mkdtempSync(join(tmpdir(), "rigor-task-start-readiness-"));
     const marker = join(root, "custom-ran");
     const stateManager = new StateManager(root);
