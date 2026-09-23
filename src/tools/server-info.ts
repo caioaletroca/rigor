@@ -28,7 +28,6 @@ export const ROOT_AWARE_LIFECYCLE_TOOLS = [
   "sync_status",
   "task_complete",
   "task_manage",
-  "task_renew",
   "task_start",
 ] as const;
 

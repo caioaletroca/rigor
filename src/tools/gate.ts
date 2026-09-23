@@ -5,7 +5,6 @@ import type { StateManager } from "../state/index.js";
 import type { ProjectContextRegistry } from "../context.js";
 import {
   handleTaskComplete,
-  handleTaskRenew,
   handleTaskStart,
 } from "../services/task-lifecycle.js";
 
@@ -18,7 +17,7 @@ export function registerGateTools(
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), takeover: z.boolean().optional(), lease_ms: z.number().int().positive().optional(), project_root: projectRootSchema },
+    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1).optional().describe("Advisory worker id recorded for coordination only"), project_root: projectRootSchema },
     async (params) => {
       const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
       return handleTaskStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);
@@ -26,19 +25,9 @@ export function registerGateTools(
   );
 
   server.tool(
-    "task_renew",
-    "Renew a live task lease for its current owner and attempt",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: projectRootSchema },
-    async (params) => {
-      const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
-      return handleTaskRenew(params, ctx?.stateManager ?? stateManager, ctx?.project_root ?? projectRoot);
-    },
-  );
-
-  server.tool(
     "task_complete",
     "Complete a task — runs Gate 0 exit checks (tests, coverage, lint), saves evidence",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1), attempt_id: z.string().min(1), project_root: projectRootSchema },
+    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), project_root: projectRootSchema },
     async (params) => {
       const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
       return handleTaskComplete(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);

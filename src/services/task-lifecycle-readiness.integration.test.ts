@@ -53,7 +53,7 @@ gates:
 
     expect(result.isError).toBe(true);
     expect(stateManager.getTask("1.1.1").status).toBe("pending");
-    expect(stateManager.getTask("1.1.1").lease).toBeUndefined();
+    expect(stateManager.getTask("1.1.1").worker).toBeUndefined();
     expect(existsSync(marker)).toBe(false);
     expect(existsSync(join(root, ".rigor", "evidence"))).toBe(false);
     rmSync(root, { recursive: true, force: true });
@@ -107,7 +107,7 @@ gates:
 
     expect(result.isError).toBeUndefined();
     expect(stateManager.getTask("1.1.1").status).toBe("doing");
-    expect(stateManager.getTask("1.1.1").lease?.owner_id).toBe("owner");
+    expect(stateManager.getTask("1.1.1").worker?.owner_id).toBe("owner");
     rmSync(root, { recursive: true, force: true });
   });
 });

@@ -8,8 +8,8 @@
 
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { responseResult } from "../tools/lifecycle.js";
-import type { StateManager, TaskLease, LeaseFenceMismatchReason } from "../state/index.js";
-import { EntityNotFoundError, isValidTransition, TASK_LEASE_DURATION_MS } from "../state/index.js";
+import type { StateManager, TaskWorker } from "../state/index.js";
+import { EntityNotFoundError, isValidTransition } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
@@ -55,9 +55,35 @@ function activeCompletionResult(taskId: string, attemptId: string): CallToolResu
 
 function staleAttemptResult(taskId: string): CallToolResult {
   return textResult(
-    `Task ${taskId} attempt is stale and its result was not promoted. The attempt history was retained; retry with the current lease.`,
+    `Task ${taskId} attempt is stale and its result was not promoted. The attempt history was retained; call task_start to begin a fresh attempt.`,
     true,
   );
+}
+
+/**
+ * Reload canonical state and confirm the task is still "doing".
+ *
+ * This replaces lease fencing: a completion result is promoted only while the
+ * task it belongs to is still in progress, so a task reset or forced status
+ * change mid-Gate-0 cannot be overwritten by a late result.
+ */
+function loadDoingTask(stateManager: StateManager, taskId: string) {
+  const state = stateManager.load();
+  if (!state) return null;
+  const task = state.phases
+    .flatMap((phase) => phase.epics)
+    .flatMap((epic) => epic.tasks)
+    .find((candidate) => candidate.id === taskId);
+  if (!task || task.status !== "doing") return null;
+  return { state, task };
+}
+
+function clearWorker(stateManager: StateManager, taskId: string): boolean {
+  const current = loadDoingTask(stateManager, taskId);
+  if (!current) return false;
+  delete current.task.worker;
+  stateManager.save(current.state);
+  return true;
 }
 
 function terminalCompletionResult(
@@ -91,8 +117,6 @@ function terminalCompletionResult(
 export interface TaskStartParams {
   task_id: string;
   owner_id?: string;
-  takeover?: boolean;
-  lease_ms?: number;
   project_root?: string;
 }
 
@@ -140,18 +164,10 @@ export async function handleTaskStart(
     throw error;
   }
 
-  const now = Date.now();
-  const leaseTimestamp = task.lease ? Date.parse(task.lease.lease_expires_at) : undefined;
-  if (task.lease && !Number.isFinite(leaseTimestamp)) {
-    return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
-  }
-  const activeLease = task.lease && leaseTimestamp! > now;
-  if (activeLease && task.lease!.owner_id !== (params.owner_id ?? "legacy")) {
-    return textResult(`Task "${params.task_id}" is owned by "${task.lease!.owner_id}" until ${task.lease!.lease_expires_at}.`, true);
-  }
-
-  const expiredTakeover = Boolean(params.takeover && task.status === "doing" && task.lease && !activeLease);
-  if (task.status !== "pending" && task.status !== "failed" && !expiredTakeover) {
+  const ownerId = params.owner_id?.trim() ? params.owner_id.trim() : undefined;
+  const priorWorker = task.worker;
+  const resumingDoing = task.status === "doing";
+  if (task.status !== "pending" && task.status !== "failed" && !resumingDoing) {
     return textResult(
       `Task "${params.task_id}" is in "${task.status}" status. ` +
         `Only "pending" or "failed" tasks can be started.`,
@@ -224,114 +240,29 @@ export async function handleTaskStart(
     }
   }
 
-  // 6. Transition to "doing" and issue the lease in one persisted state update
-  const attemptId = crypto.randomUUID();
-  const lease: TaskLease = {
-    owner_id: (params.owner_id ?? "legacy"),
-    attempt_id: attemptId,
-    lease_expires_at: new Date(Date.now() + (params.lease_ms ?? TASK_LEASE_DURATION_MS)).toISOString(),
-    ...(task.lease && !activeLease ? { takeover_history: [...(task.lease.takeover_history ?? []), { ...task.lease, taken_over_at: new Date().toISOString() }] } : {}),
-  };
+  const worker: TaskWorker | undefined = ownerId
+    ? { owner_id: ownerId, started_at: new Date().toISOString() }
+    : undefined;
   const commitResult = await withProjectMutationLock(projectRoot, async () => {
-    const leasedState = stateManager.load();
-    if (!leasedState) return textResult("No active cycle. Run cycle_init first.", true);
-    for (const phase of leasedState.phases) for (const epic of phase.epics) for (const currentTask of epic.tasks) {
-      if (currentTask.id === params.task_id) {
-        const currentLeaseExpiresAt = currentTask.lease
-          ? Date.parse(currentTask.lease.lease_expires_at)
-          : undefined;
-        const transitionAllowed = expiredTakeover
-          ? currentTask.status === "doing" &&
-            Number.isFinite(currentLeaseExpiresAt) &&
-            currentLeaseExpiresAt! <= Date.now()
-          : isValidTransition(currentTask.status, "doing");
-        if (!transitionAllowed) {
-          if (currentTask.lease && Date.parse(currentTask.lease.lease_expires_at) > Date.now()) {
-            return textResult(`Task "${params.task_id}" is owned by "${currentTask.lease.owner_id}" until ${currentTask.lease.lease_expires_at}.`, true);
-          }
-          return textResult(`Task "${params.task_id}" changed before its lease could be issued.`, true);
-        }
-        currentTask.status = "doing";
-        currentTask.lease = lease;
-      }
+    const currentState = stateManager.load();
+    if (!currentState) return textResult("No active cycle. Run cycle_init first.", true);
+    const currentTask = currentState.phases.flatMap((phase) => phase.epics).flatMap((epic) => epic.tasks).find((candidate) => candidate.id === params.task_id);
+    if (!currentTask || (currentTask.status !== "pending" && currentTask.status !== "failed" && currentTask.status !== "doing")) {
+      return textResult(`Task "${params.task_id}" changed before it could be started.`, true);
     }
-    stateManager.save(leasedState);
+    currentTask.status = "doing";
+    currentTask.worker = worker;
+    stateManager.save(currentState);
     return null;
   });
   if (commitResult) return commitResult;
 
-  const lines: string[] = [];
-  lines.push(`Task ${params.task_id} started: ${task.name}`);
-  lines.push(`Status: doing`);
-  if (warnings.length > 0) {
-    lines.push("");
-    lines.push(warnings.join("\n"));
+  const lines = [`Task ${params.task_id} started: ${task.name}`, "Status: doing"];
+  if (priorWorker && ownerId && priorWorker.owner_id !== ownerId) {
+    lines.push(`Warning: task ${params.task_id} was started by "${priorWorker.owner_id}" at ${priorWorker.started_at} in this workspace. Coordinate file ownership or use separate worktrees.`);
   }
-
+  if (warnings.length > 0) lines.push(...warnings);
   return textResult(lines.join("\n"));
-}
-
-// ---------------------------------------------------------------------------
-// task_renew handler
-// ---------------------------------------------------------------------------
-
-export interface TaskRenewParams {
-  task_id: string;
-  owner_id: string;
-  attempt_id: string;
-  project_root?: string;
-}
-
-const LEASE_RENEWAL_REASONS: Record<LeaseFenceMismatchReason, string> = {
-  status_changed: "its persisted status is no longer \"doing\"",
-  owner_changed: "its lease is held by a different owner",
-  attempt_changed: "its lease was reissued to a different attempt",
-  lease_expired: "its lease already expired",
-  malformed_timestamp: "its persisted lease is missing or malformed",
-};
-
-export async function handleTaskRenew(
-  params: TaskRenewParams,
-  stateManager: StateManager,
-  projectRoot: string,
-): Promise<CallToolResult> {
-  if (stateManager.load() === null) {
-    return textResult("No active cycle. Run cycle_init first.", true);
-  }
-
-  return withProjectMutationLock(projectRoot, async () => {
-    let renewal;
-    try {
-      renewal = stateManager.renewPersistedLease({
-        task_id: params.task_id,
-        owner_id: params.owner_id,
-        attempt_id: params.attempt_id,
-      });
-    } catch (error: unknown) {
-      if (error instanceof EntityNotFoundError) {
-        return textResult(`Task "${params.task_id}" not found.`, true);
-      }
-      throw error;
-    }
-
-    if (!renewal.ok) {
-      const guidance = renewal.reason === "lease_expired"
-        ? `Call task_start({ task_id: "${params.task_id}", owner_id: "<replacement-owner>", takeover: true, project_root: "${projectRoot}" }) to obtain a new lease.`
-        : "Canonical state was not modified. Inspect the current task status and lease owner before taking further action.";
-      return textResult(
-        `Task "${params.task_id}" lease was not renewed for owner "${params.owner_id}" attempt "${params.attempt_id}" because ${LEASE_RENEWAL_REASONS[renewal.reason]}. ${guidance}`,
-        true,
-      );
-    }
-
-    return textResult(
-      [
-        `Task ${params.task_id} lease renewed for owner ${params.owner_id}.`,
-        `Attempt: ${params.attempt_id}`,
-        `Lease expires at: ${renewal.lease.lease_expires_at}`,
-      ].join("\n"),
-    );
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -340,8 +271,6 @@ export async function handleTaskRenew(
 
 export interface TaskCompleteParams {
   task_id: string;
-  owner_id?: string;
-  attempt_id?: string;
   project_root?: string;
 }
 
@@ -407,17 +336,6 @@ async function handleTaskCompleteUnlocked(
     );
   }
 
-  const legacyCompletion = params.owner_id === undefined && params.attempt_id === undefined;
-  if ((legacyCompletion && task.lease) || (!legacyCompletion && (params.owner_id === undefined || params.attempt_id === undefined || !task.lease || task.lease.owner_id !== params.owner_id || task.lease.attempt_id !== params.attempt_id))) {
-    return textResult(`Task "${params.task_id}" is not owned by owner "${(params.owner_id ?? "legacy")}" with attempt "${(params.attempt_id ?? task.lease?.attempt_id ?? "legacy")}".`, true);
-  }
-  if (task.lease && !Number.isFinite(Date.parse(task.lease.lease_expires_at))) {
-    return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
-  }
-  if (task.lease && Date.parse(task.lease.lease_expires_at) <= Date.now() && !legacyCompletion) {
-    return textResult(`Task "${params.task_id}" lease expired at ${task.lease.lease_expires_at}. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id}", takeover: true, project_root: "${projectRoot}" }) to obtain a fresh attempt.`, true);
-  }
-
   const key = completionKey(projectRoot, params.task_id);
   const activeAttemptId = activeTaskCompletions.get(key);
   if (activeAttemptId) {
@@ -434,8 +352,8 @@ async function handleTaskCompleteUnlocked(
 
   // 3. Persist an in-progress attempt before running checks so interrupted work is auditable.
   const startedAt = new Date().toISOString();
-    const attemptId = params.attempt_id ?? task.lease?.attempt_id ?? crypto.randomUUID();
-    activeTaskCompletions.set(key, attemptId);
+  const attemptId = crypto.randomUUID();
+  activeTaskCompletions.set(key, attemptId);
   try {
     const inProgressEvidence: GateEvidence = {
       gate: "gate_0",
@@ -444,17 +362,15 @@ async function handleTaskCompleteUnlocked(
       timestamp: startedAt,
       checks: [],
       gate_0_attempt: { version: 1, id: attemptId,
-             owner_id: (params.owner_id ?? "legacy"),
+             owner_id: task.worker?.owner_id ?? "legacy",
              started_at: startedAt },
     };
     const inProgressCommit = await withProjectMutationLock(projectRoot, async () => {
-      const fence = legacyCompletion
-        ? stateManager.assertPersistedLegacyLease(params.task_id)
-        : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
-      if (!fence.ok) return false;
+      const current = loadDoingTask(stateManager, params.task_id);
+      if (!current) return false;
       const inProgressEvidencePath = evidenceManager.save(inProgressEvidence);
-      fence.task.gate_0 = { ...fence.task.gate_0, evidence_path: inProgressEvidencePath };
-      stateManager.save(fence.state);
+      current.task.gate_0 = { ...current.task.gate_0, evidence_path: inProgressEvidencePath };
+      stateManager.save(current.state);
       return true;
     });
     if (!inProgressCommit) return staleAttemptResult(params.task_id);
@@ -465,10 +381,7 @@ async function handleTaskCompleteUnlocked(
       gate0Result = await checkGate0Exit(params.task_id, cfg, projectRoot, {
         onCheckStart: async (progress) => {
           const promoted = await withProjectMutationLock(projectRoot, async () => {
-            const fence = legacyCompletion
-              ? stateManager.assertPersistedLegacyLease(params.task_id)
-              : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
-            if (!fence.ok) return false;
+            if (!loadDoingTask(stateManager, params.task_id)) return false;
             evidenceManager.save({
               ...inProgressEvidence,
               gate_0_attempt: { ...inProgressEvidence.gate_0_attempt!, current_check: { ...progress, started_at: new Date().toISOString() } },
@@ -489,31 +402,28 @@ async function handleTaskCompleteUnlocked(
       passed: gate0Result.passed,
       timestamp: finishedAt,
       checks: gate0Result.checks,
-      gate_0_attempt: { version: 1, id: attemptId, owner_id: params.owner_id ?? "legacy", started_at: startedAt, finished_at: finishedAt, outcome },
+      gate_0_attempt: { version: 1, id: attemptId, owner_id: task.worker?.owner_id ?? "legacy", started_at: startedAt, finished_at: finishedAt, outcome },
     };
     evidenceManager.saveGate0AttemptHistory(terminalEvidence);
     const terminalCommit = await withProjectMutationLock(projectRoot, async () => {
-      const fence = legacyCompletion
-        ? stateManager.assertPersistedLegacyLease(params.task_id)
-        : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
-      if (!fence.ok) return false;
+      const current = loadDoingTask(stateManager, params.task_id);
+      if (!current) return false;
       const evidencePath = evidenceManager.promoteTerminalGate0Attempt(terminalEvidence);
-      fence.task.gate_0 = {
+      current.task.gate_0 = {
         passed: gate0Result.passed,
         evidence_path: evidencePath,
         coverage: gate0Result.coverage,
         lint_passed: gate0Result.checks.find((check) => check.name === "lint")?.passed,
         tests_passed: gate0Result.checks.find((check) => check.name === "tests")?.passed,
       };
-      stateManager.save(fence.state);
+      stateManager.save(current.state);
       return evidencePath;
     });
     if (!terminalCommit) return staleAttemptResult(params.task_id);
     const evidencePath = terminalCommit;
     if (executionError) {
       const failed = await withProjectMutationLock(projectRoot, async () => {
-        const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
-        if (!fence.ok) return false;
+        if (!clearWorker(stateManager, params.task_id)) return false;
         stateManager.transition(params.task_id, "failed");
         return true;
       });
@@ -531,11 +441,12 @@ async function handleTaskCompleteUnlocked(
     }
     if (!customResult.passed) {
       const failed = await withProjectMutationLock(projectRoot, async () => {
-        const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
-        if (!fence.ok) return false;
+        const current = loadDoingTask(stateManager, params.task_id);
+        if (!current) return false;
         evidenceManager.save({ gate: "custom_post_task", entity_id: params.task_id, passed: false, timestamp: new Date().toISOString(), checks: customResult.checks });
-        fence.task.gate_0 = { passed: false, evidence_path: evidencePath };
-        stateManager.save(fence.state);
+        current.task.gate_0 = { passed: false, evidence_path: evidencePath };
+        delete current.task.worker;
+        stateManager.save(current.state);
         stateManager.transition(params.task_id, "failed");
         return true;
       });
@@ -560,8 +471,7 @@ async function handleTaskCompleteUnlocked(
   }
 
   const transitioned = await withProjectMutationLock(projectRoot, async () => {
-    const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
-    if (!fence.ok) return false;
+    if (!clearWorker(stateManager, params.task_id)) return false;
     stateManager.transition(params.task_id, gate0Result.passed ? "done" : "failed");
     return true;
   });
@@ -590,8 +500,7 @@ async function handleTaskCompleteUnlocked(
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
     const failed = await withProjectMutationLock(projectRoot, async () => {
-      const fence = legacyCompletion ? stateManager.assertPersistedLegacyLease(params.task_id) : stateManager.assertPersistedLease({ task_id: params.task_id, owner_id: params.owner_id!, attempt_id: attemptId });
-      if (!fence.ok) return false;
+      if (!clearWorker(stateManager, params.task_id)) return false;
       stateManager.transition(params.task_id, "failed");
       return true;
     });

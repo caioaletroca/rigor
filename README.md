@@ -90,7 +90,7 @@ This creates `.rigor/config.yaml` with sensible defaults for your project.
 Before initializing a cycle, use this sequence:
 
 1. Call `rigor_status` to inspect the connected server's capabilities and fallback root.
-2. Call `project_readiness({ project_root: "/absolute/path/to/worktree", plan_path: "docs/plans/my-plan.md" })`. It is read-only: it creates no state, leases, evidence, or command executions.
+2. Call `project_readiness({ project_root: "/absolute/path/to/worktree", plan_path: "docs/plans/my-plan.md" })`. It is read-only: it creates no state, evidence, or command executions.
 3. If readiness identifies an invalid workspace policy or unresolved Gate 0 command, correct it in that worktree only, then run `project_readiness` again. `allow_shared_workspace` is a narrow workspace-policy exception; it never accepts an invalid root or bypasses Gate 0 readiness.
 4. Call `cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "/absolute/path/to/worktree" })` only after readiness passes.
 
@@ -161,8 +161,7 @@ gates:
 
 | Tool | Description |
 |------|-------------|
-| `task_start` | Validate entry criteria, begin task |
-| `task_renew` | Renew the active task lease for its owner and attempt |
+| `task_start` | Validate entry criteria, begin task, record the optional advisory worker |
 | `task_complete` | Run Gate 0 exit checks |
 | `review_start` | Start epic review (all tasks must pass) |
 | `review_submit` | Submit reviewer findings for Gate 8 |

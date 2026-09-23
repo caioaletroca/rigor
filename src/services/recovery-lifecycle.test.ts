@@ -941,26 +941,20 @@ describe("recovery tools", () => {
       expect(extractText(result)).toContain("not found");
     });
 
-    it("guides expired task management to a root-aware takeover", async () => {
+    it("manages a doing task without ownership parameters", async () => {
       const state = makeCycleState();
-      const task = state.phases[0].epics[0].tasks[0];
-      task.status = "doing";
-      task.lease = {
-        owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        lease_expires_at: new Date(Date.now() - 1).toISOString(),
-      };
+      state.phases[0].epics[0].tasks[0].status = "doing";
       writeState(tempDir, state);
 
       const result = await handleTaskManage(
-        { task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true, owner_id: "owner-b", attempt_id: "attempt-b" },
+        { task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true },
         stateManager,
         evidenceManager,
         tempDir,
       );
 
-      expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain(`task_start({ task_id: "1.1.1", owner_id: "owner-b", takeover: true, project_root: "${tempDir}" })`);
+      expect(result.isError).toBeUndefined();
+      expect(stateManager.getTask("1.1.1").status).toBe("failed");
     });
 
     // ----- force_status -----

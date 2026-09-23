@@ -194,7 +194,7 @@ export function handleTaskRetry(
         for (const t of epic.tasks) {
           if (t.id === params.task_id) {
             t.gate_0 = { passed: false };
-            delete t.lease;
+            delete t.worker;
           }
         }
       }
@@ -221,9 +221,6 @@ export interface TaskManageParams {
   action: "force_status" | "skip" | "retry" | "reset_evidence";
   target_status?: string;
   confirm: boolean;
-  owner_id?: string;
-  attempt_id?: string;
-  takeover?: boolean;
 }
 
 /**
@@ -278,25 +275,6 @@ function handleTaskManageUnlocked(
     throw error;
   }
 
-  const hasOwner = params.owner_id !== undefined;
-  const hasAttempt = params.attempt_id !== undefined;
-  if (hasOwner !== hasAttempt) {
-    return textResult(`Task "${params.task_id}" requires both owner_id and attempt_id together.`, true);
-  }
-  if (task.lease) {
-    const expiresAt = Date.parse(task.lease.lease_expires_at);
-    if (!Number.isFinite(expiresAt)) {
-      return textResult(`Task "${params.task_id}" has an invalid lease expiration timestamp.`, true);
-    }
-    const active = expiresAt > Date.now();
-    const matches = hasOwner && task.lease.owner_id === params.owner_id && task.lease.attempt_id === params.attempt_id;
-    if (active && !matches) {
-      return textResult(`Task "${params.task_id}" is owned by "${task.lease.owner_id}" until ${task.lease.lease_expires_at}.`, true);
-    }
-    if (!active && task.status === "doing" && params.confirm && !params.takeover && !matches) {
-      return textResult(`Task "${params.task_id}" lease expired. Call task_start({ task_id: "${params.task_id}", owner_id: "${params.owner_id ?? "<replacement-owner>"}", takeover: true, project_root: "${projectRoot}" }) to obtain a fresh attempt.`, true);
-    }
-  }
 
   switch (params.action) {
     // ----- force_status -----

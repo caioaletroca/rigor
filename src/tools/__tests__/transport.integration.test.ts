@@ -290,9 +290,9 @@ describe("cross-client transport harness", () => {
     });
   });
 
-  it("renews leases per project root and rejects stale attempts over the transport", async () => {
-    const projectA = makeFixture("renew-a");
-    const projectB = makeFixture("renew-b");
+  it("records advisory workers per project root without exposing renewal", async () => {
+    const projectA = makeFixture("worker-a");
+    const projectB = makeFixture("worker-b");
     roots.push(projectA, projectB);
 
     await withHarnessSessions([
@@ -303,28 +303,15 @@ describe("cross-client transport harness", () => {
       await Promise.all(sessions.map((session, index) => session.call("task_start", { task_id: "1.1.2", owner_id: `owner-${index}` })));
 
       const tools = await sessions[0].client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toContain("task_renew");
+      expect(tools.tools.map((tool) => tool.name)).not.toContain("task_renew");
 
-      const leaseA = JSON.parse(readFileSync(join(projectA, ".rigor", "state.json"), "utf-8"))
-        .phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").lease;
+      const workerFor = (root: string) =>
+        JSON.parse(readFileSync(join(root, ".rigor", "state.json"), "utf-8"))
+          .phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").worker;
 
-      const renewed = await sessions[0].call("task_renew", {
-        task_id: "1.1.2",
-        owner_id: leaseA.owner_id,
-        attempt_id: leaseA.attempt_id,
-        project_root: projectA,
-      });
-      expect(renewed.isError).toBeUndefined();
-      expect(text(renewed)).toContain("lease renewed");
-
-      const stale = await sessions[1].call("task_renew", {
-        task_id: "1.1.2",
-        owner_id: leaseA.owner_id,
-        attempt_id: leaseA.attempt_id,
-        project_root: projectB,
-      });
-      expect(stale.isError).toBe(true);
-      expect(text(stale)).toContain("not renewed");
+      expect(workerFor(projectA).owner_id).toBe("owner-0");
+      expect(workerFor(projectB).owner_id).toBe("owner-1");
+      expect(workerFor(projectA)).not.toHaveProperty("lease_expires_at");
     });
   });
 

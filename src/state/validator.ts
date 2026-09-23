@@ -192,6 +192,21 @@ export function validateState(
             `Task ${task.id}: status is "done" but gate_0 not passed`,
           );
         }
+
+        if (task.worker !== undefined) {
+          if (
+            typeof task.worker.owner_id !== "string" ||
+            task.worker.owner_id.length === 0
+          ) {
+            errors.push(`Task ${task.id}: worker.owner_id must be a non-empty string`);
+          }
+          if (
+            typeof task.worker.started_at !== "string" ||
+            !Number.isFinite(Date.parse(task.worker.started_at))
+          ) {
+            errors.push(`Task ${task.id}: worker.started_at must be an ISO timestamp`);
+          }
+        }
       }
     }
   }
