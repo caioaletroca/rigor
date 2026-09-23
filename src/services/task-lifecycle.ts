@@ -9,7 +9,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { responseResult } from "../tools/lifecycle.js";
 import type { StateManager, TaskWorker } from "../state/index.js";
-import { EntityNotFoundError, isValidTransition } from "../state/index.js";
+import { EntityNotFoundError } from "../state/index.js";
 import type { RigorConfig } from "../config/index.js";
 import { loadConfig } from "../config/index.js";
 import { EvidenceManager } from "../evidence/index.js";
@@ -22,7 +22,7 @@ import {
 } from "../gates/index.js";
 import { evaluateResolvedProjectReadiness, gate0ReadinessBlockMessage, workspacePolicyBlockMessage } from "./project-readiness.js";
 import { runCommand } from "../executor/index.js";
-import { withProjectMutationLock } from "../lifecycle/index.js";
+import { canonicalProjectRoot, withProjectMutationLock } from "../lifecycle/mutation-coordinator.js";
 
 // ---------------------------------------------------------------------------
 // Response helpers
@@ -35,7 +35,7 @@ function textResult(text: string, isError?: boolean): CallToolResult {
 const activeTaskCompletions = new Map<string, string>();
 
 function completionKey(projectRoot: string, taskId: string): string {
-  return `${projectRoot}\u0000${taskId}`;
+  return `${canonicalProjectRoot(projectRoot)}\u0000${taskId}`;
 }
 
 export function isGate0AttemptActive(projectRoot: string, taskId: string, attemptId: string): boolean {
@@ -76,14 +76,6 @@ function loadDoingTask(stateManager: StateManager, taskId: string) {
     .find((candidate) => candidate.id === taskId);
   if (!task || task.status !== "doing") return null;
   return { state, task };
-}
-
-function clearWorker(stateManager: StateManager, taskId: string): boolean {
-  const current = loadDoingTask(stateManager, taskId);
-  if (!current) return false;
-  delete current.task.worker;
-  stateManager.save(current.state);
-  return true;
 }
 
 function terminalCompletionResult(
@@ -165,6 +157,9 @@ export async function handleTaskStart(
   }
 
   const ownerId = params.owner_id?.trim() ? params.owner_id.trim() : undefined;
+  if (ownerId && (ownerId.length > 128 || /[^\x21-\x7E]/.test(ownerId))) {
+    return textResult("owner_id must be 1-128 printable non-whitespace ASCII characters.", true);
+  }
   const resumingDoing = task.status === "doing";
   if (task.status !== "pending" && task.status !== "failed" && !resumingDoing) {
     return textResult(
@@ -244,18 +239,29 @@ export async function handleTaskStart(
     : undefined;
   const commitResult = await withProjectMutationLock(projectRoot, async () => {
     const currentState = stateManager.load();
-    if (!currentState) return textResult("No active cycle. Run cycle_init first.", true);
-    const currentTask = currentState.phases.flatMap((phase) => phase.epics).flatMap((epic) => epic.tasks).find((candidate) => candidate.id === params.task_id);
-    if (!currentTask || (currentTask.status !== "pending" && currentTask.status !== "failed" && currentTask.status !== "doing")) {
-      return textResult(`Task "${params.task_id}" changed before it could be started.`, true);
+    if (!currentState) return { kind: "error" as const, result: textResult("No active cycle. Run cycle_init first.", true) };
+    for (const phase of currentState.phases) {
+      for (const epic of phase.epics) {
+        const index = epic.tasks.findIndex((candidate) => candidate.id === params.task_id);
+        if (index === -1) continue;
+        const currentTask = epic.tasks[index];
+        if (currentTask.status !== "pending" && currentTask.status !== "failed" && currentTask.status !== "doing") {
+          return { kind: "error" as const, result: textResult(`Task "${params.task_id}" changed before it could be started.`, true) };
+        }
+        const previousTask = index > 0 ? epic.tasks[index - 1] : undefined;
+        if (previousTask && previousTask.status !== "done") {
+          return { kind: "error" as const, result: textResult(`Previous task "${previousTask.id}" (${previousTask.name}) is "${previousTask.status}" — it must be "done" before starting "${params.task_id}".`, true) };
+        }
+        const priorWorker = currentTask.worker;
+        currentTask.status = "doing";
+        if (worker) currentTask.worker = worker;
+        stateManager.save(currentState);
+        return { kind: "committed" as const, priorWorker };
+      }
     }
-    const priorWorker = currentTask.worker;
-    currentTask.status = "doing";
-    if (worker) currentTask.worker = worker;
-    stateManager.save(currentState);
-    return { priorWorker };
+    return { kind: "error" as const, result: textResult(`Task "${params.task_id}" changed before it could be started.`, true) };
   });
-  if (commitResult instanceof Object && "content" in commitResult) return commitResult;
+  if (commitResult.kind === "error") return commitResult.result;
 
   const lines = [`Task ${params.task_id} started: ${task.name}`, "Status: doing"];
   if (commitResult.priorWorker && ownerId && commitResult.priorWorker.owner_id !== ownerId) {
@@ -423,7 +429,7 @@ async function handleTaskCompleteUnlocked(
     const evidencePath = terminalCommit;
     if (executionError) {
       const failed = await withProjectMutationLock(projectRoot, async () => {
-        if (!clearWorker(stateManager, params.task_id)) return false;
+        if (!loadDoingTask(stateManager, params.task_id)) return false;
         stateManager.transition(params.task_id, "failed");
         return true;
       });
@@ -445,7 +451,6 @@ async function handleTaskCompleteUnlocked(
         if (!current) return false;
         evidenceManager.save({ gate: "custom_post_task", entity_id: params.task_id, passed: false, timestamp: new Date().toISOString(), checks: customResult.checks });
         current.task.gate_0 = { passed: false, evidence_path: evidencePath };
-        delete current.task.worker;
         stateManager.save(current.state);
         stateManager.transition(params.task_id, "failed");
         return true;
@@ -471,7 +476,7 @@ async function handleTaskCompleteUnlocked(
   }
 
   const transitioned = await withProjectMutationLock(projectRoot, async () => {
-    if (!clearWorker(stateManager, params.task_id)) return false;
+    if (!loadDoingTask(stateManager, params.task_id)) return false;
     stateManager.transition(params.task_id, gate0Result.passed ? "done" : "failed");
     return true;
   });
@@ -500,7 +505,7 @@ async function handleTaskCompleteUnlocked(
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
     const failed = await withProjectMutationLock(projectRoot, async () => {
-      if (!clearWorker(stateManager, params.task_id)) return false;
+      if (!loadDoingTask(stateManager, params.task_id)) return false;
       stateManager.transition(params.task_id, "failed");
       return true;
     });

@@ -278,6 +278,7 @@ describe("gate tools", async () => {
 
       const task = stateManager.getTask("1.1.2");
       expect(task.status).toBe("doing");
+      expect(task.worker).toBeUndefined();
     });
 
     it("warns and replaces advisory worker metadata when another owner starts a doing task", async () => {

@@ -17,7 +17,7 @@ export function registerGateTools(
   server.tool(
     "task_start",
     "Begin work on a task — validates entry criteria, transitions to doing",
-    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1).optional().describe("Advisory worker id recorded for coordination only"), project_root: projectRootSchema },
+    { task_id: z.string().describe("Task id (e.g. 1.1.1)"), owner_id: z.string().min(1).max(128).regex(/^[\x21-\x7E]+$/).optional().describe("Advisory worker id recorded for coordination only"), project_root: projectRootSchema },
     async (params) => {
       const ctx = resolveRequestContext(registry, stateManager, projectRoot, params.project_root);
       return handleTaskStart(params, ctx?.stateManager ?? stateManager, ctx?.config ?? null, ctx?.project_root ?? projectRoot);

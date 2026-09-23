@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { normalize, resolve } from "node:path";
 
-function canonicalProjectRoot(projectRoot: string): string {
+export function canonicalProjectRoot(projectRoot: string): string {
   const absolute = normalize(resolve(projectRoot));
   let canonical: string;
   try {
