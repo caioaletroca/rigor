@@ -45,7 +45,11 @@ export async function handleReviewStart(params: ReviewStartParams, stateManager:
     if ("content" in revalidated) return revalidated;
     const epic = stateManager.getEpic(params.epic_id);
     if (epic.status === "pending") stateManager.transition(params.epic_id, "doing");
-    return textResult([`Review started for epic ${params.epic_id}: ${epic.name}`, `Tasks: ${epic.tasks.length} (all done, all passed Gate 0)`, `Expected reviewers: ${cfg.gates.gate_8.reviewers.join(", ")}`].join("\n"));
+    const skippedCount = epic.tasks.filter((task) => task.status === "skipped").length;
+    const taskSummary = skippedCount > 0
+      ? `Tasks: ${epic.tasks.length - skippedCount} done, ${skippedCount} skipped (completed tasks passed Gate 0)`
+      : `Tasks: ${epic.tasks.length} (all done, all passed Gate 0)`;
+    return textResult([`Review started for epic ${params.epic_id}: ${epic.name}`, taskSummary, `Expected reviewers: ${cfg.gates.gate_8.reviewers.join(", ")}`].join("\n"));
   });
 }
 function prepareReviewStart(params: ReviewStartParams, stateManager: StateManager): CallToolResult | { ready: true } {
@@ -62,7 +66,7 @@ function prepareReviewStart(params: ReviewStartParams, stateManager: StateManage
 
 function incompleteTaskDetails(epic: { tasks: Array<{ id: string; name: string; status: string; gate_0: { passed: boolean } }> }): string[] {
   return epic.tasks
-    .filter((task) => task.status !== "done" || !task.gate_0.passed)
+    .filter((task) => task.status !== "skipped" && (task.status !== "done" || !task.gate_0.passed))
     .map((task) => `${task.id} (${task.name}): status=${task.status}, gate_0=${task.gate_0.passed ? "pass" : "fail"}`);
 }
 
