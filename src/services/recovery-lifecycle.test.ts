@@ -334,11 +334,15 @@ describe("recovery tools", () => {
       evidenceManager.saveTerminalGate0Attempt(evidenceManager.load("gate_0", "1.1.1")!);
 
       state.phases[0].epics[0].tasks[0].status = "failed";
-      state.phases[0].epics[0].tasks[0].gate_0 = {
-        passed: false,
-        evidence_path: evidencePath,
-      };
-      writeState(tempDir, state);
+       state.phases[0].epics[0].tasks[0].gate_0 = {
+         passed: false,
+         evidence_path: evidencePath,
+       };
+       state.phases[0].epics[0].tasks[0].worker = {
+         owner_id: "owner-a",
+         started_at: new Date().toISOString(),
+       };
+       writeState(tempDir, state);
 
       const result = handleTaskRetry(
         { task_id: "1.1.1" },
@@ -360,8 +364,9 @@ describe("recovery tools", () => {
       // Verify gate_0 was reset in state
       const updatedState = stateManager.load();
       const task = updatedState?.phases[0].epics[0].tasks[0];
-      expect(task?.gate_0.passed).toBe(false);
-      expect(task?.gate_0.evidence_path).toBeUndefined();
+       expect(task?.gate_0.passed).toBe(false);
+       expect(task?.gate_0.evidence_path).toBeUndefined();
+       expect(task?.worker).toBeUndefined();
     });
 
     it("handles failed task with no prior evidence gracefully", async () => {
@@ -443,11 +448,12 @@ describe("recovery tools", () => {
 
     it("reports an unfinished persisted Gate 0 attempt as stuck when it is not in-process", async () => {
       const state = makeCycleState();
-      state.phases[0].epics[0].tasks[0].status = "doing";
-      writeState(tempDir, state);
-      evidenceManager.save({
-        gate: "gate_0",
-        entity_id: "1.1.1",
+       state.phases[0].epics[0].tasks[0].status = "doing";
+       state.phases[0].epics[0].tasks[0].worker = { owner_id: "owner-a", started_at: new Date().toISOString() };
+       writeState(tempDir, state);
+       evidenceManager.save({
+         gate: "gate_0",
+         entity_id: "1.1.1",
         passed: false,
         timestamp: new Date().toISOString(),
         checks: [],
@@ -470,7 +476,8 @@ describe("recovery tools", () => {
        expect(text).toContain("interrupted");
        expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
        expect(text).not.toContain("Stuck entities:");
-       expect(stateManager.getTask("1.1.1").status).toBe("failed");
+        expect(stateManager.getTask("1.1.1").status).toBe("failed");
+        expect(stateManager.getTask("1.1.1").worker).toBeUndefined();
         expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
           outcome: "interrupted",
           finished_at: expect.any(String),
@@ -495,12 +502,13 @@ describe("recovery tools", () => {
        });
 
        it("classifies an inactive old attempt as stale and recommends retry", async () => {
-         const state = makeCycleState();
-         state.phases[0].epics[0].tasks[0].status = "doing";
-         writeState(tempDir, state);
-         evidenceManager.save({
-           gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
-           gate_0_attempt: { version: 1, id: "stale-attempt", started_at: new Date(Date.now() - 6 * 60 * 1000).toISOString() },
+        const state = makeCycleState();
+        state.phases[0].epics[0].tasks[0].status = "doing";
+        state.phases[0].epics[0].tasks[0].worker = { owner_id: "owner-a", started_at: new Date().toISOString() };
+        writeState(tempDir, state);
+        evidenceManager.save({
+          gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: new Date().toISOString(), checks: [],
+          gate_0_attempt: { version: 1, id: "stale-attempt", started_at: new Date(Date.now() - 6 * 60 * 1000).toISOString() },
          });
 
          const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
@@ -509,6 +517,7 @@ describe("recovery tools", () => {
          expect(text).toContain("interrupted");
          expect(text).toContain('task_manage({ task_id: "1.1.1", action: "retry", confirm: true');
          expect(stateManager.getTask("1.1.1").status).toBe("failed");
+         expect(stateManager.getTask("1.1.1").worker).toBeUndefined();
        });
 
        it("reconciles terminal Gate 0 evidence left with a doing task idempotently", async () => {
@@ -586,6 +595,9 @@ describe("recovery tools", () => {
 
         handleTaskRetry({ task_id: "1.1.1" }, stateManager, evidenceManager, tempDir);
         stateManager.transition("1.1.1", "doing");
+        const retryState = stateManager.load()!;
+        retryState.phases[0].epics[0].tasks[0].worker = { owner_id: "owner-a", started_at: new Date().toISOString() };
+        stateManager.save(retryState);
         evidenceManager.save({
           gate: "gate_0", entity_id: "1.1.1", passed: false, timestamp: "2026-09-08T00:02:00.000Z", checks: [],
           gate_0_attempt: { version: 1, id: "attempt-retry", started_at: "2026-09-08T00:02:00.000Z" },
@@ -594,8 +606,9 @@ describe("recovery tools", () => {
         const text = extractText(await handleCycleDiagnose(stateManager, evidenceManager, tempDir));
 
         expect(text).toContain("interrupted");
-        expect(stateManager.getTask("1.1.1").status).toBe("failed");
-        expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
+       expect(stateManager.getTask("1.1.1").status).toBe("failed");
+       expect(stateManager.getTask("1.1.1").worker).toBeUndefined();
+         expect(evidenceManager.load("gate_0", "1.1.1")?.gate_0_attempt).toMatchObject({
           id: "attempt-retry",
           outcome: "interrupted",
           finished_at: expect.any(String),
@@ -941,26 +954,20 @@ describe("recovery tools", () => {
       expect(extractText(result)).toContain("not found");
     });
 
-    it("guides expired task management to a root-aware takeover", async () => {
+    it("manages a doing task without ownership parameters", async () => {
       const state = makeCycleState();
-      const task = state.phases[0].epics[0].tasks[0];
-      task.status = "doing";
-      task.lease = {
-        owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        lease_expires_at: new Date(Date.now() - 1).toISOString(),
-      };
+      state.phases[0].epics[0].tasks[0].status = "doing";
       writeState(tempDir, state);
 
       const result = await handleTaskManage(
-        { task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true, owner_id: "owner-b", attempt_id: "attempt-b" },
+        { task_id: "1.1.1", action: "force_status", target_status: "failed", confirm: true },
         stateManager,
         evidenceManager,
         tempDir,
       );
 
-      expect(result.isError).toBe(true);
-      expect(extractText(result)).toContain(`task_start({ task_id: "1.1.1", owner_id: "owner-b", takeover: true, project_root: "${tempDir}" })`);
+      expect(result.isError).toBeUndefined();
+      expect(stateManager.getTask("1.1.1").status).toBe("failed");
     });
 
     // ----- force_status -----

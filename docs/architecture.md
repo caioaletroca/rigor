@@ -65,21 +65,27 @@ The AI agent handles everything requiring **judgment or creativity**:
 ### Gate 0: Implementation
 
 ```
-Agent: task_start({ task_id: "1.1.1", owner_id, project_root })
-Server: { gate: 0, task: "1.1.1", status: "doing", attempt_id }
+Agent: task_start({ task_id: "1.1.1", project_root })
+Server: { gate: 0, task: "1.1.1", status: "doing" }
 
   ... agent writes code and tests ...
 
-Agent: task_complete({ task_id: "1.1.1", owner_id, attempt_id, project_root })
+Agent: task_complete({ task_id: "1.1.1", project_root })
 Server: runs configured tests, coverage, and lint checks
 Server: { passed: false, coverage: 72.3, threshold: 85, missing: [...] }
 
   ... agent writes more tests ...
 
-Agent: task_complete({ task_id: "1.1.1", owner_id, attempt_id, project_root })
+Agent: task_complete({ task_id: "1.1.1", project_root })
 Server: { passed: true, coverage: 87.1, threshold: 85 }
 Server: auto-advances to next task or gate
 ```
+
+### Worktree isolation and advisory coordination
+
+Rigor persists cycle state and evidence inside the active worktree's `.rigor/` directory. Supplying an absolute `project_root` on every lifecycle call makes separate worktrees independent, even when they share one Git repository.
+
+Task workers are advisory. `task_start` may record an `owner_id`; when another owner starts the same task in the same worktree, Rigor replaces the advisory record and returns a coordination warning. It does not schedule agents, lock files, or reject the later start. Users coordinating multiple agents in one worktree must assign different files themselves.
 
 ### Gate 8: Review
 

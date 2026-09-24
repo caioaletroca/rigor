@@ -4,12 +4,13 @@ import {
   rmSync,
   existsSync,
   readFileSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StateManager } from "../manager.js";
 import { InvalidTransitionError, EntityNotFoundError } from "../errors.js";
-import { isValidTransition, TASK_LEASE_DURATION_MS } from "../schema.js";
+import { isValidTransition } from "../schema.js";
 import type { PhaseState, CycleState } from "../schema.js";
 
 // ---------------------------------------------------------------------------
@@ -474,195 +475,190 @@ describe("StateManager", () => {
     );
   });
 
-  describe("persisted lease fences", () => {
-    const now = Date.parse("2026-09-12T12:00:00.000Z");
+  describe("advisory worker metadata", () => {
+    function writeRawState(mutate: (task: Record<string, unknown>) => void): void {
+      const state = mgr.init("plan.md", makeSamplePhases());
+      const task = state.phases[0].epics[0].tasks[0] as unknown as Record<string, unknown>;
+      task.status = "doing";
+      mutate(task);
+      writeFileSync(
+        join(tmpDir, ".rigor", "state.json"),
+        JSON.stringify(state, null, 2),
+        "utf-8",
+      );
+    }
 
-    function persistLease(overrides: Record<string, unknown> = {}): void {
+    it("persists worker metadata across a save and load round-trip", () => {
       const state = mgr.init("plan.md", makeSamplePhases());
       const task = state.phases[0].epics[0].tasks[0];
       task.status = "doing";
-      task.lease = {
+      task.worker = { owner_id: "owner-a", started_at: "2026-09-12T12:00:00.000Z" };
+      mgr.save(state);
+
+      expect(mgr.getTask("1.1.1").worker).toEqual({
         owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        lease_expires_at: "2026-09-12T12:01:00.000Z",
-        ...overrides,
+        started_at: "2026-09-12T12:00:00.000Z",
+      });
+    });
+
+    it.each([
+      [
+        "a live lease",
+        {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+        },
+      ],
+      [
+        "an expired lease",
+        {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2020-01-01T00:00:00.000Z",
+        },
+      ],
+      ["a malformed lease", { owner_id: "", attempt_id: "", lease_expires_at: "nope" }],
+      [
+        "a lease carrying takeover history",
+        {
+          owner_id: "owner-b",
+          attempt_id: "attempt-b",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+          takeover_history: [
+            {
+              owner_id: "owner-a",
+              attempt_id: "attempt-a",
+              lease_expires_at: "2020-01-01T00:00:00.000Z",
+              taken_over_at: "2020-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    ])("drops %s from legacy persisted state on load", (_label, lease) => {
+      writeRawState((task) => {
+        task.lease = lease;
+      });
+
+      const task = mgr.getTask("1.1.1");
+      expect(task).not.toHaveProperty("lease");
+      expect(task.status).toBe("doing");
+      expect(task.worker).toBeUndefined();
+    });
+
+    it("does not rewrite legacy lease data while loading", () => {
+      writeRawState((task) => {
+        task.lease = {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+        };
+      });
+      const statePath = join(tmpDir, ".rigor", "state.json");
+      const before = readFileSync(statePath, "utf-8");
+
+      mgr.load();
+
+      expect(readFileSync(statePath, "utf-8")).toBe(before);
+    });
+
+    it("does not rewrite legacy lease data while loading and validating", () => {
+      writeRawState((task) => {
+        task.lease = {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+        };
+      });
+      const statePath = join(tmpDir, ".rigor", "state.json");
+      const before = readFileSync(statePath, "utf-8");
+
+      const loaded = mgr.loadAndValidate();
+
+      expect(loaded?.state.phases[0].epics[0].tasks[0]).not.toHaveProperty("lease");
+      expect(readFileSync(statePath, "utf-8")).toBe(before);
+    });
+
+    it("does not restore legacy lease data when migrated state is saved", () => {
+      writeRawState((task) => {
+        task.lease = {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+        };
+      });
+
+      mgr.save(mgr.load()!);
+
+      expect(readFileSync(join(tmpDir, ".rigor", "state.json"), "utf-8")).not.toContain("lease");
+    });
+
+    it.each([
+      [{ phases: [null] }, "Phase entry is not an object"],
+      [{ phases: [{ epics: [null] }] }, "epic entry is not an object"],
+      [{ phases: [{ epics: [{ tasks: [null] }] }] }, "task entry is not an object"],
+    ])("leaves malformed state containers for validation without throwing", (state, error) => {
+      writeFileSync(join(tmpDir, ".rigor", "state.json"), JSON.stringify(state), "utf-8");
+
+      expect(() => mgr.load()).not.toThrow();
+      expect(() => mgr.loadAndValidate()).not.toThrow();
+      expect(mgr.loadAndValidate()?.validation.errors.some((entry) => entry.includes(error))).toBe(true);
+    });
+
+    it("migrates idempotently across repeated loads", () => {
+      writeRawState((task) => {
+        task.lease = {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+        };
+      });
+
+      mgr.load();
+      const second = mgr.load()!;
+
+      expect(second.phases[0].epics[0].tasks[0]).not.toHaveProperty("lease");
+    });
+
+    it.each([
+      ["done", (m: StateManager) => m.transition("1.1.1", "done")],
+      ["failed", (m: StateManager) => m.transition("1.1.1", "failed")],
+      ["pending via forceTransition", (m: StateManager) => m.forceTransition("1.1.1", "pending")],
+      ["skipped via forceTransition", (m: StateManager) => m.forceTransition("1.1.1", "skipped")],
+    ])("clears worker metadata when a task transitions to %s", (_label, move) => {
+      const state = mgr.init("plan.md", makeSamplePhases());
+      const task = state.phases[0].epics[0].tasks[0];
+      task.status = "doing";
+      task.worker = { owner_id: "owner-a", started_at: "2026-09-22T12:00:00.000Z" };
+      mgr.save(state);
+
+      move(mgr);
+
+      expect(mgr.getTask("1.1.1").worker).toBeUndefined();
+    });
+
+    it("retains worker metadata when a task transitions into doing", () => {
+      const state = mgr.init("plan.md", makeSamplePhases());
+      state.phases[0].epics[0].tasks[0].worker = {
+        owner_id: "owner-a",
+        started_at: "2026-09-22T12:00:00.000Z",
       };
       mgr.save(state);
-    }
 
-    it("returns persisted state, task, and lease for a current matching fence", () => {
-      persistLease();
+      mgr.transition("1.1.1", "doing");
 
-      const result = mgr.assertPersistedLease({
-        task_id: "1.1.1",
-        owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        now,
-      });
-
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      expect(result.state.cycle_id).toBe("plan");
-      expect(result.task.id).toBe("1.1.1");
-      expect(result.lease.owner_id).toBe("owner-a");
+      expect(mgr.getTask("1.1.1").worker?.owner_id).toBe("owner-a");
     });
 
-    it.each([
-      ["status_changed", { status: "done" }],
-      ["owner_changed", { owner_id: "owner-b" }],
-      ["attempt_changed", { attempt_id: "attempt-b" }],
-      ["lease_expired", { lease_expires_at: "2026-09-12T12:00:00.000Z" }],
-      ["malformed_timestamp", { lease_expires_at: "not-a-timestamp" }],
-    ] as const)("returns recoverable %s without mutating persisted state", (reason, change) => {
-      persistLease();
-      const before = readFileSync(join(tmpDir, ".rigor", "state.json"), "utf-8");
-      const state = mgr.load()!;
-      const task = state.phases[0].epics[0].tasks[0];
-      if ("status" in change) task.status = change.status;
-      else Object.assign(task.lease!, change);
-      mgr.save(state);
-      const persistedBefore = readFileSync(join(tmpDir, ".rigor", "state.json"), "utf-8");
-
-      const result = mgr.assertPersistedLease({
-        task_id: "1.1.1",
-        owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        now,
+    it("preserves unrelated task state while migrating", () => {
+      writeRawState((task) => {
+        task.lease = { owner_id: "owner-a", attempt_id: "attempt-a", lease_expires_at: "x" };
+        task.gate_0 = { passed: true, evidence_path: "/tmp/evidence.json" };
       });
 
-      expect(result).toEqual({
-        ok: false,
-        recoverable: true,
-        reason,
-        task_id: "1.1.1",
-      });
-      expect(readFileSync(join(tmpDir, ".rigor", "state.json"), "utf-8")).toBe(persistedBefore);
-      expect(before).not.toBe("");
-    });
-
-    it.each([
-      undefined,
-      { owner_id: "", attempt_id: "attempt-a", lease_expires_at: "2026-09-12T12:01:00.000Z" },
-      { owner_id: "owner-a", attempt_id: "", lease_expires_at: "2026-09-12T12:01:00.000Z" },
-    ])("rejects a missing or structurally malformed lease", (lease) => {
-      persistLease();
-      const state = mgr.load()!;
-      state.phases[0].epics[0].tasks[0].lease = lease;
-      mgr.save(state);
-
-      expect(mgr.assertPersistedLease({ task_id: "1.1.1", owner_id: "owner-a", attempt_id: "attempt-a", now })).toMatchObject({
-        ok: false,
-        recoverable: true,
-        reason: "malformed_timestamp",
-      });
-    });
-
-    it("reloads persisted state instead of trusting an earlier task snapshot", () => {
-      persistLease();
-      const stale = mgr.getTask("1.1.1");
-      const state = mgr.load()!;
-      state.phases[0].epics[0].tasks[0].lease!.attempt_id = "attempt-b";
-      mgr.save(state);
-
-      expect(stale.lease?.attempt_id).toBe("attempt-a");
-      expect(mgr.assertPersistedLease({ task_id: "1.1.1", owner_id: "owner-a", attempt_id: "attempt-a", now })).toMatchObject({
-        ok: false,
-        reason: "attempt_changed",
-      });
-    });
-
-    it("keeps legacy compatibility isolated from registered owner and attempt checks", () => {
-      persistLease({ owner_id: "owner-b", attempt_id: "attempt-b" });
-
-      expect(mgr.assertPersistedLegacyLease("1.1.1")).toMatchObject({ ok: true });
-    });
-
-    it("extends a live lease with a server generated bounded expiry", () => {
-      persistLease();
-
-      const result = mgr.renewPersistedLease({
-        task_id: "1.1.1",
-        owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        now,
-      });
-
-      expect(result.ok).toBe(true);
-      if (!result.ok) return;
-      const expiry = Date.parse(result.lease.lease_expires_at);
-      expect(expiry).toBe(now + TASK_LEASE_DURATION_MS);
-      expect(expiry).toBeGreaterThan(now);
-      expect(TASK_LEASE_DURATION_MS).toBeGreaterThan(0);
-      expect(mgr.getTask("1.1.1").lease?.lease_expires_at).toBe(result.lease.lease_expires_at);
-      expect(mgr.getTask("1.1.1").lease?.attempt_id).toBe("attempt-a");
-    });
-
-    it.each([
-      ["status_changed", { status: "done" }],
-      ["owner_changed", { owner_id: "owner-b" }],
-      ["attempt_changed", { attempt_id: "attempt-b" }],
-      ["lease_expired", { lease_expires_at: "2026-09-12T12:00:00.000Z" }],
-      ["malformed_timestamp", { lease_expires_at: "not-a-timestamp" }],
-    ] as const)("refuses renewal for %s without mutating persisted state", (reason, change) => {
-      persistLease();
-      const state = mgr.load()!;
-      const task = state.phases[0].epics[0].tasks[0];
-      if ("status" in change) task.status = change.status;
-      else Object.assign(task.lease!, change);
-      mgr.save(state);
-      const persistedBefore = readFileSync(join(tmpDir, ".rigor", "state.json"), "utf-8");
-
-      const result = mgr.renewPersistedLease({
-        task_id: "1.1.1",
-        owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        now,
-      });
-
-      expect(result).toEqual({ ok: false, recoverable: true, reason, task_id: "1.1.1" });
-      expect(readFileSync(join(tmpDir, ".rigor", "state.json"), "utf-8")).toBe(persistedBefore);
-    });
-
-    it("cannot revive a replaced attempt after takeover", () => {
-      persistLease();
-      const state = mgr.load()!;
-      state.phases[0].epics[0].tasks[0].lease = {
-        owner_id: "owner-b",
-        attempt_id: "attempt-b",
-        lease_expires_at: "2026-09-12T12:05:00.000Z",
-      };
-      mgr.save(state);
-
-      const result = mgr.renewPersistedLease({
-        task_id: "1.1.1",
-        owner_id: "owner-a",
-        attempt_id: "attempt-a",
-        now,
-      });
-
-      expect(result).toMatchObject({ ok: false, reason: "owner_changed" });
-      expect(mgr.getTask("1.1.1").lease).toMatchObject({
-        owner_id: "owner-b",
-        attempt_id: "attempt-b",
-        lease_expires_at: "2026-09-12T12:05:00.000Z",
-      });
-    });
-
-    it("throws EntityNotFoundError when renewing an unknown task", () => {
-      persistLease();
-
-      expect(() => mgr.renewPersistedLease({ task_id: "9.9.9", owner_id: "owner-a", attempt_id: "attempt-a", now }))
-        .toThrow(EntityNotFoundError);
-    });
-
-    it("applies status and timestamp checks to legacy compatibility", () => {
-      persistLease({ lease_expires_at: "invalid" });
-
-      expect(mgr.assertPersistedLegacyLease("1.1.1")).toMatchObject({
-        ok: false,
-        recoverable: true,
-        reason: "malformed_timestamp",
-      });
+      const task = mgr.getTask("1.1.1");
+      expect(task.gate_0).toEqual({ passed: true, evidence_path: "/tmp/evidence.json" });
+      expect(task.name).toBe("Init repo");
     });
   });
 

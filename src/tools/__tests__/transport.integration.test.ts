@@ -290,9 +290,57 @@ describe("cross-client transport harness", () => {
     });
   });
 
-  it("renews leases per project root and rejects stale attempts over the transport", async () => {
-    const projectA = makeFixture("renew-a");
-    const projectB = makeFixture("renew-b");
+  it("discards legacy lease data before transport lifecycle operations", async () => {
+    const project = makeFixture("legacy-lease");
+    roots.push(project);
+
+    await withHarnessSessions([{ projectRoot: project, clientStyle: "opencode" }], async ([session]) => {
+      await session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true });
+      const statePath = join(project, ".rigor", "state.json");
+      const state = JSON.parse(readFileSync(statePath, "utf-8"));
+      state.phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").lease = {
+        owner_id: "owner-a",
+        attempt_id: "attempt-a",
+        lease_expires_at: "not-a-timestamp",
+        takeover_history: [{ owner_id: "owner-z", attempt_id: "attempt-z", lease_expires_at: "2020-01-01T00:00:00.000Z", taken_over_at: "2020-01-01T00:00:00.000Z" }],
+      };
+      writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
+
+      const started = await session.call("task_start", { task_id: "1.1.2", owner_id: "owner-b" });
+      expect(started.isError).toBeUndefined();
+
+      const migrated = JSON.parse(readFileSync(statePath, "utf-8"));
+      const task = migrated.phases[0].epics[0].tasks.find((candidate: { id: string }) => candidate.id === "1.1.2");
+      expect(task).not.toHaveProperty("lease");
+      expect(task.worker.owner_id).toBe("owner-b");
+    });
+  });
+
+  it("warns and replaces the advisory worker for competing starts in one project root", async () => {
+    const project = makeFixture("same-root-worker");
+    roots.push(project);
+
+    await withHarnessSessions([{ projectRoot: project, clientStyle: "opencode" }], async ([session]) => {
+      await session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true });
+      await session.call("task_start", { task_id: "1.1.2", owner_id: "owner-a" });
+
+      const replacement = await session.call("task_start", { task_id: "1.1.2", owner_id: "owner-b" });
+
+      expect(replacement.isError).toBeUndefined();
+      const advisoryWarning = text(replacement)
+        .split("\n")
+        .find((line) => line.startsWith("Warning: task 1.1.2 was started by"));
+      expect(advisoryWarning).toMatch(
+        /^Warning: task 1\.1\.2 was started by "owner-a" at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z in this workspace\. Coordinate file ownership or use separate worktrees\.$/,
+      );
+      const state = JSON.parse(readFileSync(join(project, ".rigor", "state.json"), "utf-8"));
+      expect(state.phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").worker.owner_id).toBe("owner-b");
+    });
+  });
+
+  it("records advisory workers per project root without exposing renewal", async () => {
+    const projectA = makeFixture("worker-a");
+    const projectB = makeFixture("worker-b");
     roots.push(projectA, projectB);
 
     await withHarnessSessions([
@@ -303,28 +351,15 @@ describe("cross-client transport harness", () => {
       await Promise.all(sessions.map((session, index) => session.call("task_start", { task_id: "1.1.2", owner_id: `owner-${index}` })));
 
       const tools = await sessions[0].client.listTools();
-      expect(tools.tools.map((tool) => tool.name)).toContain("task_renew");
+      expect(tools.tools.map((tool) => tool.name)).not.toContain("task_renew");
 
-      const leaseA = JSON.parse(readFileSync(join(projectA, ".rigor", "state.json"), "utf-8"))
-        .phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").lease;
+      const workerFor = (root: string) =>
+        JSON.parse(readFileSync(join(root, ".rigor", "state.json"), "utf-8"))
+          .phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").worker;
 
-      const renewed = await sessions[0].call("task_renew", {
-        task_id: "1.1.2",
-        owner_id: leaseA.owner_id,
-        attempt_id: leaseA.attempt_id,
-        project_root: projectA,
-      });
-      expect(renewed.isError).toBeUndefined();
-      expect(text(renewed)).toContain("lease renewed");
-
-      const stale = await sessions[1].call("task_renew", {
-        task_id: "1.1.2",
-        owner_id: leaseA.owner_id,
-        attempt_id: leaseA.attempt_id,
-        project_root: projectB,
-      });
-      expect(stale.isError).toBe(true);
-      expect(text(stale)).toContain("not renewed");
+      expect(workerFor(projectA).owner_id).toBe("owner-0");
+      expect(workerFor(projectB).owner_id).toBe("owner-1");
+      expect(workerFor(projectA)).not.toHaveProperty("lease_expires_at");
     });
   });
 

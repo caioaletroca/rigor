@@ -72,7 +72,9 @@ export function validateState(
   }
 
   // Check current_phase exists
-  const phaseIds = state.phases.map((p) => p.id);
+  const phaseIds = state.phases
+    .filter((phase): phase is CycleState["phases"][number] => Boolean(phase) && typeof phase === "object")
+    .map((phase) => phase.id);
   if (!phaseIds.includes(state.current_phase)) {
     errors.push(
       `current_phase ${state.current_phase} not found in phases [${phaseIds.join(", ")}]`,
@@ -80,6 +82,10 @@ export function validateState(
   }
 
   for (const phase of state.phases) {
+    if (!phase || typeof phase !== "object") {
+      errors.push("Phase entry is not an object");
+      continue;
+    }
     const phaseKey = String(phase.id);
 
     // Duplicate check
@@ -99,6 +105,10 @@ export function validateState(
     }
 
     for (const epic of phase.epics) {
+      if (!epic || typeof epic !== "object") {
+        errors.push(`Phase ${phaseKey}: epic entry is not an object`);
+        continue;
+      }
       // ID format check (should be like "1.1")
       if (!/^\d+\.\d+$/.test(epic.id)) {
         warnings.push(
@@ -117,8 +127,15 @@ export function validateState(
         errors.push(`Epic ${epic.id}: invalid status "${epic.status}"`);
       }
 
+      if (!epic.gate_8 || typeof epic.gate_8 !== "object" || Array.isArray(epic.gate_8)) {
+        errors.push(`Epic ${epic.id}: gate_8 is missing or invalid`);
+      }
+      if (!epic.gate_9 || typeof epic.gate_9 !== "object" || Array.isArray(epic.gate_9)) {
+        errors.push(`Epic ${epic.id}: gate_9 is missing or invalid`);
+      }
+
       // Evidence path checks (only if projectRoot provided)
-      if (projectRoot) {
+      if (projectRoot && epic.gate_8 && epic.gate_9) {
         if (
           epic.gate_8.evidence_path &&
           !existsSync(epic.gate_8.evidence_path)
@@ -139,12 +156,12 @@ export function validateState(
 
       // Consistency: done epic should have gate_8 and gate_9 passed
       if (epic.status === "done") {
-        if (!epic.gate_8.passed) {
+        if (!epic.gate_8?.passed) {
           warnings.push(
             `Epic ${epic.id}: status is "done" but gate_8 not passed`,
           );
         }
-        if (!epic.gate_9.passed) {
+        if (!epic.gate_9?.passed) {
           warnings.push(
             `Epic ${epic.id}: status is "done" but gate_9 not passed`,
           );
@@ -157,6 +174,10 @@ export function validateState(
       }
 
       for (const task of epic.tasks) {
+        if (!task || typeof task !== "object") {
+          errors.push(`Epic ${epic.id}: task entry is not an object`);
+          continue;
+        }
         // ID format check (should be like "1.1.1")
         if (!/^\d+\.\d+\.\d+$/.test(task.id)) {
           warnings.push(
@@ -175,9 +196,14 @@ export function validateState(
           errors.push(`Task ${task.id}: invalid status "${task.status}"`);
         }
 
+        if (!task.gate_0 || typeof task.gate_0 !== "object" || Array.isArray(task.gate_0)) {
+          errors.push(`Task ${task.id}: gate_0 is missing or invalid`);
+        }
+
         // Evidence path check
         if (
           projectRoot &&
+          task.gate_0 &&
           task.gate_0.evidence_path &&
           !existsSync(task.gate_0.evidence_path)
         ) {
@@ -187,10 +213,29 @@ export function validateState(
         }
 
         // Consistency: done task should have gate_0.passed
-        if (task.status === "done" && !task.gate_0.passed) {
+        if (task.status === "done" && !task.gate_0?.passed) {
           warnings.push(
             `Task ${task.id}: status is "done" but gate_0 not passed`,
           );
+        }
+
+        if (task.worker !== undefined) {
+          if (typeof task.worker !== "object" || task.worker === null) {
+            errors.push(`Task ${task.id}: worker must be an object`);
+          } else {
+            if (
+              typeof task.worker.owner_id !== "string" ||
+              task.worker.owner_id.length === 0
+            ) {
+              errors.push(`Task ${task.id}: worker.owner_id must be a non-empty string`);
+            }
+            if (
+              typeof task.worker.started_at !== "string" ||
+              !Number.isFinite(Date.parse(task.worker.started_at))
+            ) {
+              errors.push(`Task ${task.id}: worker.started_at must be an ISO timestamp`);
+            }
+          }
         }
       }
     }

@@ -15,22 +15,17 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join, basename } from "node:path";
-import { isValidTransition, ALL_STATUSES, TASK_LEASE_DURATION_MS } from "./schema.js";
+import { isValidTransition, ALL_STATUSES } from "./schema.js";
 import { EntityNotFoundError, InvalidTransitionError } from "./errors.js";
 import { validateState } from "./validator.js";
 import type { ValidationResult } from "./validator.js";
 import type {
   CycleState,
   EpicState,
-  LeaseFenceAssertion,
-  LeaseFenceMismatchReason,
-  LeaseFenceResult,
-  LeaseRenewalResult,
-  LegacyLeaseFenceResult,
   PhaseState,
   Status,
-  TaskLease,
   TaskState,
+  TaskWorker,
 } from "./schema.js";
 import type { SyncManager } from "../sync/index.js";
 import { transitionToEventType } from "../sync/index.js";
@@ -80,7 +75,22 @@ export class StateManager {
     }
 
     const raw = readFileSync(this.statePath, "utf-8");
-    return JSON.parse(raw) as CycleState;
+    return this.migrate(JSON.parse(raw) as CycleState);
+  }
+
+  private migrate(state: CycleState): CycleState {
+    if (!Array.isArray(state.phases)) return state;
+    for (const phase of state.phases) {
+      if (!phase || typeof phase !== "object" || !Array.isArray(phase.epics)) continue;
+      for (const epic of phase.epics) {
+        if (!epic || typeof epic !== "object" || !Array.isArray(epic.tasks)) continue;
+        for (const task of epic.tasks) {
+          if (!task || typeof task !== "object") continue;
+          delete (task as TaskState & { lease?: unknown }).lease;
+        }
+      }
+    }
+    return state;
   }
 
   /**
@@ -185,6 +195,7 @@ export class StateManager {
 
     const previousStatus = entity.status;
     entity.status = toStatus;
+    this.clearWorkerWhenNotDoing(entity, toStatus);
     this.save(state);
 
     // Fire sync event for the transition
@@ -231,77 +242,32 @@ export class StateManager {
     }
 
     entity.status = toStatus;
+    this.clearWorkerWhenNotDoing(entity, toStatus);
     this.save(state);
     return state;
   }
 
-  // -----------------------------------------------------------------------
-  // Lookups
-  // -----------------------------------------------------------------------
-
-  assertPersistedLease(assertion: LeaseFenceAssertion): LeaseFenceResult {
-    const state = this.load();
-    if (state === null) {
-      throw new EntityNotFoundError("task", assertion.task_id);
+  /**
+   * Advisory worker metadata describes who is currently working a task, so it
+   * is meaningful only while that task is "doing". Any transition away from
+   * "doing" — completion, failure, retry, force_status, skip, or reset —
+   * drops it.
+   */
+  private clearWorkerWhenNotDoing(entity: { status: Status }, toStatus: Status): void {
+    if (toStatus !== "doing") {
+      delete (entity as TaskState).worker;
     }
-
-    const task = this.findTask(state, assertion.task_id);
-    if (!task) {
-      throw new EntityNotFoundError("task", assertion.task_id);
-    }
-
-    if (task.status !== "doing") {
-      return this.leaseFenceMismatch(assertion.task_id, "status_changed");
-    }
-    if (!task.lease || !this.isValidLease(task.lease)) {
-      return this.leaseFenceMismatch(assertion.task_id, "malformed_timestamp");
-    }
-    if (task.lease.owner_id !== assertion.owner_id) {
-      return this.leaseFenceMismatch(assertion.task_id, "owner_changed");
-    }
-    if (task.lease.attempt_id !== assertion.attempt_id) {
-      return this.leaseFenceMismatch(assertion.task_id, "attempt_changed");
-    }
-    if (Date.parse(task.lease.lease_expires_at) <= (assertion.now ?? Date.now())) {
-      return this.leaseFenceMismatch(assertion.task_id, "lease_expired");
-    }
-
-    return { ok: true, state, task, lease: task.lease };
   }
 
-  renewPersistedLease(assertion: LeaseFenceAssertion): LeaseRenewalResult {
-    const fence = this.assertPersistedLease(assertion);
-    if (!fence.ok) return fence;
-
-    const now = assertion.now ?? Date.now();
-    const renewed: TaskLease = {
-      ...fence.lease,
-      lease_expires_at: new Date(now + TASK_LEASE_DURATION_MS).toISOString(),
-    };
-    fence.task.lease = renewed;
-    this.save(fence.state);
-
-    return { ok: true, state: fence.state, task: fence.task, lease: renewed };
-  }
-
-  assertPersistedLegacyLease(taskId: string): LegacyLeaseFenceResult {
+  resetTaskForRetry(taskId: string): CycleState {
     const state = this.load();
-    if (state === null) {
-      throw new EntityNotFoundError("task", taskId);
-    }
-
+    if (state === null) throw new EntityNotFoundError("task", taskId);
     const task = this.findTask(state, taskId);
-    if (!task) {
-      throw new EntityNotFoundError("task", taskId);
-    }
-    if (task.status !== "doing") {
-      return this.leaseFenceMismatch(taskId, "status_changed");
-    }
-    if (task.lease && !this.isValidLease(task.lease)) {
-      return this.leaseFenceMismatch(taskId, "malformed_timestamp");
-    }
-
-    return { ok: true, state, task };
+    if (!task) throw new EntityNotFoundError("task", taskId);
+    task.gate_0 = { passed: false };
+    delete task.worker;
+    this.save(state);
+    return state;
   }
 
   /**
@@ -382,24 +348,6 @@ export class StateManager {
       }
     }
     return undefined;
-  }
-
-  private isValidLease(lease: TaskLease): boolean {
-    return (
-      typeof lease.owner_id === "string" &&
-      lease.owner_id.length > 0 &&
-      typeof lease.attempt_id === "string" &&
-      lease.attempt_id.length > 0 &&
-      typeof lease.lease_expires_at === "string" &&
-      Number.isFinite(Date.parse(lease.lease_expires_at))
-    );
-  }
-
-  private leaseFenceMismatch(
-    taskId: string,
-    reason: LeaseFenceMismatchReason,
-  ): Exclude<LeaseFenceResult, { ok: true }> {
-    return { ok: false, recoverable: true, reason, task_id: taskId };
   }
 
   private inferEntityType(entityId: string): SyncEntityType {

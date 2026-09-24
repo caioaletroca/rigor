@@ -13,8 +13,8 @@ export { projectRootSchema, resolveRequestContext, responseResult } from "./life
 export { registerGateTools } from "./gate.js";
 export { registerReadinessTool, handleProjectReadiness } from "./readiness.js";
 export type { ProjectReadinessParams } from "./readiness.js";
-export type { TaskStartParams, TaskCompleteParams, TaskRenewParams } from "../services/task-lifecycle.js";
-export { handleTaskStart, handleTaskComplete, handleTaskRenew } from "../services/task-lifecycle.js";
+export type { TaskStartParams, TaskCompleteParams } from "../services/task-lifecycle.js";
+export { handleTaskStart, handleTaskComplete } from "../services/task-lifecycle.js";
 
 export { registerReviewTools } from "./review.js";
 export type {

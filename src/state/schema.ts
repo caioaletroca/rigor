@@ -76,62 +76,17 @@ export interface GateEvidence {
 // Entity types
 // ---------------------------------------------------------------------------
 
-export const TASK_LEASE_DURATION_MS = 300000;
-
-export interface TaskLease {
+export interface TaskWorker {
   owner_id: string;
-  attempt_id: string;
-  lease_expires_at: string;
-  takeover_history?: TaskLeaseHistory[];
+  started_at: string;
 }
-
-export interface TaskLeaseHistory {
-  owner_id: string;
-  attempt_id: string;
-  lease_expires_at: string;
-  taken_over_at: string;
-}
-
-export type LeaseFenceMismatchReason =
-  | "status_changed"
-  | "owner_changed"
-  | "attempt_changed"
-  | "lease_expired"
-  | "malformed_timestamp";
-
-export interface LeaseFenceAssertion {
-  task_id: string;
-  owner_id: string;
-  attempt_id: string;
-  now?: number;
-}
-
-export type LeaseFenceResult =
-  | {
-      ok: true;
-      state: CycleState;
-      task: TaskState;
-      lease: TaskLease;
-    }
-  | {
-      ok: false;
-      recoverable: true;
-      reason: LeaseFenceMismatchReason;
-      task_id: string;
-    };
-
-export type LeaseRenewalResult = LeaseFenceResult;
-
-export type LegacyLeaseFenceResult =
-  | { ok: true; state: CycleState; task: TaskState }
-  | Exclude<LeaseFenceResult, { ok: true }>;
 
 export interface TaskState {
   id: string;
   name: string;
   status: Status;
   gate_0: Gate0Evidence;
-  lease?: TaskLease;
+  worker?: TaskWorker;
 }
 
 export interface EpicState {

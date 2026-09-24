@@ -90,22 +90,34 @@ This creates `.rigor/config.yaml` with sensible defaults for your project.
 Before initializing a cycle, use this sequence:
 
 1. Call `rigor_status` to inspect the connected server's capabilities and fallback root.
-2. Call `project_readiness({ project_root: "/absolute/path/to/worktree", plan_path: "docs/plans/my-plan.md" })`. It is read-only: it creates no state, leases, evidence, or command executions.
+2. Call `project_readiness({ project_root: "/absolute/path/to/worktree", plan_path: "docs/plans/my-plan.md" })`. It is read-only: it creates no state, evidence, or command executions.
 3. If readiness identifies an invalid workspace policy or unresolved Gate 0 command, correct it in that worktree only, then run `project_readiness` again. `allow_shared_workspace` is a narrow workspace-policy exception; it never accepts an invalid root or bypasses Gate 0 readiness.
 4. Call `cycle_init({ plan_path: "docs/plans/my-plan.md", project_root: "/absolute/path/to/worktree" })` only after readiness passes.
 
 Reconnect only when the connected client's tool inventory is stale: `rigor_status` advertises a needed tool or `project_root` parameter that the client does not expose. A fallback-root mismatch alone is not a reason to reconnect or restart. Claude Code and OpenCode installs reference the shipped skills and update automatically; Hermes installs copied `SKILL.md` files, so remove the existing copied Hermes skill and then rerun `rigor install --client hermes` after an update.
 
+### Worktree and multi-agent operation
+
+Rigor scopes cycle state and evidence to the absolute `project_root` supplied on each lifecycle call. Each Git worktree therefore has its own `.rigor/state.json` and evidence directory.
+
+Supported modes:
+
+- **A — one agent, multiple repos:** Use one worktree and explicit `project_root` per repo; their Rigor state is independent.
+- **B — multiple agents, different repos:** Give each agent its own worktree/repo and absolute `project_root`; their cycles, evidence, and task workers do not interact.
+- **C — multiple agents, same repo:** Give each agent its own worktree whenever possible. If agents share one worktree, Rigor records optional advisory `owner_id` metadata on `task_start`. A different owner can start the same task and receives a warning naming the prior worker; the operation is never blocked.
+
+Rigor does not schedule agents or prevent file conflicts. In mode C, the user is responsible for assigning non-overlapping files. `task_complete` accepts no ownership identity: work that passes Gate 0 is accepted regardless of which agent completes it.
+
 ### Run a cycle
 
-Pseudocode; replace placeholder values with values from the active cycle and `task_start` response.
+Pseudocode; replace placeholder values with values from the active cycle.
 
 ```
 1. Write a plan (or use rigor:plan to generate one)
 2. cycle_init({ plan_path, project_root }) → Load the plan into Rigor
-3. task_start({ task_id, owner_id, project_root }) → Begin a task; retain its attempt_id
+3. task_start({ task_id, project_root }) → Begin a task (optional owner_id records an advisory worker)
 4. ... write code, tests ...
-5. task_complete({ task_id, owner_id, attempt_id, project_root }) → Gate 0 checks (tests, coverage, lint)
+5. task_complete({ task_id, project_root }) → Gate 0 checks (tests, coverage, lint)
 6. review_start({ epic_id, project_root }) → Start code review (all tasks must pass)
 7. review_submit({ epic_id, submissions, project_root }) → Gate 8 (reviewer findings aggregated)
 8. accept_start({ epic_id, project_root }) → Start acceptance
@@ -161,8 +173,7 @@ gates:
 
 | Tool | Description |
 |------|-------------|
-| `task_start` | Validate entry criteria, begin task |
-| `task_renew` | Renew the active task lease for its owner and attempt |
+| `task_start` | Validate entry criteria, begin task, record the optional advisory worker |
 | `task_complete` | Run Gate 0 exit checks |
 | `review_start` | Start epic review (all tasks must pass) |
 | `review_submit` | Submit reviewer findings for Gate 8 |

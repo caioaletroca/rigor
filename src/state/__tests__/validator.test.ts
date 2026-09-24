@@ -210,6 +210,52 @@ describe("validateState", () => {
   });
 
   // -----------------------------------------------------------------------
+  // Advisory worker metadata
+  // -----------------------------------------------------------------------
+  it("accepts a task carrying well-formed worker metadata", () => {
+    const state = makeValidState();
+    state.phases[0].epics[0].tasks[0].worker = {
+      owner_id: "owner-a",
+      started_at: "2026-09-22T12:00:00.000Z",
+    };
+    const result = validateState(state);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it.each([
+    ["null worker", null, "worker must be an object"],
+    ["empty owner_id", { owner_id: "", started_at: "2026-09-22T12:00:00.000Z" }, "owner_id"],
+    ["non-string owner_id", { owner_id: 7, started_at: "2026-09-22T12:00:00.000Z" }, "owner_id"],
+    ["unparseable started_at", { owner_id: "owner-a", started_at: "not-a-date" }, "started_at"],
+    ["missing started_at", { owner_id: "owner-a" }, "started_at"],
+  ])("reports error for worker metadata with %s", (_label, worker, field) => {
+    const state = makeValidState();
+    state.phases[0].epics[0].tasks[0].worker = worker as never;
+    const result = validateState(state);
+
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((e) => e.includes("1.1.1") && e.includes(field)),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["gate_0", (state: CycleState) => { state.phases[0].epics[0].tasks[0].gate_0 = [] as never; }],
+    ["gate_8", (state: CycleState) => { state.phases[0].epics[0].gate_8 = [] as never; }],
+    ["gate_9", (state: CycleState) => { state.phases[0].epics[0].gate_9 = [] as never; }],
+  ])("rejects an array-valued %s gate container", (gate, mutate) => {
+    const state = makeValidState();
+    mutate(state);
+
+    const result = validateState(state);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.includes(gate))).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
   // ID format warnings
   // -----------------------------------------------------------------------
   it("warns when epic id does not match N.N format", () => {
