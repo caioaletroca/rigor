@@ -96,6 +96,18 @@ Before initializing a cycle, use this sequence:
 
 Reconnect only when the connected client's tool inventory is stale: `rigor_status` advertises a needed tool or `project_root` parameter that the client does not expose. A fallback-root mismatch alone is not a reason to reconnect or restart. Claude Code and OpenCode installs reference the shipped skills and update automatically; Hermes installs copied `SKILL.md` files, so remove the existing copied Hermes skill and then rerun `rigor install --client hermes` after an update.
 
+### Worktree and multi-agent operation
+
+Rigor scopes cycle state and evidence to the absolute `project_root` supplied on each lifecycle call. Each Git worktree therefore has its own `.rigor/state.json` and evidence directory.
+
+Supported modes:
+
+- **A — one agent, multiple repos:** Use one worktree and explicit `project_root` per repo; their Rigor state is independent.
+- **B — multiple agents, different repos:** Give each agent its own worktree/repo and absolute `project_root`; their cycles, evidence, and task workers do not interact.
+- **C — multiple agents, same repo:** Give each agent its own worktree whenever possible. If agents share one worktree, Rigor records optional advisory `owner_id` metadata on `task_start`. A different owner can start the same task and receives a warning naming the prior worker; the operation is never blocked.
+
+Rigor does not schedule agents or prevent file conflicts. In mode C, the user is responsible for assigning non-overlapping files. `task_complete` accepts no ownership identity: work that passes Gate 0 is accepted regardless of which agent completes it.
+
 ### Run a cycle
 
 Pseudocode; replace placeholder values with values from the active cycle.

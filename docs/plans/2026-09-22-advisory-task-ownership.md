@@ -179,6 +179,24 @@
 **Done when:** Documentation states the A/B/C operating model, does not mention task lease renewal or takeover, and integration tests prove independent worktrees do not share state while a same-worktree competing start emits the exact advisory warning.
 **Status:** Pending
 
+#### Task 3.1.1: Document advisory coordination and validate worktree isolation
+
+- [ ] Done
+
+**Context:** Every worktree owns independent cycle state under `<worktree>/.rigor/state.json` (`src/state/manager.ts:43-63`), while the request context resolves an explicit root per lifecycle call (`src/context.ts:96-125`). Existing transport coverage proves project-root worker separation at `src/tools/__tests__/transport.integration.test.ts:318-340`, and unit coverage proves a same-root competing start overwrites the advisory worker and emits the coordination warning at `src/tools/__tests__/gate.test.ts:288-315`. The user-approved A/B/C operating model is: one agent across multiple repos; multiple agents on different repos; and multiple agents in one repo with user-managed different-file coordination.
+
+**Implementation vision:** Add a concise README section defining the three supported worktree modes. State that each active worktree needs its own absolute `project_root` and therefore its own Rigor state/evidence; user-visible worker metadata is optional, advisory only, and appears only as a warning when another owner starts the same task in the same worktree. Explicitly state that Rigor does not schedule agents or prevent same-repo file conflicts, so the user must assign non-overlapping files. Remove any remaining operational references to lease renewal/takeover from user documentation (historical design/plan references are excluded). Add an MCP transport-boundary same-root test that starts a task as owner A then owner B and asserts successful second start, exact warning content, and worker B persisted; retain the existing separate-root test as proof that state is isolated.
+
+**Files:**
+- Modify: `README.md:86-114`, `:150-171`
+- Modify: `docs/architecture.md:65-82`
+- Modify: `src/tools/__tests__/transport.integration.test.ts:293-340`
+- Test: `src/tools/__tests__/transport.integration.test.ts`
+
+**Verification:** `npm run build && npx vitest run src/tools/__tests__/transport.integration.test.ts` exits 0. The full configured Gate 0 suite (`npx vitest run src/`) exits 0. Tests prove two different roots persist independent workers and one root permits a competing start with the exact advisory warning and replacement worker.
+
+**Done when:** Users can select the A/B/C worktree mode from documentation without seeing obsolete lease instructions, and transport tests prove both root isolation and same-root advisory coordination end-to-end.
+
 ---
 
 ## Self-Review

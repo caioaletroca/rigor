@@ -316,6 +316,24 @@ describe("cross-client transport harness", () => {
     });
   });
 
+  it("warns and replaces the advisory worker for competing starts in one project root", async () => {
+    const project = makeFixture("same-root-worker");
+    roots.push(project);
+
+    await withHarnessSessions([{ projectRoot: project, clientStyle: "opencode" }], async ([session]) => {
+      await session.call("cycle_init", { plan_path: "plan.md", allow_shared_workspace: true });
+      await session.call("task_start", { task_id: "1.1.2", owner_id: "owner-a" });
+
+      const replacement = await session.call("task_start", { task_id: "1.1.2", owner_id: "owner-b" });
+
+      expect(replacement.isError).toBeUndefined();
+      expect(text(replacement)).toContain('Warning: task 1.1.2 was started by "owner-a"');
+      expect(text(replacement)).toContain("Coordinate file ownership or use separate worktrees.");
+      const state = JSON.parse(readFileSync(join(project, ".rigor", "state.json"), "utf-8"));
+      expect(state.phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").worker.owner_id).toBe("owner-b");
+    });
+  });
+
   it("records advisory workers per project root without exposing renewal", async () => {
     const projectA = makeFixture("worker-a");
     const projectB = makeFixture("worker-b");
