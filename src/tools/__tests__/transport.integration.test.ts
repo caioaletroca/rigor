@@ -327,8 +327,12 @@ describe("cross-client transport harness", () => {
       const replacement = await session.call("task_start", { task_id: "1.1.2", owner_id: "owner-b" });
 
       expect(replacement.isError).toBeUndefined();
-      expect(text(replacement)).toContain('Warning: task 1.1.2 was started by "owner-a"');
-      expect(text(replacement)).toContain("Coordinate file ownership or use separate worktrees.");
+      const advisoryWarning = text(replacement)
+        .split("\n")
+        .find((line) => line.startsWith("Warning: task 1.1.2 was started by"));
+      expect(advisoryWarning).toMatch(
+        /^Warning: task 1\.1\.2 was started by "owner-a" at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z in this workspace\. Coordinate file ownership or use separate worktrees\.$/,
+      );
       const state = JSON.parse(readFileSync(join(project, ".rigor", "state.json"), "utf-8"));
       expect(state.phases[0].epics[0].tasks.find((task: { id: string }) => task.id === "1.1.2").worker.owner_id).toBe("owner-b");
     });
