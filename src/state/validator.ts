@@ -127,10 +127,10 @@ export function validateState(
         errors.push(`Epic ${epic.id}: invalid status "${epic.status}"`);
       }
 
-      if (!epic.gate_8 || typeof epic.gate_8 !== "object") {
+      if (!epic.gate_8 || typeof epic.gate_8 !== "object" || Array.isArray(epic.gate_8)) {
         errors.push(`Epic ${epic.id}: gate_8 is missing or invalid`);
       }
-      if (!epic.gate_9 || typeof epic.gate_9 !== "object") {
+      if (!epic.gate_9 || typeof epic.gate_9 !== "object" || Array.isArray(epic.gate_9)) {
         errors.push(`Epic ${epic.id}: gate_9 is missing or invalid`);
       }
 
@@ -196,7 +196,7 @@ export function validateState(
           errors.push(`Task ${task.id}: invalid status "${task.status}"`);
         }
 
-        if (!task.gate_0 || typeof task.gate_0 !== "object") {
+        if (!task.gate_0 || typeof task.gate_0 !== "object" || Array.isArray(task.gate_0)) {
           errors.push(`Task ${task.id}: gate_0 is missing or invalid`);
         }
 

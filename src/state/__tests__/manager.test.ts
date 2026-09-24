@@ -562,6 +562,23 @@ describe("StateManager", () => {
       expect(readFileSync(statePath, "utf-8")).toBe(before);
     });
 
+    it("does not rewrite legacy lease data while loading and validating", () => {
+      writeRawState((task) => {
+        task.lease = {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+        };
+      });
+      const statePath = join(tmpDir, ".rigor", "state.json");
+      const before = readFileSync(statePath, "utf-8");
+
+      const loaded = mgr.loadAndValidate();
+
+      expect(loaded?.state.phases[0].epics[0].tasks[0]).not.toHaveProperty("lease");
+      expect(readFileSync(statePath, "utf-8")).toBe(before);
+    });
+
     it("does not restore legacy lease data when migrated state is saved", () => {
       writeRawState((task) => {
         task.lease = {

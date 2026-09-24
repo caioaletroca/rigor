@@ -241,6 +241,20 @@ describe("validateState", () => {
     ).toBe(true);
   });
 
+  it.each([
+    ["gate_0", (state: CycleState) => { state.phases[0].epics[0].tasks[0].gate_0 = [] as never; }],
+    ["gate_8", (state: CycleState) => { state.phases[0].epics[0].gate_8 = [] as never; }],
+    ["gate_9", (state: CycleState) => { state.phases[0].epics[0].gate_9 = [] as never; }],
+  ])("rejects an array-valued %s gate container", (gate, mutate) => {
+    const state = makeValidState();
+    mutate(state);
+
+    const result = validateState(state);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((error) => error.includes(gate))).toBe(true);
+  });
+
   // -----------------------------------------------------------------------
   // ID format warnings
   // -----------------------------------------------------------------------
