@@ -546,7 +546,23 @@ describe("StateManager", () => {
       expect(task.worker).toBeUndefined();
     });
 
-    it("does not rewrite legacy lease data when the migrated state is saved", () => {
+    it("does not rewrite legacy lease data while loading", () => {
+      writeRawState((task) => {
+        task.lease = {
+          owner_id: "owner-a",
+          attempt_id: "attempt-a",
+          lease_expires_at: "2999-01-01T00:00:00.000Z",
+        };
+      });
+      const statePath = join(tmpDir, ".rigor", "state.json");
+      const before = readFileSync(statePath, "utf-8");
+
+      mgr.load();
+
+      expect(readFileSync(statePath, "utf-8")).toBe(before);
+    });
+
+    it("does not restore legacy lease data when migrated state is saved", () => {
       writeRawState((task) => {
         task.lease = {
           owner_id: "owner-a",
@@ -558,6 +574,16 @@ describe("StateManager", () => {
       mgr.save(mgr.load()!);
 
       expect(readFileSync(join(tmpDir, ".rigor", "state.json"), "utf-8")).not.toContain("lease");
+    });
+
+    it.each([
+      { phases: [null] },
+      { phases: [{ epics: [null] }] },
+      { phases: [{ epics: [{ tasks: [null] }] }] },
+    ])("leaves malformed state containers for validation without throwing", (state) => {
+      writeFileSync(join(tmpDir, ".rigor", "state.json"), JSON.stringify(state), "utf-8");
+
+      expect(() => mgr.load()).not.toThrow();
     });
 
     it("migrates idempotently across repeated loads", () => {

@@ -79,9 +79,13 @@ export class StateManager {
   }
 
   private migrate(state: CycleState): CycleState {
-    for (const phase of state.phases ?? []) {
-      for (const epic of phase.epics ?? []) {
-        for (const task of epic.tasks ?? []) {
+    if (!Array.isArray(state.phases)) return state;
+    for (const phase of state.phases) {
+      if (!phase || typeof phase !== "object" || !Array.isArray(phase.epics)) continue;
+      for (const epic of phase.epics) {
+        if (!epic || typeof epic !== "object" || !Array.isArray(epic.tasks)) continue;
+        for (const task of epic.tasks) {
+          if (!task || typeof task !== "object") continue;
           delete (task as TaskState & { lease?: unknown }).lease;
         }
       }

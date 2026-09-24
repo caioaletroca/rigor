@@ -80,6 +80,10 @@ export function validateState(
   }
 
   for (const phase of state.phases) {
+    if (!phase || typeof phase !== "object") {
+      errors.push("Phase entry is not an object");
+      continue;
+    }
     const phaseKey = String(phase.id);
 
     // Duplicate check
@@ -99,6 +103,10 @@ export function validateState(
     }
 
     for (const epic of phase.epics) {
+      if (!epic || typeof epic !== "object") {
+        errors.push(`Phase ${phaseKey}: epic entry is not an object`);
+        continue;
+      }
       // ID format check (should be like "1.1")
       if (!/^\d+\.\d+$/.test(epic.id)) {
         warnings.push(
@@ -157,6 +165,10 @@ export function validateState(
       }
 
       for (const task of epic.tasks) {
+        if (!task || typeof task !== "object") {
+          errors.push(`Epic ${epic.id}: task entry is not an object`);
+          continue;
+        }
         // ID format check (should be like "1.1.1")
         if (!/^\d+\.\d+\.\d+$/.test(task.id)) {
           warnings.push(
