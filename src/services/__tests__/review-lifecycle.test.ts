@@ -60,6 +60,47 @@ describe("review lifecycle service", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  it("starts and submits review when an intentionally skipped task follows completed tasks", async () => {
+    const phases = makePhases();
+    phases[0].epics[0].tasks.push({
+      id: "1.1.2",
+      name: "Deferred browser coverage",
+      status: "skipped",
+      gate_0: { passed: false },
+    });
+    stateManager.init("test-plan.md", phases);
+
+    const started = await handleReviewStart({ epic_id: "1.1" }, stateManager, DEFAULTS, tempDir);
+    const submitted = await handleReviewSubmit(
+      { epic_id: "1.1", submissions: JSON.stringify(passingSubmissions()) },
+      stateManager,
+      evidenceManager,
+      DEFAULTS,
+      tempDir,
+    );
+
+    expect(started.isError).toBeUndefined();
+    expect(extractText(started)).toContain("1 skipped");
+    expect(submitted.isError).toBeUndefined();
+    expect(stateManager.getEpic("1.1").gate_8.passed).toBe(true);
+  });
+
+  it.each(["pending", "doing", "failed"] as const)("rejects review when a task is %s", async (status) => {
+    const phases = makePhases();
+    phases[0].epics[0].tasks.push({
+      id: "1.1.2",
+      name: "Incomplete task",
+      status,
+      gate_0: { passed: false },
+    });
+    stateManager.init("test-plan.md", phases);
+
+    const result = await handleReviewStart({ epic_id: "1.1" }, stateManager, DEFAULTS, tempDir);
+
+    expect(result.isError).toBe(true);
+    expect(extractText(result)).toContain("incomplete tasks");
+  });
+
   it("starts review after completed Gate 0 tasks and records Gate 8 evidence", async () => {
     stateManager.init("test-plan.md", makePhases());
 
