@@ -577,13 +577,15 @@ describe("StateManager", () => {
     });
 
     it.each([
-      { phases: [null] },
-      { phases: [{ epics: [null] }] },
-      { phases: [{ epics: [{ tasks: [null] }] }] },
-    ])("leaves malformed state containers for validation without throwing", (state) => {
+      [{ phases: [null] }, "Phase entry is not an object"],
+      [{ phases: [{ epics: [null] }] }, "epic entry is not an object"],
+      [{ phases: [{ epics: [{ tasks: [null] }] }] }, "task entry is not an object"],
+    ])("leaves malformed state containers for validation without throwing", (state, error) => {
       writeFileSync(join(tmpDir, ".rigor", "state.json"), JSON.stringify(state), "utf-8");
 
       expect(() => mgr.load()).not.toThrow();
+      expect(() => mgr.loadAndValidate()).not.toThrow();
+      expect(mgr.loadAndValidate()?.validation.errors.some((entry) => entry.includes(error))).toBe(true);
     });
 
     it("migrates idempotently across repeated loads", () => {

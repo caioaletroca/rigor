@@ -1,0 +1,148 @@
+﻿
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90mC:/Users/caio_/Projects/rigor/worktrees/advisory-task-ownership[39m
+
+node.exe : [1m[43m DEPRECATED [49m[22m [33m'basic' reporter is deprecated and will be removed in Vitest v3.
+No linha:1 caractere:1
++ & "C:\nvm4w\nodejs/node.exe" "C:\nvm4w\nodejs/node_modules/npm/bin/np ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([1m[43m DEPRE...d in Vitest v3.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Remove 'basic' from 'reporters' option. To match 'basic' reporter 100%, use configuration:
+{
+  "test": {
+    "reporters": [
+      [
+        "default",
+        {
+          "summary": false
+        }
+      ]
+    ]
+  }
+}[39m
+ [31mÔØ»[39m src/state/__tests__/manager.test.ts [2m([22m[2m82 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 124[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22minit creates state with all statuses pending[32m 4[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22minit derives cycle_id from plan filename without extension[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22minit sets current_phase to first phase id[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22minit handles empty phases array[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mround-trips state through save and load[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mpersists valid JSON to disk[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mdoes not leave a .tmp file after save[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mstate.json exists after save[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mthrows InvalidTransitionError for pending -> done[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mthrows InvalidTransitionError for pending -> failed[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mthrows InvalidTransitionError for done -> doing[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mInvalidTransitionError contains entity id and statuses[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions pending -> doing[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions doing -> done[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions doing -> failed[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions failed -> doing (retry)[32m 3[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions work for epics[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions work for phases (numeric id)[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetTask returns the correct task[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetTask finds tasks in later phases[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetEpic returns the correct epic[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetPhase returns the correct phase[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetTask throws EntityNotFoundError for unknown id[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetEpic throws EntityNotFoundError for unknown id[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetPhase throws EntityNotFoundError for unknown id[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetTask throws EntityNotFoundError when no state file exists[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetEpic throws EntityNotFoundError when no state file exists[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mgetPhase throws EntityNotFoundError when no state file exists[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mEntityNotFoundError contains entity type and id[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransition updates the updated_at timestamp[32m 14[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mload returns null when no state file exists[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransition throws EntityNotFoundError when no state exists[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransition throws EntityNotFoundError for unknown entity[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions pending -> skipped[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions doing -> skipped[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions failed -> skipped[32m 3[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mtransitions done -> skipped[32m 3[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mthrows InvalidTransitionError for skipped -> doing (no outgoing edges)[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mthrows InvalidTransitionError for skipped -> pending[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mforceTransition moves entity to any valid status[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mforceTransition can un-skip an entity[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mforceTransition works from any status[32m 3[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mforceTransition throws EntityNotFoundError for unknown entity[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mforceTransition throws EntityNotFoundError when no state exists[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mpersists worker metadata across a save and load round-trip[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mdrops a live lease from legacy persisted state on load[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mdrops an expired lease from legacy persisted state on load[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mdrops a malformed lease from legacy persisted state on load[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mdrops a lease carrying takeover history from legacy persisted state on load[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mdoes not rewrite legacy lease data while loading[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mdoes not restore legacy lease data when migrated state is saved[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mleaves malformed state containers for validation without throwing[32m 2[2mms[22m[39m
+[31m   [31m├ù[31m StateManager[2m > [22madvisory worker metadata[2m > [22mleaves malformed state containers for validation without throwing[39m[32m 7[2mms[22m[39m
+[31m     ÔåÆ expected [ 'Missing cycle_id', ÔÇª(3) ] to include 'epic entry is not an object'[39m
+[31m   [31m├ù[31m StateManager[2m > [22madvisory worker metadata[2m > [22mleaves malformed state containers for validation without throwing[39m[32m 2[2mms[22m[39m
+[31m     ÔåÆ expected [ 'Missing cycle_id', ÔÇª(6) ] to include 'task entry is not an object'[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mmigrates idempotently across repeated loads[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mclears worker metadata when a task transitions to done[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mclears worker metadata when a task transitions to failed[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mclears worker metadata when a task transitions to pending via forceTransition[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mclears worker metadata when a task transitions to skipped via forceTransition[32m 3[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mretains worker metadata when a task transitions into doing[32m 2[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22madvisory worker metadata[2m > [22mpreserves unrelated task state while migrating[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m StateManager[2m > [22mconstructor creates .rigor directory if missing[32m 1[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows pending -> doing[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows doing -> done[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows doing -> failed[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows failed -> doing[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects pending -> done[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects pending -> failed[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects done -> doing[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects done -> pending[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects done -> failed[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects same-status transition pending -> pending[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects same-status transition doing -> doing[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows pending -> skipped[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows doing -> skipped[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows failed -> skipped[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mallows done -> skipped[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects skipped -> doing (no outgoing edges)[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects skipped -> pending[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects skipped -> done[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects skipped -> failed[32m 0[2mms[22m[39m
+   [32mÔ£ô[39m isValidTransition[2m > [22mrejects skipped -> skipped[32m 0[2mms[22m[39m
+
+
+[31mÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[39m[1m[41m Failed Tests 2 [49m[22m[31mÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[39m
+
+[41m[1m FAIL [22m[49m src/state/__tests__/manager.test.ts[2m > [22mStateManager[2m > [22madvisory worker 
+metadata[2m > [22mleaves malformed state containers for validation without throwing
+[31m[1mAssertionError[22m: expected [ 'Missing cycle_id', ÔÇª(3) ] to include 'epic entry is not an object'[39m
+[36m [2mÔØ»[22m src/state/__tests__/manager.test.ts:[2m588:56[22m[39m
+    [90m586| [39m      [34mexpect[39m(() [33m=>[39m 
+mgr[33m.[39m[34mload[39m())[33m.[39mnot[33m.[39m[34mtoThrow[39m()[33m;[39m
+    [90m587| [39m      [34mexpect[39m(() [33m=>[39m 
+mgr[33m.[39m[34mloadAndValidate[39m())[33m.[39mnot[33m.[39m[34mtoThrow[39m()[33m;[39m
+    [90m588| [39m      expect(mgr.loadAndValidate()?.validation.errors).toContain(errorÔÇª
+    [90m   | [39m                                                       [31m^[39m
+    [90m589| [39m    })[33m;[39m
+    [90m590| [39m
+
+[31m[2mÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[1/2]ÔÄ»[22m[39m
+
+[41m[1m FAIL [22m[49m src/state/__tests__/manager.test.ts[2m > [22mStateManager[2m > [22madvisory worker 
+metadata[2m > [22mleaves malformed state containers for validation without throwing
+[31m[1mAssertionError[22m: expected [ 'Missing cycle_id', ÔÇª(6) ] to include 'task entry is not an object'[39m
+[36m [2mÔØ»[22m src/state/__tests__/manager.test.ts:[2m588:56[22m[39m
+    [90m586| [39m      [34mexpect[39m(() [33m=>[39m 
+mgr[33m.[39m[34mload[39m())[33m.[39mnot[33m.[39m[34mtoThrow[39m()[33m;[39m
+    [90m587| [39m      [34mexpect[39m(() [33m=>[39m 
+mgr[33m.[39m[34mloadAndValidate[39m())[33m.[39mnot[33m.[39m[34mtoThrow[39m()[33m;[39m
+    [90m588| [39m      expect(mgr.loadAndValidate()?.validation.errors).toContain(errorÔÇª
+    [90m   | [39m                                                       [31m^[39m
+    [90m589| [39m    })[33m;[39m
+    [90m590| [39m
+
+[31m[2mÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[2/2]ÔÄ»[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m80 passed[39m[22m[90m (82)[39m
+[2m   Start at [22m 21:31:51
+[2m   Duration [22m 725ms[2m (transform 100ms, setup 0ms, collect 124ms, tests 124ms, environment 0ms, prepare 157ms)[22m
+
